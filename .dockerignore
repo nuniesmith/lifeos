@@ -1,0 +1,27 @@
+# Keep the build context small and free of private data.
+.git
+.github
+data/
+var/
+node_modules/
+.svelte-kit/
+build/
+dist/
+coverage/
+playwright-report/
+test-results/
+tests/e2e/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.secrets/
+*.log
+docs/
+IMPLEMENTATION_PLAN.md
+README.md
+.DS_Store
+.vscode/
+.idea/

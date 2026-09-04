@@ -1,0 +1,44 @@
+# ─── Private source data (DISC-002) ────────────────────────────────────────
+# The Notion exports contain medical, income, spending, and household records.
+# They are also ~416 MB across 1,829 files, which would live in Git history
+# permanently even after a later deletion. Sources belong on disk and in the
+# off-host Restic backend, never in the repo.
+data/
+*.zip
+
+# Runtime data — keep the directory, never its contents. Subdirectories
+# (imports/, uploads/, backups/) are created by scripts/doctor.sh.
+var/*
+!var/.gitkeep
+
+# ─── Secrets ───────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/testdata/**/*.key
+secrets/
+.secrets/
+
+# ─── Node / SvelteKit ──────────────────────────────────────────────────────
+node_modules/
+.svelte-kit/
+build/
+dist/
+.vite/
+vite.config.*.timestamp-*
+
+# ─── Test / tooling output ─────────────────────────────────────────────────
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# ─── Local runtime ─────────────────────────────────────────────────────────
+*.log
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
