@@ -9,8 +9,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-lifeos_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
     ports:
-      # Loopback only, even in development.
-      - '127.0.0.1:5432:5432'
+      # Loopback only, even in development. The host port is configurable
+      # because a developer machine may already run PostgreSQL on 5432.
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
