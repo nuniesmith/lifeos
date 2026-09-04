@@ -8,11 +8,16 @@ export default defineConfig({
 	reporter: process.env.CI ? [['html'], ['list']] : 'list',
 	use: { baseURL: 'http://127.0.0.1:4173', trace: 'on-first-retry' },
 	webServer: {
-		command: 'npm run build && npm run preview -- --port 4173',
-		port: 4173,
+		// Runs the real adapter-node artifact rather than `vite preview`, so
+		// these tests exercise what actually ships. It also avoids a
+		// CI-only failure where the preview server did not bind 127.0.0.1.
+		command: 'npm run build && node build/index.js',
+		url: 'http://127.0.0.1:4173/api/health/live',
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 		env: {
+			PORT: '4173',
+			HOST: '127.0.0.1',
 			// Exercise the production configuration path, so a regression in
 			// env validation shows up here rather than on the server.
 			NODE_ENV: 'production',
