@@ -33,7 +33,16 @@ ENV NODE_ENV=production \
 # SIGTERM to node rather than a 10s timeout kill.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends dumb-init curl \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ # The runtime runs `node build/index.js` and never installs anything, but
+ # the base image ships npm, whose bundled dependencies (tar, pacote,
+ # sigstore, ip-address, brace-expansion, picomatch) carry CVEs that no
+ # change to this project's dependencies can fix. Removing npm drops that
+ # entire class from the image and takes away the ability to fetch code
+ # into a running production container.
+ && rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/bin/npm /usr/local/bin/npx \
+           /usr/local/lib/node_modules/corepack /usr/local/bin/corepack
 
 WORKDIR /app
 COPY --from=deps  --chown=node:node /app/node_modules ./node_modules
