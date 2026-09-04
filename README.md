@@ -20,11 +20,11 @@ private, but the reason to keep them out is that Git history is permanent.
 
 `docs/source-catalog.md` is the tracked record of their shape:
 
-| | |
-|---|--:|
-| Databases (`_all.csv`) | 36 |
-| Canonical rows | 436 |
-| Markdown pages | 504 |
+|                                 |           |
+| ------------------------------- | --------: |
+| Databases (`_all.csv`)          |        36 |
+| Canonical rows                  |       436 |
+| Markdown pages                  |       504 |
 | Image files / unique by SHA-256 | 525 / 298 |
 
 Those four figures are the import acceptance baseline. They are verified to
@@ -32,9 +32,9 @@ match the plan's gate exactly.
 
 Both export formats are kept because they carry different things: CSV has
 canonical rows and rendered values, HTML has stable page IDs and typed
-properties, Markdown has readable body content. See §7 *Source precedence*.
+properties, Markdown has readable body content. See §7 _Source precedence_.
 
-Before writing any importer, read §7 *Verified source-format hazards* — nine
+Before writing any importer, read §7 _Verified source-format hazards_ — nine
 confirmed traps in this specific export, including BOM headers, newlines inside
 cells, commas inside titles, and ten duplicate-title groups that make titles
 unusable as keys.

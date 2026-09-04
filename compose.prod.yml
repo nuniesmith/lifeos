@@ -1,0 +1,69 @@
+# Production stack for a 1 GB Nanode. Nginx terminates on loopback only;
+# Tailscale Serve provides HTTPS. Nothing binds a public interface.
+name: lifeos
+
+services:
+  db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - /srv/lifeos/data/postgres:/var/lib/postgresql/data
+    # Tuned for a shared 1 GB box, not copied from a larger deployment.
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=384MB
+      -c maintenance_work_mem=48MB
+      -c work_mem=4MB
+      -c max_connections=24
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    logging: &logging
+      driver: json-file
+      options: { max-size: '10m', max-file: '3' }
+    restart: unless-stopped
+
+  app:
+    image: ${LIFEOS_IMAGE}
+    environment:
+      NODE_ENV: production
+      ORIGIN: ${ORIGIN}
+      DATABASE_URL: ${DATABASE_URL}
+      LIFEOS_UPLOAD_DIR: /srv/lifeos/data/uploads
+      LIFEOS_TIMEZONE: ${LIFEOS_TIMEZONE:-America/Toronto}
+      LIFEOS_CURRENCY: ${LIFEOS_CURRENCY:-CAD}
+    volumes:
+      - /srv/lifeos/data/uploads:/srv/lifeos/data/uploads
+    depends_on:
+      db: { condition: service_healthy }
+    deploy:
+      resources:
+        limits:
+          memory: 448M
+    logging: *logging
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      # Loopback only. Tailscale Serve forwards to this.
+      - '127.0.0.1:8080:8080'
+    volumes:
+      - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [app]
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *logging
+    restart: unless-stopped

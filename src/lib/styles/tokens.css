@@ -1,0 +1,161 @@
+/*
+ * LifeOS design tokens.
+ *
+ * Three theme states must all resolve: an explicit light choice, an explicit
+ * dark choice, and the default where nothing is stamped and only the OS
+ * preference distinguishes them. Every colour is defined on bare :root first
+ * and only *redefined* in the two overrides, so no token can end up with its
+ * sole definition behind a media query.
+ */
+
+:root {
+	/* Neutrals carry a slight cool bias so they sit with the accent rather
+	   than reading as unconsidered grey. */
+	--c-bg: #fbfbfd;
+	--c-surface: #ffffff;
+	--c-surface-alt: #f3f4f8;
+	--c-border: #e2e4ec;
+	--c-text: #1b1d26;
+	--c-text-muted: #5f6478;
+	--c-accent: #4a5bd4;
+	--c-accent-text: #ffffff;
+
+	/* Semantic status, kept distinct from the accent. */
+	--c-ok: #1f7a54;
+	--c-warn: #8a5a00;
+	--c-crit: #a72b30;
+
+	--font-sans:
+		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+		'Noto Sans', sans-serif;
+	--font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+	--fs-xs: 0.78rem;
+	--fs-sm: 0.875rem;
+	--fs-base: 1rem;
+	--fs-lg: 1.15rem;
+	--fs-xl: 1.45rem;
+	--fs-2xl: 1.9rem;
+
+	--sp-1: 0.25rem;
+	--sp-2: 0.5rem;
+	--sp-3: 0.75rem;
+	--sp-4: 1rem;
+	--sp-6: 1.5rem;
+	--sp-8: 2rem;
+
+	--radius: 10px;
+	--radius-sm: 6px;
+	--shadow: 0 1px 2px rgb(16 18 32 / 0.06), 0 4px 12px rgb(16 18 32 / 0.04);
+
+	--measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--c-bg: #14151c;
+		--c-surface: #1c1e27;
+		--c-surface-alt: #23262f;
+		--c-border: #313545;
+		--c-text: #e8e9f0;
+		--c-text-muted: #a0a5ba;
+		--c-accent: #8b98f0;
+		--c-accent-text: #14151c;
+		--c-ok: #5cc699;
+		--c-warn: #e0ac52;
+		--c-crit: #f0868b;
+		--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+	}
+}
+
+:root[data-theme='dark'] {
+	--c-bg: #14151c;
+	--c-surface: #1c1e27;
+	--c-surface-alt: #23262f;
+	--c-border: #313545;
+	--c-text: #e8e9f0;
+	--c-text-muted: #a0a5ba;
+	--c-accent: #8b98f0;
+	--c-accent-text: #14151c;
+	--c-ok: #5cc699;
+	--c-warn: #e0ac52;
+	--c-crit: #f0868b;
+	--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--c-bg);
+	color: var(--c-text);
+	font-family: var(--font-sans);
+	font-size: var(--fs-base);
+	line-height: 1.55;
+	-webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+	line-height: 1.2;
+	text-wrap: balance;
+	margin: 0 0 var(--sp-3);
+}
+
+p {
+	margin: 0 0 var(--sp-4);
+	max-width: var(--measure);
+}
+
+a {
+	color: var(--c-accent);
+}
+
+:focus-visible {
+	outline: 2px solid var(--c-accent);
+	outline-offset: 2px;
+	border-radius: var(--radius-sm);
+}
+
+/* Touch targets: this is used on a phone more than a desktop. */
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+	min-height: 44px;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+.numeric {
+	font-variant-numeric: tabular-nums;
+}
+
+/* Wide content scrolls inside its own container; the page body never does. */
+.scroll-x {
+	overflow-x: auto;
+	max-width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}

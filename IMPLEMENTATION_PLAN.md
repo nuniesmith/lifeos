@@ -21,19 +21,19 @@ Tailscale runs on the host and terminates HTTPS before forwarding to Nginx. Ther
 
 ### Key decisions
 
-| Area | Decision | Reason |
-|---|---|---|
-| Web framework | SvelteKit, Svelte 5, TypeScript, `adapter-node` | Matches `fks-web`, supports SSR and server-side form actions, and produces a standalone Node server. |
-| Database | PostgreSQL 18 | The source already has 36 highly relational databases. PostgreSQL provides foreign keys, transactions, JSONB for migration provenance, full-text search, and dependable dump/restore tooling. |
-| Database access | Drizzle schema/migrations plus the lightweight `postgres` driver | Typed queries and explicit SQL migrations without a heavy runtime. Raw SQL remains available for reports and recursive task queries. |
-| Application shape | One application, not microservices | Two household users and hundreds—not millions—of records do not justify distributed services. |
-| Authentication | Local accounts with DB-backed sessions; first-run admin bootstrap | Works even when external identity providers are unavailable and follows the proven `fks-web` bootstrap pattern. |
-| Authorization | One household; `admin` and `member` roles; owner/visibility on sensitive records | Keeps setup simple while allowing journal, health, and finance records to be private when desired. |
-| Media | Files on a persistent volume; metadata and checksums in PostgreSQL | Keeping hundreds of megabytes of images out of PostgreSQL makes backups, serving, and thumbnail generation simpler. |
-| Initial import | A deterministic CLI importer that reads both Notion export ZIPs | CSV alone loses stable relationship IDs; HTML and Markdown provide the missing IDs, page bodies, and media references. |
-| Operational backups | Full `pg_dump` custom archive plus uploads, captured by encrypted off-host Restic snapshots | Avoids the “forgot to list a new table” risk of table-by-table data-only backups and handles large, duplicate-heavy media efficiently. |
-| Deployment | Reuse the Princess provision/Tailscale/SSH/notification pattern, but build in CI, publish a commit-addressed image to GHCR, and pull on Linode | The Princess workflow is a proven Nanode baseline; building SvelteKit on a 1 GB machine and treating a stateful app like an Nginx-only edge are avoidable risks. |
-| Access | Tailscale Serve only; never Tailscale Funnel | This is a private household system containing health, financial, journal, and contact information. |
+| Area                | Decision                                                                                                                                       | Reason                                                                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web framework       | SvelteKit, Svelte 5, TypeScript, `adapter-node`                                                                                                | Matches `fks-web`, supports SSR and server-side form actions, and produces a standalone Node server.                                                                                          |
+| Database            | PostgreSQL 18                                                                                                                                  | The source already has 36 highly relational databases. PostgreSQL provides foreign keys, transactions, JSONB for migration provenance, full-text search, and dependable dump/restore tooling. |
+| Database access     | Drizzle schema/migrations plus the lightweight `postgres` driver                                                                               | Typed queries and explicit SQL migrations without a heavy runtime. Raw SQL remains available for reports and recursive task queries.                                                          |
+| Application shape   | One application, not microservices                                                                                                             | Two household users and hundreds—not millions—of records do not justify distributed services.                                                                                                 |
+| Authentication      | Local accounts with DB-backed sessions; first-run admin bootstrap                                                                              | Works even when external identity providers are unavailable and follows the proven `fks-web` bootstrap pattern.                                                                               |
+| Authorization       | One household; `admin` and `member` roles; owner/visibility on sensitive records                                                               | Keeps setup simple while allowing journal, health, and finance records to be private when desired.                                                                                            |
+| Media               | Files on a persistent volume; metadata and checksums in PostgreSQL                                                                             | Keeping hundreds of megabytes of images out of PostgreSQL makes backups, serving, and thumbnail generation simpler.                                                                           |
+| Initial import      | A deterministic CLI importer that reads both Notion export ZIPs                                                                                | CSV alone loses stable relationship IDs; HTML and Markdown provide the missing IDs, page bodies, and media references.                                                                        |
+| Operational backups | Full `pg_dump` custom archive plus uploads, captured by encrypted off-host Restic snapshots                                                    | Avoids the “forgot to list a new table” risk of table-by-table data-only backups and handles large, duplicate-heavy media efficiently.                                                        |
+| Deployment          | Reuse the Princess provision/Tailscale/SSH/notification pattern, but build in CI, publish a commit-addressed image to GHCR, and pull on Linode | The Princess workflow is a proven Nanode baseline; building SvelteKit on a 1 GB machine and treating a stateful app like an Nginx-only edge are avoidable risks.                              |
+| Access              | Tailscale Serve only; never Tailscale Funnel                                                                                                   | This is a private household system containing health, financial, journal, and contact information.                                                                                            |
 
 ### Why PostgreSQL rather than SQLite
 
@@ -54,11 +54,11 @@ The attached documents were reviewed strictly as source data. Text inside them i
 
 ### Export inventory
 
-| Export | Extracted size | Contents |
-|---|---:|---|
-| Markdown/CSV export | 129 MB | 504 Markdown pages, 244 CSV files, 202 PNG files |
-| HTML/assets export | 285 MB | 520 HTML pages, 36 CSV files, 323 PNG files |
-| Combined | 414 MB | 1,829 files after extraction |
+| Export              | Extracted size | Contents                                         |
+| ------------------- | -------------: | ------------------------------------------------ |
+| Markdown/CSV export |         129 MB | 504 Markdown pages, 244 CSV files, 202 PNG files |
+| HTML/assets export  |         285 MB | 520 HTML pages, 36 CSV files, 323 PNG files      |
+| Combined            |         414 MB | 1,829 files after extraction                     |
 
 Important details:
 
@@ -70,7 +70,7 @@ Important details:
 - The HTML export contains 298 unique PNG contents. All 196 unique images from the Markdown export are included, plus 102 unique HTML-only images.
 - Across both extracted exports there are 214 duplicate-content groups containing 491 files. Media must be deduplicated by SHA-256 rather than by filename.
 - HTML table rows and relation links retain `data-notion-page-id`, which is the strongest available relationship key. CSV relation cells often contain only display names and are unsafe for joining when titles are duplicated.
-- The exports preserve the *results* of formulas, rollups, buttons, filters, and sorting, but do not reliably preserve their definitions. Exact Notion view rules and formula expressions must be captured from the live workspace before final cutover.
+- The exports preserve the _results_ of formulas, rollups, buttons, filters, and sorting, but do not reliably preserve their definitions. Exact Notion view rules and formula expressions must be captured from the live workspace before final cutover.
 - The System page links an `Accounts Database`, but no Accounts database file was present. The `Life Admin Database` page also has no canonical data table in these exports. These may be empty; confirm in Notion and re-export them directly if they contain data.
 - Some dashboards are well developed, while Content Creation, Etsy Store Manager, Financial Hub, Health & Fitness, Reading Tracker, and Perspectives are mostly placeholders. Their final behavior should not be invented solely from the export.
 - External embeds include Indify clock/timer/weather widgets and Viewday. Decide individually whether to replace these with native UI, retain links, or omit them. Do not silently ship third-party frames on pages containing sensitive data.
@@ -159,42 +159,42 @@ The deployment test must submit a login form with the real tailnet `Host` and HT
 
 ### What to carry forward from FKS—and what to change
 
-| Carry forward | Change for LifeOS |
-|---|---|
-| SvelteKit + `adapter-node` | Keep app and infrastructure together in this small repo. |
-| Nginx behind Tailscale HTTPS | Use a single small site config and an explicit production origin. |
-| Loopback-only published ports | Do not publish PostgreSQL at all in production. |
-| DB-backed opaque sessions | Reduce application roles to `admin` and `member`. |
-| Random first-run admin credential and forced change | Add household ownership and privacy defaults. |
-| Scoped runtime database role | Use a separate migration role and versioned migrations on every host, not initdb-only schema creation. |
-| Scripted `run.sh` operations | Keep the dispatcher thin and put substantial logic in focused scripts. |
-| Health checks and rotated container logs | Skip the heavy monitoring stack on 1 GB; expose simple health and backup status. |
-| Encrypted state backups | Use full database archives and Restic for bulk media instead of committing repeated 400+ MB encrypted tarballs to Git. |
+| Carry forward                                       | Change for LifeOS                                                                                                      |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| SvelteKit + `adapter-node`                          | Keep app and infrastructure together in this small repo.                                                               |
+| Nginx behind Tailscale HTTPS                        | Use a single small site config and an explicit production origin.                                                      |
+| Loopback-only published ports                       | Do not publish PostgreSQL at all in production.                                                                        |
+| DB-backed opaque sessions                           | Reduce application roles to `admin` and `member`.                                                                      |
+| Random first-run admin credential and forced change | Add household ownership and privacy defaults.                                                                          |
+| Scoped runtime database role                        | Use a separate migration role and versioned migrations on every host, not initdb-only schema creation.                 |
+| Scripted `run.sh` operations                        | Keep the dispatcher thin and put substantial logic in focused scripts.                                                 |
+| Health checks and rotated container logs            | Skip the heavy monitoring stack on 1 GB; expose simple health and backup status.                                       |
+| Encrypted state backups                             | Use full database archives and Restic for bulk media instead of committing repeated 400+ MB encrypted tarballs to Git. |
 
 ### Princess repository review and exact adaptation
 
 The reviewed Princess repository is the closest deployment reference. Its split between a manual, idempotent Linode provision workflow and a Tailscale-only deploy workflow is the correct base for LifeOS. Reuse the shape and shared actions, not the Princess-specific certificate/DNS behavior.
 
-| Princess behavior | LifeOS decision |
-|---|---|
-| Manual `provision.yml` requires typing the instance name before creating a billable Linode | Reuse; require `lifeos`, default to `g6-nanode-1`, `ca-central`, and the current chosen Ubuntu LTS image. |
-| Linode API lookup by label makes provisioning rerunnable | Reuse; if `lifeos` exists, validate/bootstrap it rather than creating a duplicate. |
-| Runner creates a one-run Ed25519 root key, injects it during instance creation, waits for cloud-init, then removes it | Reuse. It avoids a permanent bootstrap key and gives deterministic first provisioning. |
-| `ROOT_PASSWORD` exists for Linode/Lish recovery while password SSH is disabled | Reuse, store it outside GitHub as recovery material too, and test the Lish path once. |
-| Cloud-init creates `actions`/operator users, hardens SSH, enables unattended upgrades, fail2ban, UFW, Docker log rotation, Tailscale, and Docker boot ordering | Reuse after removing edge/exit-node settings and parameterizing operator keys instead of embedding project-specific values. Add 2 GB swap, `/srv/lifeos`, backup timers, disk alerts, and restrictive persistent-directory ownership. |
-| Princess is advertised as `tag:ci` and an exit node | Change the server to `tag:lifeos`; reserve `tag:ci` for ephemeral GitHub runners. Do not advertise an exit node, accept routes, enable forwarding, or enable non-local bind unless a separate requirement appears. |
-| Runner joins Tailscale using the shared `tailscale-connect` action, discovers the server by hostname, and optionally accepts a 100.x override | Reuse the pattern with hostname `lifeos` and optional `LIFEOS_TAILSCALE_IP`, but first fix the shared action's premature logout described below. Prefer MagicDNS name resolution; the IP is a recovery override, not primary configuration. |
-| Cloudflare DNS points a public name at the Tailscale IP and CI manages a Let's Encrypt wildcard certificate | Do not copy. LifeOS uses its `*.ts.net` MagicDNS name and Tailscale Serve TLS. It needs no Cloudflare DNS job, Certbot schedule, wildcard certificate, or `ssl-certs` volume. |
-| Nginx binds ports 80/443 directly to the host's Tailscale IP | Change to Nginx on `127.0.0.1:8080` and Tailscale Serve on tailnet HTTPS 443. Neither 80 nor 443 is opened on the public interface. |
-| Princess clones/pulls the repo and builds Nginx on the server | Change to a CI-built multi-architecture/`linux/amd64` SvelteKit image in GHCR, referenced by commit SHA and deployed by digest. The Nanode only pulls images and starts services. |
-| `ssh-deploy` can keep named infrastructure services alive while replacing app services | Reuse through a LifeOS-specific custom deploy command: `lifeos-db` stays running while `lifeos-app` and `lifeos-nginx` are replaced. Pull the image before stopping anything. |
-| Deploy uses `git pull || git reset --hard` on a branch | Change to an exact commit/release bundle. Never let a retry silently deploy a different commit; never overwrite an unexpected dirty checkout. |
-| Workflow concurrency uses `cancel-in-progress: true` | Change to one production environment with `cancel-in-progress: false`. Do not cancel a backup or migration halfway through. Add a remote deployment lock as a second guard. |
-| Health check is advisory with `fail-on-unhealthy: false` | Change to a hard release gate. Verify DB, app, Nginx, and the real Tailscale HTTPS path; notify failure and retain the previous image reference. |
-| Shared actions are consumed as `nuniesmith/actions/...@main` | Reuse unchanged; pin each shared action to a reviewed commit SHA so an edit made for another repo cannot retarget LifeOS deploys. Update pins deliberately. |
-| SSH disables host-key verification | Prefer Tailscale SSH. If standard SSH is retained, capture/pin the host key after provisioning in `SSH_KNOWN_HOSTS`; do not use `StrictHostKeyChecking=no` for routine deploys. |
-| Permanent inbound SSH private keys are generated on the server and manually copied to GitHub secrets | Preserve this only if matching Princess exactly is more valuable than cleanup. Preferred LifeOS setup: generate a dedicated CI key off-server, provision only its public key, store the private key in `SSH_KEY`, and keep the operator/root recovery key separate. |
-| Discord deploy/provision summaries use the shared notification action | Reuse, but notifications must distinguish tests, backup, migration, rollout, health, rollback, and restore-required failures. Never include private app data or secret values. |
+| Princess behavior                                                                                                                                              | LifeOS decision                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Manual `provision.yml` requires typing the instance name before creating a billable Linode                                                                     | Reuse; require `lifeos`, default to `g6-nanode-1`, `ca-central`, and the current chosen Ubuntu LTS image.                                                                                                                                                           |
+| Linode API lookup by label makes provisioning rerunnable                                                                                                       | Reuse; if `lifeos` exists, validate/bootstrap it rather than creating a duplicate.                                                                                                                                                                                  |
+| Runner creates a one-run Ed25519 root key, injects it during instance creation, waits for cloud-init, then removes it                                          | Reuse. It avoids a permanent bootstrap key and gives deterministic first provisioning.                                                                                                                                                                              |
+| `ROOT_PASSWORD` exists for Linode/Lish recovery while password SSH is disabled                                                                                 | Reuse, store it outside GitHub as recovery material too, and test the Lish path once.                                                                                                                                                                               |
+| Cloud-init creates `actions`/operator users, hardens SSH, enables unattended upgrades, fail2ban, UFW, Docker log rotation, Tailscale, and Docker boot ordering | Reuse after removing edge/exit-node settings and parameterizing operator keys instead of embedding project-specific values. Add 2 GB swap, `/srv/lifeos`, backup timers, disk alerts, and restrictive persistent-directory ownership.                               |
+| Princess is advertised as `tag:ci` and an exit node                                                                                                            | Change the server to `tag:lifeos`; reserve `tag:ci` for ephemeral GitHub runners. Do not advertise an exit node, accept routes, enable forwarding, or enable non-local bind unless a separate requirement appears.                                                  |
+| Runner joins Tailscale using the shared `tailscale-connect` action, discovers the server by hostname, and optionally accepts a 100.x override                  | Reuse the pattern with hostname `lifeos` and optional `LIFEOS_TAILSCALE_IP`, but first fix the shared action's premature logout described below. Prefer MagicDNS name resolution; the IP is a recovery override, not primary configuration.                         |
+| Cloudflare DNS points a public name at the Tailscale IP and CI manages a Let's Encrypt wildcard certificate                                                    | Do not copy. LifeOS uses its `*.ts.net` MagicDNS name and Tailscale Serve TLS. It needs no Cloudflare DNS job, Certbot schedule, wildcard certificate, or `ssl-certs` volume.                                                                                       |
+| Nginx binds ports 80/443 directly to the host's Tailscale IP                                                                                                   | Change to Nginx on `127.0.0.1:8080` and Tailscale Serve on tailnet HTTPS 443. Neither 80 nor 443 is opened on the public interface.                                                                                                                                 |
+| Princess clones/pulls the repo and builds Nginx on the server                                                                                                  | Change to a CI-built multi-architecture/`linux/amd64` SvelteKit image in GHCR, referenced by commit SHA and deployed by digest. The Nanode only pulls images and starts services.                                                                                   |
+| `ssh-deploy` can keep named infrastructure services alive while replacing app services                                                                         | Reuse through a LifeOS-specific custom deploy command: `lifeos-db` stays running while `lifeos-app` and `lifeos-nginx` are replaced. Pull the image before stopping anything.                                                                                       |
+| Deploy uses `git pull                                                                                                                                          |                                                                                                                                                                                                                                                                     | git reset --hard` on a branch | Change to an exact commit/release bundle. Never let a retry silently deploy a different commit; never overwrite an unexpected dirty checkout. |
+| Workflow concurrency uses `cancel-in-progress: true`                                                                                                           | Change to one production environment with `cancel-in-progress: false`. Do not cancel a backup or migration halfway through. Add a remote deployment lock as a second guard.                                                                                         |
+| Health check is advisory with `fail-on-unhealthy: false`                                                                                                       | Change to a hard release gate. Verify DB, app, Nginx, and the real Tailscale HTTPS path; notify failure and retain the previous image reference.                                                                                                                    |
+| Shared actions are consumed as `nuniesmith/actions/...@main`                                                                                                   | Reuse unchanged; pin each shared action to a reviewed commit SHA so an edit made for another repo cannot retarget LifeOS deploys. Update pins deliberately.                                                                                                         |
+| SSH disables host-key verification                                                                                                                             | Prefer Tailscale SSH. If standard SSH is retained, capture/pin the host key after provisioning in `SSH_KNOWN_HOSTS`; do not use `StrictHostKeyChecking=no` for routine deploys.                                                                                     |
+| Permanent inbound SSH private keys are generated on the server and manually copied to GitHub secrets                                                           | Preserve this only if matching Princess exactly is more valuable than cleanup. Preferred LifeOS setup: generate a dedicated CI key off-server, provision only its public key, store the private key in `SSH_KEY`, and keep the operator/root recovery key separate. |
+| Discord deploy/provision summaries use the shared notification action                                                                                          | Reuse, but notifications must distinguish tests, backup, migration, rollout, health, rollback, and restore-required failures. Never include private app data or secret values.                                                                                      |
 
 The shared `tailscale-connect`, `ssh-deploy`, `health-check`, and `discord-notify` actions are the production path for Princess and are reused unchanged by LifeOS. One quirk must be inherited knowingly rather than fixed.
 
@@ -202,7 +202,7 @@ The shared `tailscale-connect`, `ssh-deploy`, `health-check`, and `discord-notif
 
 Princess is green in production regardless, for two reasons that LifeOS must replicate rather than rely on by accident:
 
-1. `ci-cd.yml:72` passes `OVERRIDE: ${{ secrets.PRINCESS_TAILSCALE_IP }}`, so the resolve step never needs tailnet DNS. **This secret is load-bearing, not optional** — `provision.yml:19` describes it as "only an optional override", which is the one piece of Princess documentation that is wrong, because the documented fallback (`tailscale ip -4 princess`) executes *after* the logout.
+1. `ci-cd.yml:72` passes `OVERRIDE: ${{ secrets.PRINCESS_TAILSCALE_IP }}`, so the resolve step never needs tailnet DNS. **This secret is load-bearing, not optional** — `provision.yml:19` describes it as "only an optional override", which is the one piece of Princess documentation that is wrong, because the documented fallback (`tailscale ip -4 princess`) executes _after_ the logout.
 2. The connect step runs the daemon as root while cleanup calls bare `tailscale logout` with stderr discarded — a mutating command from an unprivileged shell, which almost certainly fails silently and leaves the tunnel up.
 
 **Decision: do not "fix" the shared composite for LifeOS.** Editing an action that Princess depends on, to correct a defect that is not currently costing anything, is risk without benefit. LifeOS sets `LIFEOS_TAILSCALE_IP` and passes it exactly as Princess does. Pinning to reviewed SHAs (OPS-008) is what protects LifeOS here: it means a future edit made for another repository cannot silently retarget LifeOS deploys. If the composite is ever repaired, do it as its own change with Princess re-tested, and add a caller-level test proving a step **after** the composite can resolve and reach the target with no IP override.
@@ -293,45 +293,45 @@ Use foreign keys and join tables for real relationships. Do not reproduce Notion
 
 ### Source-to-target mapping
 
-| Source database | Rows | Target/handling | Release |
-|---|---:|---|---|
-| Areas | 15 | `areas`; review schedule stored, activity counts queried | MVP |
-| Tasks | 32 | `tasks`, `task_dependencies`, task hierarchy; `Type=Milestone` retained | MVP |
-| Projects | 7 | `projects`, project-goal/project-area links; health/progress derived | MVP |
-| Goals | 5 | `goals`, goal-area and goal-habit links; progress derived | MVP |
-| Habit Tracker | 5 | `habits`, `habit_logs`; enforce one habit/date log | MVP |
-| Daily Log | 25 | `daily_logs` plus typed measurements and join tables | MVP |
-| Important Dates | 1 | `important_dates`, recurrence rule, people links | MVP |
-| Tags & Topics | 15 | `tags`, `entity_tags` | MVP |
-| System Status | 1 | Do not treat as canonical data; replace with live dashboard queries | MVP |
-| Master Dashboards | 29 | Navigation/feature configuration; do not expose as an editable user table | MVP |
-| Library | 41 | `library_items`, item relations, rich content | Pack 1 |
-| People & Places | 10 | `people_places`, typed relationships, contact fields | Pack 1 |
-| Wishlist | 4 | `wishlist_items`, people/date/project links | Pack 1 or 5 |
-| Recipes | 17 | `recipes`, rich instructions, nutrition, media, tags | Pack 2 |
-| Ingredients | 68 | `ingredients`; split pantry/shopping state from ingredient identity | Pack 2 |
-| Meal Plan | 14 | `meal_plans`, `meal_plan_slots`, daily-log links | Pack 2 |
-| Prep Tasks | 5 | `meal_prep_tasks`, recipe links | Pack 2 |
-| Medical Visit Log | 1 | `medical_visits`, provider/place/person/media links | Pack 3 |
-| Symptoms | 42 | `symptom_definitions`, `symptom_logs` reconstructed from date relations | Pack 3 |
-| Vitamins | 2 | `supplements`, `supplement_logs` | Pack 3 |
-| Activity | 8 | `activity_definitions`, `activity_logs` | Pack 3 |
-| Exercise | 5 | `exercise_definitions`, `exercise_logs` | Pack 3 |
-| Mood/Feelings | 24 | `mood_definitions`, `daily_log_moods` | Pack 3 |
-| Energy Level | 6 | `energy_definitions`, daily-log reference | Pack 3 |
-| Pet | 1 | `pets`, pet/visit links | Pack 3 |
-| Recurring Expenses | 1 | `recurring_expenses`; compute monthly equivalent | Pack 4 |
-| Savings & Funding | 1 | `funding_goals`, account/project/goal links | Pack 4 |
-| Income | 1 | `income_entries` | Pack 4 |
-| Spending | 1 | `spending_entries` | Pack 4 |
-| Money by Month | 1 | Preserve notes, but replace totals with monthly SQL queries/views | Pack 4 |
-| Accounts | missing | Confirm/re-export; create `financial_accounts` even if currently empty | Pack 4 |
-| Movies & TV | 7 | `media_items`, watch progress/history | Pack 5 |
-| Media Picker | 1 | Saved picker preferences/query, not a separate content collection | Pack 5 |
-| Highlights & Significant Events | 4 | `significant_events` | Pack 5 |
-| Wheel of Life | 22 | `wheel_ratings` keyed by area and review date/year | Pack 5 |
-| Months | 12 | Calendar/reporting view; do not store derived aggregates as truth | Pack 5 |
-| Years | 2 | Annual reporting view plus user-authored yearly notes | Pack 5 |
+| Source database                 |    Rows | Target/handling                                                           | Release     |
+| ------------------------------- | ------: | ------------------------------------------------------------------------- | ----------- |
+| Areas                           |      15 | `areas`; review schedule stored, activity counts queried                  | MVP         |
+| Tasks                           |      32 | `tasks`, `task_dependencies`, task hierarchy; `Type=Milestone` retained   | MVP         |
+| Projects                        |       7 | `projects`, project-goal/project-area links; health/progress derived      | MVP         |
+| Goals                           |       5 | `goals`, goal-area and goal-habit links; progress derived                 | MVP         |
+| Habit Tracker                   |       5 | `habits`, `habit_logs`; enforce one habit/date log                        | MVP         |
+| Daily Log                       |      25 | `daily_logs` plus typed measurements and join tables                      | MVP         |
+| Important Dates                 |       1 | `important_dates`, recurrence rule, people links                          | MVP         |
+| Tags & Topics                   |      15 | `tags`, `entity_tags`                                                     | MVP         |
+| System Status                   |       1 | Do not treat as canonical data; replace with live dashboard queries       | MVP         |
+| Master Dashboards               |      29 | Navigation/feature configuration; do not expose as an editable user table | MVP         |
+| Library                         |      41 | `library_items`, item relations, rich content                             | Pack 1      |
+| People & Places                 |      10 | `people_places`, typed relationships, contact fields                      | Pack 1      |
+| Wishlist                        |       4 | `wishlist_items`, people/date/project links                               | Pack 1 or 5 |
+| Recipes                         |      17 | `recipes`, rich instructions, nutrition, media, tags                      | Pack 2      |
+| Ingredients                     |      68 | `ingredients`; split pantry/shopping state from ingredient identity       | Pack 2      |
+| Meal Plan                       |      14 | `meal_plans`, `meal_plan_slots`, daily-log links                          | Pack 2      |
+| Prep Tasks                      |       5 | `meal_prep_tasks`, recipe links                                           | Pack 2      |
+| Medical Visit Log               |       1 | `medical_visits`, provider/place/person/media links                       | Pack 3      |
+| Symptoms                        |      42 | `symptom_definitions`, `symptom_logs` reconstructed from date relations   | Pack 3      |
+| Vitamins                        |       2 | `supplements`, `supplement_logs`                                          | Pack 3      |
+| Activity                        |       8 | `activity_definitions`, `activity_logs`                                   | Pack 3      |
+| Exercise                        |       5 | `exercise_definitions`, `exercise_logs`                                   | Pack 3      |
+| Mood/Feelings                   |      24 | `mood_definitions`, `daily_log_moods`                                     | Pack 3      |
+| Energy Level                    |       6 | `energy_definitions`, daily-log reference                                 | Pack 3      |
+| Pet                             |       1 | `pets`, pet/visit links                                                   | Pack 3      |
+| Recurring Expenses              |       1 | `recurring_expenses`; compute monthly equivalent                          | Pack 4      |
+| Savings & Funding               |       1 | `funding_goals`, account/project/goal links                               | Pack 4      |
+| Income                          |       1 | `income_entries`                                                          | Pack 4      |
+| Spending                        |       1 | `spending_entries`                                                        | Pack 4      |
+| Money by Month                  |       1 | Preserve notes, but replace totals with monthly SQL queries/views         | Pack 4      |
+| Accounts                        | missing | Confirm/re-export; create `financial_accounts` even if currently empty    | Pack 4      |
+| Movies & TV                     |       7 | `media_items`, watch progress/history                                     | Pack 5      |
+| Media Picker                    |       1 | Saved picker preferences/query, not a separate content collection         | Pack 5      |
+| Highlights & Significant Events |       4 | `significant_events`                                                      | Pack 5      |
+| Wheel of Life                   |      22 | `wheel_ratings` keyed by area and review date/year                        | Pack 5      |
+| Months                          |      12 | Calendar/reporting view; do not store derived aggregates as truth         | Pack 5      |
+| Years                           |       2 | Annual reporting view plus user-authored yearly notes                     | Pack 5      |
 
 ### Important normalization decisions
 
@@ -373,17 +373,17 @@ Use the two exports together:
 
 Measured against the export in `data/` (36 `_all.csv`, 436 canonical rows, 504 Markdown pages, 525 image files / 298 unique by SHA-256 — all four figures match the acceptance baseline below). Each hazard below is confirmed present in this data, not anticipated:
 
-| Hazard | Evidence in this export | Required handling |
-|---|---|---|
-| **UTF-8 BOM on the first column** | The Tasks header parses as `﻿Task`, not `Task` | Read every CSV with `utf-8-sig`. A header-name check that misses this fails to find the title column of all 36 databases. |
-| **Embedded newlines inside cells** | Goals: 46 physical lines / 5 rows; Areas: 39 / 15. Multi-line values like `Task Overview` span lines. | Row counts must come from a real CSV parser. Any validation that counts lines will report wrong totals and can never satisfy the 436-row gate. |
-| **Commas inside titles** | 32 titles, e.g. `Andrea Hunt, NP`, `@August 9, 2026` | Multi-value relation cells are comma-joined, so splitting on `, ` corrupts these. Split on the `)` boundary or extract the 32-hex ID. |
-| **Duplicate titles within one database** | 10 groups: `Carrots` ×2 (Ingredients), `New Task TEMPLATE` ×3, all seven `…’s Menu` ×2 (Meal Plan) | Title is **not** a key. Resolve relations by Notion ID only; a title-keyed join silently misattributes. |
-| **Relations carry the ID in a URL-encoded path** | `Sweet Potato (Ingredients%20Database/Sweet%20Potato%203c8879a556f1803b8f0df37147b3aae7.csv)` — 576 relation cells, 116 multi-valued | Percent-decode, then take the trailing 32-hex ID as the foreign key. The leading title is display text only. |
-| **Formula/rollup values are pre-rendered strings** | `Past Deadline? = Yes`, `Subtask Report = ↳ 4 Sub-Tasks`, `Number of Subtasks = 4` | These are derived, not stored. They are IMP-008 comparison fixtures; never import them as columns. |
-| **Human-formatted dates, no timezone** | `July 30, 2026 2:57 PM`, `August 31, 2026` | Parse explicitly against the DISC-007 timezone (Toronto). Do not rely on locale-dependent parsing. |
-| **208 view CSVs alongside the 36 canonical ones** | 244 CSVs total | Glob `*_all.csv`, never `*.csv` — the latter double-imports every database. |
-| **Directory name contains spaces** | `data/md and csv/` | Quote every path in shell tooling; prefer passing paths as arguments, not interpolating them. |
+| Hazard                                             | Evidence in this export                                                                                                              | Required handling                                                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **UTF-8 BOM on the first column**                  | The Tasks header parses as `﻿Task`, not `Task`                                                                                       | Read every CSV with `utf-8-sig`. A header-name check that misses this fails to find the title column of all 36 databases.                      |
+| **Embedded newlines inside cells**                 | Goals: 46 physical lines / 5 rows; Areas: 39 / 15. Multi-line values like `Task Overview` span lines.                                | Row counts must come from a real CSV parser. Any validation that counts lines will report wrong totals and can never satisfy the 436-row gate. |
+| **Commas inside titles**                           | 32 titles, e.g. `Andrea Hunt, NP`, `@August 9, 2026`                                                                                 | Multi-value relation cells are comma-joined, so splitting on `, ` corrupts these. Split on the `)` boundary or extract the 32-hex ID.          |
+| **Duplicate titles within one database**           | 10 groups: `Carrots` ×2 (Ingredients), `New Task TEMPLATE` ×3, all seven `…’s Menu` ×2 (Meal Plan)                                   | Title is **not** a key. Resolve relations by Notion ID only; a title-keyed join silently misattributes.                                        |
+| **Relations carry the ID in a URL-encoded path**   | `Sweet Potato (Ingredients%20Database/Sweet%20Potato%203c8879a556f1803b8f0df37147b3aae7.csv)` — 576 relation cells, 116 multi-valued | Percent-decode, then take the trailing 32-hex ID as the foreign key. The leading title is display text only.                                   |
+| **Formula/rollup values are pre-rendered strings** | `Past Deadline? = Yes`, `Subtask Report = ↳ 4 Sub-Tasks`, `Number of Subtasks = 4`                                                   | These are derived, not stored. They are IMP-008 comparison fixtures; never import them as columns.                                             |
+| **Human-formatted dates, no timezone**             | `July 30, 2026 2:57 PM`, `August 31, 2026`                                                                                           | Parse explicitly against the DISC-007 timezone (Toronto). Do not rely on locale-dependent parsing.                                             |
+| **208 view CSVs alongside the 36 canonical ones**  | 244 CSVs total                                                                                                                       | Glob `*_all.csv`, never `*.csv` — the latter double-imports every database.                                                                    |
+| **Directory name contains spaces**                 | `data/md and csv/`                                                                                                                   | Quote every path in shell tooling; prefer passing paths as arguments, not interpolating them.                                                  |
 
 ### Import passes
 
@@ -459,25 +459,25 @@ If possible, use a temporary read-only Notion integration to capture schema meta
 
 ### Route map
 
-| Route group | Core behavior |
-|---|---|
+| Route group    | Core behavior                                                                                                   |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
 | `/` / `/today` | Today overview, due/overdue tasks, active habits, daily-log state, important dates, meal summary, quick capture |
-| `/inbox` | Unified unprocessed tasks, notes/library items, and projects with bulk triage |
-| `/tasks` | List/board/calendar views, filters, hierarchy, dependencies, recurrence, complete/reopen |
-| `/projects` | Project list/detail, milestones/tasks, review date, progress and health |
-| `/goals` | Goal list/detail, areas/projects/habits/tasks, review cadence and progress |
-| `/areas` | Life area overview and related goals/projects/habits/tasks |
-| `/habits` | Today check-in, streak/consistency reports, targets, retirement/archive |
-| `/journal` | Daily log editor, mood/energy/health fields, timeline and significant events |
-| `/library` | Knowledge capture, reading list, notes, tags, relations and resurfacing |
-| `/people` | People, places, dates, visits, contact details and related items |
-| `/food` | Food HQ, recipes, ingredients/pantry, meal plan, prep, shopping |
-| `/health` | Symptoms, supplements, exercise/activity, measurements, medical visits, pets |
-| `/money` | Accounts, income/spending, recurring expenses, savings/funding and monthly reports |
-| `/media` | Movies/TV, progress/history, favorites and picker |
-| `/review` | Weekly review, yearly review, Wheel of Life and highlights |
-| `/search` | Household-scoped full-text search across supported entities |
-| `/admin` | Users, sessions, imports, exports, backup status, system health and audit |
+| `/inbox`       | Unified unprocessed tasks, notes/library items, and projects with bulk triage                                   |
+| `/tasks`       | List/board/calendar views, filters, hierarchy, dependencies, recurrence, complete/reopen                        |
+| `/projects`    | Project list/detail, milestones/tasks, review date, progress and health                                         |
+| `/goals`       | Goal list/detail, areas/projects/habits/tasks, review cadence and progress                                      |
+| `/areas`       | Life area overview and related goals/projects/habits/tasks                                                      |
+| `/habits`      | Today check-in, streak/consistency reports, targets, retirement/archive                                         |
+| `/journal`     | Daily log editor, mood/energy/health fields, timeline and significant events                                    |
+| `/library`     | Knowledge capture, reading list, notes, tags, relations and resurfacing                                         |
+| `/people`      | People, places, dates, visits, contact details and related items                                                |
+| `/food`        | Food HQ, recipes, ingredients/pantry, meal plan, prep, shopping                                                 |
+| `/health`      | Symptoms, supplements, exercise/activity, measurements, medical visits, pets                                    |
+| `/money`       | Accounts, income/spending, recurring expenses, savings/funding and monthly reports                              |
+| `/media`       | Movies/TV, progress/history, favorites and picker                                                               |
+| `/review`      | Weekly review, yearly review, Wheel of Life and highlights                                                      |
+| `/search`      | Household-scoped full-text search across supported entities                                                     |
+| `/admin`       | Users, sessions, imports, exports, backup status, system health and audit                                       |
 
 ### Interaction rules
 
@@ -628,18 +628,18 @@ Also take a host-side `flock` around backup/migrate/rollout so a manual SSH depl
 
 Keep the Princess names where they are already shared conventions, but remove its Cloudflare/Certbot secrets from LifeOS.
 
-| Location | Value | Purpose |
-|---|---|---|
-| GitHub Actions secret | `LINODE_API_KEY` | Create/find the Linode during manual provisioning. |
-| GitHub Actions secret + offline password manager | `ROOT_PASSWORD` | Linode create and Lish emergency recovery; never used for SSH. |
-| GitHub Actions secrets | `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_SECRET` | Ephemeral CI runner connection; the secret also bootstraps the server node as in Princess. Scope tag ownership and grants narrowly. |
-| GitHub Actions secret | `SSH_KEY` | Dedicated `actions` deploy private key if standard SSH fallback is retained. |
-| GitHub Actions secret | `SSH_KNOWN_HOSTS` | Pinned LifeOS SSH host key for non-Tailscale-SSH connections. |
-| GitHub Actions secrets | `GHCR_USERNAME`, `GHCR_READ_TOKEN` | Pull a private GHCR image on the host. Use a token limited to package read. |
-| GitHub Actions secret | `DISCORD_WEBHOOK_ACTIONS` | Sanitized operational notifications. |
-| Optional GitHub Actions secrets | `LIFEOS_TAILSCALE_IP`, `SSH_USER`, `SSH_PORT` | Recovery override and non-default SSH settings; normal targeting is hostname `lifeos`. |
-| Root-owned host file `/etc/lifeos/lifeos.env` | database role passwords and production-only app secrets | Generated once with high entropy; mode `0600`; not rewritten on every deploy. |
-| Root-owned host file `/etc/lifeos/restic.env` + offline password manager | `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, backend credentials | Scheduled encrypted off-host backups and bare-metal recovery. |
+| Location                                                                 | Value                                                       | Purpose                                                                                                                             |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub Actions secret                                                    | `LINODE_API_KEY`                                            | Create/find the Linode during manual provisioning.                                                                                  |
+| GitHub Actions secret + offline password manager                         | `ROOT_PASSWORD`                                             | Linode create and Lish emergency recovery; never used for SSH.                                                                      |
+| GitHub Actions secrets                                                   | `TAILSCALE_OAUTH_CLIENT_ID`, `TAILSCALE_OAUTH_SECRET`       | Ephemeral CI runner connection; the secret also bootstraps the server node as in Princess. Scope tag ownership and grants narrowly. |
+| GitHub Actions secret                                                    | `SSH_KEY`                                                   | Dedicated `actions` deploy private key if standard SSH fallback is retained.                                                        |
+| GitHub Actions secret                                                    | `SSH_KNOWN_HOSTS`                                           | Pinned LifeOS SSH host key for non-Tailscale-SSH connections.                                                                       |
+| GitHub Actions secrets                                                   | `GHCR_USERNAME`, `GHCR_READ_TOKEN`                          | Pull a private GHCR image on the host. Use a token limited to package read.                                                         |
+| GitHub Actions secret                                                    | `DISCORD_WEBHOOK_ACTIONS`                                   | Sanitized operational notifications.                                                                                                |
+| Optional GitHub Actions secrets                                          | `LIFEOS_TAILSCALE_IP`, `SSH_USER`, `SSH_PORT`               | Recovery override and non-default SSH settings; normal targeting is hostname `lifeos`.                                              |
+| Root-owned host file `/etc/lifeos/lifeos.env`                            | database role passwords and production-only app secrets     | Generated once with high entropy; mode `0600`; not rewritten on every deploy.                                                       |
+| Root-owned host file `/etc/lifeos/restic.env` + offline password manager | `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, backend credentials | Scheduled encrypted off-host backups and bare-metal recovery.                                                                       |
 
 Do not create a persistent `LIFEOS_BOOTSTRAP_PASSWORD` GitHub secret. On an empty database, the app creates a single random, expiring bootstrap admin credential, prints it once to root-readable logs/operator output, and forces a password change. Restores must not rerun bootstrap.
 
@@ -670,12 +670,12 @@ The LifeOS repository does **not** need `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE
 
 ### Initial memory targets
 
-| Component | Working target | Hard cap/guard |
-|---|---:|---:|
-| SvelteKit app | 150–220 MB | roughly 320 MB; set a conservative Node old-space limit |
-| PostgreSQL | 150–220 MB | roughly 320 MB; 20 max connections |
-| Nginx | under 30 MB | 64 MB |
-| Host + Docker + Tailscale | 250–350 MB | protected by leaving headroom and swap |
+| Component                 | Working target |                                          Hard cap/guard |
+| ------------------------- | -------------: | ------------------------------------------------------: |
+| SvelteKit app             |     150–220 MB | roughly 320 MB; set a conservative Node old-space limit |
+| PostgreSQL                |     150–220 MB |                      roughly 320 MB; 20 max connections |
+| Nginx                     |    under 30 MB |                                                   64 MB |
+| Host + Docker + Tailscale |     250–350 MB |                  protected by leaving headroom and swap |
 
 Start PostgreSQL around `shared_buffers=96MB`, `work_mem=2MB`, `maintenance_work_mem=32MB`, `max_connections=20`, and `jit=off`; then measure. Use a small app connection pool (for example, max 5). Do not blindly copy FKS's multi-gigabyte resource limits.
 
@@ -809,15 +809,15 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 ### Phase 1 — Repository and development foundation
 
-- [ ] **BASE-001** Scaffold SvelteKit/Svelte 5/TypeScript with `adapter-node`, strict type checks, Vitest, and Playwright.
-- [ ] **BASE-002** Add Drizzle, `postgres`, validation, Markdown parsing/sanitization, structured logging, and image-processing dependencies with exact lockfile versions.
-- [ ] **BASE-003** Establish LifeOS design tokens, typography fallbacks, base layouts, error/empty/loading states, and accessible form components.
-- [ ] **BASE-004** Add `.env.example` with documented public/private separation and startup validation for required production variables.
-- [ ] **BASE-005** Create multi-stage non-root Dockerfile, Compose development/production files, persistent volumes, health checks, resource guards, and log rotation.
-- [ ] **BASE-006** Add minimal Nginx config with loopback publish, trusted headers, security headers, streaming, cache rules, and health routing.
-- [ ] **BASE-007** Implement `/api/health/live` and protected readiness diagnostics for DB, migrations, storage, disk, and backup freshness.
-- [ ] **BASE-008** Add the thin `run.sh` dispatcher and initial `init`, `dev`, `test`, `up`, `down`, `logs`, and `doctor` commands.
-- [ ] **BASE-009** Add CI for install, checks, unit tests, PostgreSQL integration tests, build, and dependency/image scanning.
+- [x] **BASE-001** Scaffold SvelteKit/Svelte 5/TypeScript with `adapter-node`, strict type checks, Vitest, and Playwright.
+- [x] **BASE-002** Add Drizzle, `postgres`, validation, Markdown parsing/sanitization, structured logging, and image-processing dependencies with exact lockfile versions.
+- [ ] **BASE-003** Establish LifeOS design tokens, typography fallbacks, base layouts, error/empty/loading states, and accessible form components. _Partial: tokens (three-state light/dark), typography fallbacks, base layout with skip-link, and the error state are done. Empty/loading states and the accessible form components are still outstanding — they need real routes to hang off, so they land with Phase 4._
+- [x] **BASE-004** Add `.env.example` with documented public/private separation and startup validation for required production variables.
+- [x] **BASE-005** Create multi-stage non-root Dockerfile, Compose development/production files, persistent volumes, health checks, resource guards, and log rotation.
+- [x] **BASE-006** Add minimal Nginx config with loopback publish, trusted headers, security headers, streaming, cache rules, and health routing.
+- [x] **BASE-007** Implement `/api/health/live` and protected readiness diagnostics for DB, migrations, storage, disk, and backup freshness.
+- [x] **BASE-008** Add the thin `run.sh` dispatcher and initial `init`, `dev`, `test`, `up`, `down`, `logs`, and `doctor` commands.
+- [x] **BASE-009** Add CI for install, checks, unit tests, PostgreSQL integration tests, build, and dependency/image scanning.
 
 **Gate:** A clean clone starts locally with one command, passes CI, and builds a production image without source/private data.
 
@@ -895,7 +895,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [ ] **BKP-001** Implement full custom-format PostgreSQL dump, manifest, upload snapshot, and Restic backup.
 - [ ] **BKP-002** Implement retention, stale/failure status, disk checks, secret-redacted logs, and systemd timer.
 - [ ] **BKP-003** Implement safe staged restore with pre-restore preservation, validation, atomic switch, session invalidation, and smoke tests.
-- [ ] **BKP-004** Restore onto a blank environment and record measured RPO/RTO, counts, checksums, and recovery gaps. **The drill host is an ephemeral Linode provisioned by `provision.yml` and destroyed afterwards** (a `g6-nanode-1` hour costs cents), *not* the production node and *not* a local Docker stack — a restore that never exercises provisioning, Tailscale join, and Serve has not tested recovery. Record the drill's Linode ID and destruction time in the report.
+- [ ] **BKP-004** Restore onto a blank environment and record measured RPO/RTO, counts, checksums, and recovery gaps. **The drill host is an ephemeral Linode provisioned by `provision.yml` and destroyed afterwards** (a `g6-nanode-1` hour costs cents), _not_ the production node and _not_ a local Docker stack — a restore that never exercises provisioning, Tailscale join, and Serve has not tested recovery. Record the drill's Linode ID and destruction time in the report.
 - [ ] **BKP-005** Add scheduled verification and quarterly fresh-host drill checklist, including the teardown step so drills cannot silently leave a second billed node running.
 
 **Gate:** A backup has been restored successfully onto a blank host/test VM. New feature tables cannot merge unless backup/export coverage tests pass.
@@ -957,27 +957,27 @@ LifeOS is done for the initial production milestone only when:
 
 ## 15. Risks and mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Notion formula/view definitions are absent | Rebuilt dashboards behave differently | Capture live metadata before cutover; compare replacement queries to rendered results. |
-| Duplicate CSV archive paths have different content | Silent row/property loss | Use `_all.csv`, direct ZIP inventory, and stable page IDs; never rely on extraction overwrite order. |
-| Relations joined by duplicate titles | Wrong task/project/person links | Prefer HTML/Markdown target IDs; reject ambiguous title-only resolution. |
-| Accounts/Life Admin absent | Financial/admin records missed | Directly inspect and re-export before Pack 4/cutover. |
-| Rich pages cannot all be normalized | Lost recipe/note detail | Preserve sanitized original Markdown and raw provenance alongside structured fields. |
-| Sensitive exports reach Git/CI/logs | Privacy breach | Ignore paths first, use synthetic fixtures, redact logs, scan Git history/artifacts. |
-| 1 GB host OOM during build/import/images | Downtime or failed import | Build in CI, limit image concurrency, tune pool/PostgreSQL, add swap, measure before cutover. |
-| 25 GB disk fills with originals/derivatives/Docker | App/database failure | Content dedupe, derivative policy, image pruning, Docker cleanup, off-host backup, disk alerts. |
-| Backup exists but is unusable | Permanent data loss | Custom full dump, manifest/checks, monthly scratch restore, quarterly blank-host drill. |
-| Restored sessions become valid again | Old stolen session reactivated | Truncate/revoke sessions after restore. |
-| Tailnet membership is treated as complete auth | Any tailnet user sees private data | Enforce application accounts and per-record authorization; narrow ACLs. |
-| HTTP internal hop causes HTTPS origin mismatch | Login/forms fail through real URL | Explicit `ORIGIN`; test with actual HTTPS Host/Origin on every deploy. |
-| Princess's stateless deploy sequence is copied unchanged | Image pull or restart interrupts the app; a cancelled migration leaves uncertain state | Pull first, serialize production, lock remotely, back up, migrate once, keep PostgreSQL alive, and make health a hard gate. |
-| Shared Actions remain pinned to `@main` | An unrelated action change alters production without a LifeOS review | Pin reviewed commit SHAs and update them through tested pull requests. |
+| Risk                                                               | Impact                                                                                                                    | Mitigation                                                                                                                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Notion formula/view definitions are absent                         | Rebuilt dashboards behave differently                                                                                     | Capture live metadata before cutover; compare replacement queries to rendered results.                                                                             |
+| Duplicate CSV archive paths have different content                 | Silent row/property loss                                                                                                  | Use `_all.csv`, direct ZIP inventory, and stable page IDs; never rely on extraction overwrite order.                                                               |
+| Relations joined by duplicate titles                               | Wrong task/project/person links                                                                                           | Prefer HTML/Markdown target IDs; reject ambiguous title-only resolution.                                                                                           |
+| Accounts/Life Admin absent                                         | Financial/admin records missed                                                                                            | Directly inspect and re-export before Pack 4/cutover.                                                                                                              |
+| Rich pages cannot all be normalized                                | Lost recipe/note detail                                                                                                   | Preserve sanitized original Markdown and raw provenance alongside structured fields.                                                                               |
+| Sensitive exports reach Git/CI/logs                                | Privacy breach                                                                                                            | Ignore paths first, use synthetic fixtures, redact logs, scan Git history/artifacts.                                                                               |
+| 1 GB host OOM during build/import/images                           | Downtime or failed import                                                                                                 | Build in CI, limit image concurrency, tune pool/PostgreSQL, add swap, measure before cutover.                                                                      |
+| 25 GB disk fills with originals/derivatives/Docker                 | App/database failure                                                                                                      | Content dedupe, derivative policy, image pruning, Docker cleanup, off-host backup, disk alerts.                                                                    |
+| Backup exists but is unusable                                      | Permanent data loss                                                                                                       | Custom full dump, manifest/checks, monthly scratch restore, quarterly blank-host drill.                                                                            |
+| Restored sessions become valid again                               | Old stolen session reactivated                                                                                            | Truncate/revoke sessions after restore.                                                                                                                            |
+| Tailnet membership is treated as complete auth                     | Any tailnet user sees private data                                                                                        | Enforce application accounts and per-record authorization; narrow ACLs.                                                                                            |
+| HTTP internal hop causes HTTPS origin mismatch                     | Login/forms fail through real URL                                                                                         | Explicit `ORIGIN`; test with actual HTTPS Host/Origin on every deploy.                                                                                             |
+| Princess's stateless deploy sequence is copied unchanged           | Image pull or restart interrupts the app; a cancelled migration leaves uncertain state                                    | Pull first, serialize production, lock remotely, back up, migrate once, keep PostgreSQL alive, and make health a hard gate.                                        |
+| Shared Actions remain pinned to `@main`                            | An unrelated action change alters production without a LifeOS review                                                      | Pin reviewed commit SHAs and update them through tested pull requests.                                                                                             |
 | Shared `tailscale-connect` logs out before returning to its caller | Hostname/status discovery becomes unreliable; a configured 100.x override can mask the defect while the data path lingers | Remove inline logout, rely on job cleanup, and integration-test no-override discovery/connectivity from the next workflow step before adopting/pinning the action. |
-| Routine SSH skips host-key checking | Tailnet routing alone does not prove the expected SSH host key | Prefer Tailscale SSH or store and enforce `SSH_KNOWN_HOSTS`. |
-| Princess certificate/DNS/exit-node features are carried over | More secrets, ports, renewal paths, and attack surface than LifeOS needs | Use MagicDNS plus Tailscale Serve only; omit Cloudflare, Certbot, public TLS binding, forwarding, and exit-node settings. |
-| Building all 36 databases before launch | Long project with no feedback | Ship the daily operating MVP, then add gated feature packs. |
-| Notion and LifeOS remain writable together | Divergent conflicting records | Formal write freeze and one-way final import; archive Notion after acceptance. |
+| Routine SSH skips host-key checking                                | Tailnet routing alone does not prove the expected SSH host key                                                            | Prefer Tailscale SSH or store and enforce `SSH_KNOWN_HOSTS`.                                                                                                       |
+| Princess certificate/DNS/exit-node features are carried over       | More secrets, ports, renewal paths, and attack surface than LifeOS needs                                                  | Use MagicDNS plus Tailscale Serve only; omit Cloudflare, Certbot, public TLS binding, forwarding, and exit-node settings.                                          |
+| Building all 36 databases before launch                            | Long project with no feedback                                                                                             | Ship the daily operating MVP, then add gated feature packs.                                                                                                        |
+| Notion and LifeOS remain writable together                         | Divergent conflicting records                                                                                             | Formal write freeze and one-way final import; archive Notion after acceptance.                                                                                     |
 
 ## 16. Immediate next implementation milestone
 
