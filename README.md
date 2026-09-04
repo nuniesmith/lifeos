@@ -9,8 +9,12 @@ across 8 phases, with per-phase gates. Start there.
 
 ## Status
 
-Phase 0 (source capture). The Notion exports are on disk and catalogued;
-no application code exists yet.
+Phase 1 complete. The app skeleton, container, and CI are in place and
+verified: a clean clone passes `./run.sh doctor`, and CI is green across
+static checks, unit, integration, e2e, dependency audit, and a scanned
+image published to GHCR.
+
+Phase 2 (data model and migrations) is next. No product features exist yet.
 
 ## Source data
 
