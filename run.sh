@@ -15,7 +15,7 @@ compose() {
 cmd_init() {
     say "Creating runtime directories"
     mkdir -p var/imports var/uploads var/backups
-    [[ -f .env ]] || { cp .env.example .env; say "Wrote .env from .env.example — fill in POSTGRES_PASSWORD"; }
+    [[ -f .env ]] || { cp .env.example .env; say "Wrote .env from .env.example (development defaults)"; }
     say "Installing dependencies"
     npm ci
     say "Starting database"
@@ -57,6 +57,11 @@ cmd_doctor() {
 
     say "Services"
     check "database reachable"    'compose exec -T db pg_isready'
+    # A .env that parses but cannot authenticate is the failure this catches:
+    # `run.sh init` succeeds, then `run.sh dev` dies on connect. Connects from
+    # the host with the app's own driver, because DATABASE_URL is written from
+    # the host's point of view and would resolve differently inside a container.
+    check "DATABASE_URL authenticates" 'node scripts/check-db.mjs'
 
     [[ $fail -eq 0 ]] && say "All checks passed" || die "Some checks failed"
 }
