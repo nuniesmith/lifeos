@@ -74,6 +74,7 @@ esac`
 		state,
 		bin,
 		env,
+		stub,
 		run,
 		log: () => readFileSync(env.TEST_LOG, 'utf8')
 	};
