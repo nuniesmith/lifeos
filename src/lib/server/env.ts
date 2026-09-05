@@ -16,6 +16,25 @@ import { z } from 'zod';
 
 const isProd = process.env.NODE_ENV === 'production' && !building;
 
+/**
+ * An origin is acceptable in production when it is HTTPS, or when it is plain
+ * HTTP on a loopback address. The loopback case is legitimate rather than a
+ * loophole: LifeOS terminates TLS at Tailscale Serve and proxies to Nginx on
+ * 127.0.0.1, and the end-to-end suite drives the built server the same way.
+ * A non-loopback http:// origin is still refused.
+ */
+function isSecureOrigin(origin: string): boolean {
+	let url: URL;
+	try {
+		url = new URL(origin);
+	} catch {
+		return false;
+	}
+	if (url.protocol === 'https:') return true;
+	if (url.protocol !== 'http:') return false;
+	return ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname);
+}
+
 const schema = z
 	.object({
 		NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -55,8 +74,8 @@ const schema = z
 		message: 'ORIGIN is required when NODE_ENV=production',
 		path: ['ORIGIN']
 	})
-	.refine((e) => !isProd || e.ORIGIN?.startsWith('https://'), {
-		message: 'ORIGIN must be https:// in production',
+	.refine((e) => !isProd || !e.ORIGIN || isSecureOrigin(e.ORIGIN), {
+		message: 'ORIGIN must be https://, or http:// on a loopback address',
 		path: ['ORIGIN']
 	});
 

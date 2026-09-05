@@ -11,7 +11,7 @@ export default defineConfig({
 		// Runs the real adapter-node artifact rather than `vite preview`, so
 		// these tests exercise what actually ships. It also avoids a
 		// CI-only failure where the preview server did not bind 127.0.0.1.
-		command: 'npm run build && node build/index.js',
+		command: 'node scripts/migrate.mjs && npm run build && node build/index.js',
 		url: 'http://127.0.0.1:4173/api/health/live',
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
@@ -21,10 +21,15 @@ export default defineConfig({
 			// Exercise the production configuration path, so a regression in
 			// env validation shows up here rather than on the server.
 			NODE_ENV: 'production',
-			ORIGIN: 'https://lifeos.test',
-			// Intentionally unreachable: the smoke tests assert that liveness
-			// still answers 200 and readiness correctly reports 503.
-			DATABASE_URL: 'postgresql://nobody:nobody@127.0.0.1:59999/nodb'
+			ORIGIN: 'http://127.0.0.1:4173',
+			// A real database: these tests drive sign-in, which cannot be
+			// meaningfully exercised without one. The database-unreachable
+			// behaviour is covered by scripts/verify-first-run.sh instead.
+			DATABASE_URL:
+				process.env.E2E_DATABASE_URL ??
+				process.env.DATABASE_URL ??
+				'postgresql://lifeos_app:devpassword@127.0.0.1:5433/lifeos_e2e',
+			LIFEOS_BOOTSTRAP_PASSWORD: 'e2e-bootstrap-password'
 		}
 	}
 });

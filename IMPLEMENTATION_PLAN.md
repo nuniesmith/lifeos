@@ -369,6 +369,28 @@ Use the two exports together:
 4. **Filtered/view CSVs** — validation only; never canonical input.
 5. **Rendered formula/rollup values** — comparison fixtures used to test the replacement query, not long-term source-of-truth fields.
 
+### Driver type conversion is not relied on
+
+The `postgres` driver's JS type conversion does not apply in the bundled server
+build, in either direction, and this was found three times before the pattern
+was recognised:
+
+- a JS `Date` parameter reached the wire unconverted, failing every sign-in;
+- the driver's `json()` helper marker did the same, aborting first-run bootstrap; and
+- `timestamptz` columns came back as **strings**, so `.getTime()` threw inside
+  session resolution and silently sent every authenticated request down the
+  anonymous path — a successful login that bounced straight back to `/login`.
+
+Each failure appeared only in production while the whole test suite stayed
+green, because tests import `src/` and the server runs `build/`.
+
+**Rules, applied everywhere:** send timestamps as ISO strings with an explicit
+`::timestamptz` cast (or use `now()`), send JSON as `JSON.stringify(...)::jsonb`,
+and read every timestamp through `toDate`/`toDateOrNull` in
+`src/lib/server/db/coerce.ts`. Never assume a driver-parsed type in either
+direction. `scripts/verify-first-run.sh` exercises the built artifact so this
+class is caught by CI rather than in use.
+
 ### Verified source-format hazards
 
 Measured against the export in `data/` (36 `_all.csv`, 436 canonical rows, 504 Markdown pages, 525 image files / 298 unique by SHA-256 — all four figures match the acceptance baseline below). Each hazard below is confirmed present in this data, not anticipated:
@@ -829,7 +851,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [x] **DB-004** Implement migration runner with locking, version table, empty-DB and upgrade tests.
 - [x] **AUTH-001** Port/adapt the tested FKS scrypt, opaque token, session TTL, lockout, and audit concepts into isolated LifeOS auth modules. _scrypt chosen over Argon2id: no native dependency, so the runtime image carries neither a compiled module nor its CVE stream. Parameters travel in the hash string and can be raised without invalidating credentials._
 - [x] **AUTH-002** Implement transactional first-run bootstrap and forced credential change.
-- [ ] **AUTH-003** Implement login/logout, CSRF/origin checks, protected layout, session refresh/revoke, and fail-closed database behavior.
+- [x] **AUTH-003** Implement login/logout, CSRF/origin checks, protected layout, session refresh/revoke, and fail-closed database behavior.
 - [ ] **AUTH-004** Implement admin member creation/invites, role changes, disable/re-enable, one-time credential reset, and audit viewer.
 - [ ] **AUTH-005** Implement household/owner/visibility authorization helpers and enforce them at repository boundaries.
 - [ ] **AUTH-006** Add recovery CLI and restored-session invalidation.

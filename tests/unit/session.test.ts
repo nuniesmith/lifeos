@@ -5,7 +5,8 @@ import {
 	createSessionToken,
 	hashSessionToken,
 	isActive,
-	sessionState
+	sessionState,
+	shouldUseSecureCookie
 } from '$lib/server/auth/session';
 
 const at = (ms: number) => new Date(ms);
@@ -62,5 +63,21 @@ describe('session state', () => {
 		// A session must not survive its own expiry instant.
 		expect(isActive(base, at(1999))).toBe(true);
 		expect(isActive(base, at(2000))).toBe(false);
+	});
+});
+
+describe('secure cookie flag', () => {
+	it('is set for an https origin', () => {
+		expect(shouldUseSecureCookie('https://lifeos.tailnet.ts.net')).toBe(true);
+	});
+
+	it('is not set for a plain-http loopback deployment', () => {
+		// Setting Secure here makes the browser withhold the cookie, which
+		// presents as a successful login that bounces straight back to /login.
+		expect(shouldUseSecureCookie('http://127.0.0.1:4173')).toBe(false);
+	});
+
+	it('defaults to secure when no origin is configured', () => {
+		expect(shouldUseSecureCookie(undefined)).toBe(true);
 	});
 });

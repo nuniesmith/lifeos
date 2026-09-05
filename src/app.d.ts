@@ -1,7 +1,10 @@
+import type { AuthUser } from '$lib/server/auth/service';
+
 declare global {
 	namespace App {
 		interface Locals {
-			user: { id: string; email: string; displayName: string; role: 'owner' | 'member' } | null;
+			user: AuthUser | null;
+			sessionId: string | null;
 			requestId: string;
 		}
 		interface Error {
@@ -9,7 +12,7 @@ declare global {
 			requestId?: string;
 		}
 		interface PageData {
-			user?: App.Locals['user'];
+			user?: AuthUser | null;
 		}
 	}
 }

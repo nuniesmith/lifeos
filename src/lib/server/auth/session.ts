@@ -74,7 +74,22 @@ export function isActive(row: SessionRow, now = new Date()): boolean {
 	return sessionState(row, now) === 'active';
 }
 
-/** Cookie attributes. `secure` is off only for plain-HTTP local development. */
+/**
+ * Whether the session cookie should carry `Secure`.
+ *
+ * Derived from the configured external ORIGIN, not from the incoming request:
+ * in production Tailscale terminates TLS and forwards plain HTTP to Nginx, so
+ * the request protocol is http even though the user is on https. Deriving it
+ * from the request would drop `Secure` in production; deriving it from `dev`
+ * would set `Secure` on a plain-HTTP loopback deployment, where the browser
+ * then declines to send the cookie back and every sign-in silently bounces to
+ * the login page.
+ */
+export function shouldUseSecureCookie(origin: string | undefined): boolean {
+	return origin?.startsWith('https://') ?? true;
+}
+
+/** Cookie attributes. */
 export function sessionCookieOptions(secure: boolean, expires: Date) {
 	return {
 		path: '/',

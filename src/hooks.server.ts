@@ -3,6 +3,8 @@ import { building } from '$app/environment';
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { runBootstrap } from '$lib/server/auth/bootstrap';
 import { sql } from '$lib/server/db';
+import { resolveSession } from '$lib/server/auth/service';
+import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
 
 /**
@@ -31,7 +33,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	const requestId = randomUUID();
 	event.locals.requestId = requestId;
-	event.locals.user = null;
+
+	// Resolution never throws: an unreachable database yields an anonymous
+	// request, which route guards then refuse. Failing closed.
+	const resolved = await resolveSession(sql, event.cookies.get(SESSION_COOKIE));
+	event.locals.user = resolved?.user ?? null;
+	event.locals.sessionId = resolved?.sessionId ?? null;
 
 	const started = performance.now();
 	const response = await resolve(event);

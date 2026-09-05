@@ -62,6 +62,21 @@ jobs:
   e2e:
     name: End-to-end
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: lifeos_e2e
+          POSTGRES_USER: lifeos_app
+          POSTGRES_PASSWORD: testpassword
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U lifeos_app -d lifeos_e2e"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # The suite drives real sign-in, so it needs a real database. The
+      # database-unreachable behaviour is covered by the first-run job.
+      DATABASE_URL: postgresql://lifeos_app:testpassword@localhost:5432/lifeos_e2e
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
