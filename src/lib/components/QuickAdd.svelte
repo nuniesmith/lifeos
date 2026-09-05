@@ -11,7 +11,7 @@
 		/** Bindable so the sidebar's own "Quick add" can open the same sheet. */
 		open?: boolean;
 		/**
-		 * PLACEHOLDER. UI-003 builds the real capture endpoint and its
+		 * The capture endpoint. Overridable mainly so a test can point it
 		 * server-side validation; this component only needs somewhere to POST
 		 * so the interaction can be exercised end to end. Change the default
 		 * rather than every caller when that lands.
@@ -24,8 +24,10 @@
 	const KINDS = [
 		{ value: 'task', label: 'Task' },
 		{ value: 'note', label: 'Note' },
-		{ value: 'journal', label: 'Journal entry' },
-		{ value: 'habit', label: 'Habit check-in' }
+		{ value: 'journal', label: 'Journal entry' }
+		// No habit check-in here: it needs a specific habit and this box has no
+		// picker, so the option could only ever fail. Habits are one tap away
+		// on Today.
 	];
 
 	let kind = $state('task');
@@ -72,13 +74,13 @@
 				return;
 			}
 
-			// Named plainly rather than dressed up as a server error: until
-			// UI-003 lands there is no endpoint behind this, and pretending
-			// otherwise would send the next person hunting a bug.
-			error =
-				response.status === 404 || response.status === 405
-					? 'Quick capture is not wired up yet (UI-003). Nothing was saved.'
-					: `The server refused that (${response.status}). Nothing was saved.`;
+			// The endpoint's own message when it has one; it explains a
+			// conflict better than a status code can.
+			const said = await response
+				.json()
+				.then((b: { error?: string }) => b?.error)
+				.catch(() => undefined);
+			error = said ?? `The server refused that (${response.status}). Nothing was saved.`;
 		} catch {
 			error = 'Could not reach the server. Nothing was saved.';
 		} finally {
