@@ -1,61 +1,63 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import BottomNav from '$lib/components/BottomNav.svelte';
+	import QuickAdd from '$lib/components/QuickAdd.svelte';
+	import SideNav from '$lib/components/SideNav.svelte';
+
 	let { data, children } = $props();
+
+	/**
+	 * One piece of shell state, held here rather than inside QuickAdd, because
+	 * two separate controls open the same sheet: the floating button on a
+	 * phone and the sidebar button on a wide screen.
+	 */
+	let quickAddOpen = $state(false);
 </script>
 
-<header>
-	<a class="brand" href={resolve('/')}>LifeOS</a>
-	<nav>
-		{#if data.user?.role === 'admin'}
-			<a href={resolve('/admin/people')}>People</a>
-			<a href={resolve('/admin/audit')}>Audit</a>
-		{/if}
-		<span class="who">{data.user?.displayName}</span>
-		<form method="POST" action="/logout">
-			<button type="submit">Sign out</button>
-		</form>
-	</nav>
-</header>
+<!--
+	The authenticated shell.
 
-{@render children()}
+	Below 48rem this is a single column with a fixed bottom bar and a floating
+	quick-add button; above it, a sticky sidebar beside the content. Both
+	navigations render from the same destination list in $lib/components/nav.ts.
+
+	The admin links are hidden for a member, but that is tidiness, not access
+	control — +layout.server.ts and requireAdmin refuse those routes on the
+	server whatever this markup does.
+-->
+<div class="shell">
+	<SideNav user={data.user} pathname={page.url.pathname} onQuickAdd={() => (quickAddOpen = true)} />
+
+	<div class="pane">
+		{@render children()}
+	</div>
+</div>
+
+<QuickAdd bind:open={quickAddOpen} />
+<BottomNav user={data.user} pathname={page.url.pathname} />
 
 <style>
-	header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--sp-4);
-		padding-bottom: var(--sp-4);
-		margin-bottom: var(--sp-6);
-		border-bottom: 1px solid var(--c-border);
+	.shell {
+		display: grid;
+		grid-template-columns: 1fr;
+		/* Clears the fixed bottom bar and the floating button, plus the home
+		   indicator on a phone that has one. */
+		padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + var(--sp-8));
 	}
-	.brand {
-		font-weight: 700;
-		text-decoration: none;
-		color: var(--c-text);
+
+	@media (min-width: 48rem) {
+		.shell {
+			/* minmax(0, 1fr) rather than 1fr: without the zero minimum, a wide
+			   child (a table, a code block) grows the track and the whole page
+			   scrolls sideways instead of the child scrolling inside itself. */
+			grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+			gap: var(--sp-8);
+			align-items: start;
+			padding-bottom: 0;
+		}
 	}
-	nav {
-		display: flex;
-		align-items: center;
-		gap: var(--sp-3);
-	}
-	.who {
-		color: var(--c-text-muted);
-		font-size: var(--fs-sm);
-	}
-	nav a {
-		font-size: var(--fs-sm);
-		text-decoration: none;
-	}
-	nav a:hover {
-		text-decoration: underline;
-	}
-	button {
-		background: none;
-		border: 1px solid var(--c-border);
-		border-radius: var(--radius-sm);
-		padding: var(--sp-1) var(--sp-3);
-		min-height: 36px;
-		cursor: pointer;
+
+	.pane {
+		min-width: 0;
 	}
 </style>

@@ -25,6 +25,16 @@
 	--c-warn: #8a5a00;
 	--c-crit: #a72b30;
 
+	/* Shell surfaces. The navigation bars sit over scrolling content, so they
+	   need an opaque ground of their own rather than inheriting the page's. */
+	--c-nav-bg: #ffffff;
+	--c-overlay: rgb(20 21 28 / 0.45);
+	--c-skeleton: #e7e9f1;
+	/* A tint of the accent, resolved to an opaque colour rather than an alpha
+	   so it stays legible when it overlaps a nav bar or a dialog. */
+	--c-accent-soft: #eceefc;
+	--shadow-lg: 0 2px 6px rgb(16 18 32 / 0.08), 0 16px 32px rgb(16 18 32 / 0.1);
+
 	--font-sans:
 		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
 		'Noto Sans', sans-serif;
@@ -41,14 +51,41 @@
 	--sp-2: 0.5rem;
 	--sp-3: 0.75rem;
 	--sp-4: 1rem;
+	--sp-5: 1.25rem;
 	--sp-6: 1.5rem;
 	--sp-8: 2rem;
+	--sp-10: 2.5rem;
 
 	--radius: 10px;
 	--radius-sm: 6px;
+	--radius-lg: 16px;
+	--radius-pill: 999px;
 	--shadow: 0 1px 2px rgb(16 18 32 / 0.06), 0 4px 12px rgb(16 18 32 / 0.04);
 
 	--measure: 68ch;
+
+	/* ── Shell geometry ────────────────────────────────────────────────────
+	   The phone is the primary device, so these are named for the mobile
+	   layout: --nav-h is the height of the bottom bar that content must clear,
+	   and --tap is the minimum comfortable target already applied to native
+	   controls further down. */
+	--tap: 44px;
+	--nav-h: 3.75rem;
+	--sidebar-w: 12.5rem;
+	/* The breakpoint at which the bottom bar becomes a sidebar. Kept here as
+	   documentation; media queries cannot read a custom property, so the same
+	   48rem appears literally in the shell components. */
+	--bp-wide: 48rem;
+
+	/* Stacking. The bottom bar and the quick-add button float over content;
+	   a native <dialog> is promoted to the top layer by the browser and so
+	   needs no z-index of its own. */
+	--z-nav: 20;
+	--z-float: 30;
+
+	--dur-fast: 120ms;
+	--dur: 200ms;
+	--ease: cubic-bezier(0.2, 0.6, 0.3, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -64,7 +101,12 @@
 		--c-ok: #5cc699;
 		--c-warn: #e0ac52;
 		--c-crit: #f0868b;
+		--c-nav-bg: #1c1e27;
+		--c-overlay: rgb(0 0 0 / 0.6);
+		--c-skeleton: #2b2f3b;
+		--c-accent-soft: #262a3f;
 		--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+		--shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 16px 32px rgb(0 0 0 / 0.45);
 	}
 }
 
@@ -80,7 +122,12 @@
 	--c-ok: #5cc699;
 	--c-warn: #e0ac52;
 	--c-crit: #f0868b;
+	--c-nav-bg: #1c1e27;
+	--c-overlay: rgb(0 0 0 / 0.6);
+	--c-skeleton: #2b2f3b;
+	--c-accent-soft: #262a3f;
 	--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+	--shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 16px 32px rgb(0 0 0 / 0.45);
 }
 
 *,
@@ -148,6 +195,27 @@ table {
 .scroll-x {
 	overflow-x: auto;
 	max-width: 100%;
+}
+
+/* Belt and braces for the rule above: nothing may widen the document itself,
+   or a phone gets a sideways rubber-band on every page. */
+html,
+body {
+	overflow-x: clip;
+}
+
+/* Available to a screen reader, absent from the page. Used for the accessible
+   name of controls that read as icons, and for live-region status text. */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

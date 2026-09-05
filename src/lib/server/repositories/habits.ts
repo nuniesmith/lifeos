@@ -1,0 +1,612 @@
+import type { Fragment } from 'postgres';
+import type { Viewer } from '../auth/authz';
+import { toDate } from '../db/coerce';
+import {
+	InvalidInput,
+	archiveScoped,
+	baseColumns,
+	getScoped,
+	guarded,
+	isUuid,
+	liveScope,
+	mapBase,
+	pageOf,
+	readableScope,
+	resolveOwnership,
+	toBool,
+	toDay,
+	toInt,
+	toText,
+	toTextOrNull,
+	writableBy,
+	writableScope,
+	writeScoped,
+	type BaseRow,
+	type OwnershipInput,
+	type PageOptions,
+	type Queryable,
+	type RecordBase,
+	type WriteResult
+} from './base';
+import {
+	nextPeriod,
+	periodKey,
+	periodsBetween,
+	previousPeriod,
+	type Period,
+	type WeekStart
+} from './dates';
+import {
+	optionalBool,
+	optionalId,
+	optionalInt,
+	optionalOneOf,
+	optionalText,
+	patched,
+	requiredDay,
+	requiredText
+} from './validate';
+
+/**
+ * Habits and their daily logs (MODEL-003).
+ *
+ * A streak is never stored. It is a fact about the logs, and a stored counter
+ * is a second copy that goes wrong the first time a log is backfilled or
+ * corrected — which is exactly what people do with habit trackers. The
+ * arithmetic below is pure and unit-tested; the database only supplies the
+ * days.
+ */
+
+export const HABIT_PERIODS = ['day', 'week', 'month'] as const;
+
+export interface HabitRecord extends RecordBase {
+	name: string;
+	description: string | null;
+	areaId: string | null;
+	targetCount: number;
+	targetPeriod: Period;
+	active: boolean;
+}
+
+interface HabitRow extends BaseRow {
+	name: string;
+	description: string | null;
+	area_id: string | null;
+	target_count: unknown;
+	target_period: string;
+	active: unknown;
+}
+
+const TABLE = 'habits';
+
+const columns = (sql: Queryable): Fragment => sql`
+	${baseColumns(sql)},
+	name, description, area_id, target_count, target_period, active`;
+
+function mapHabit(row: HabitRow): HabitRecord {
+	return {
+		...mapBase(row),
+		name: toText(row.name),
+		description: toTextOrNull(row.description),
+		areaId: row.area_id,
+		targetCount: toInt(row.target_count),
+		targetPeriod: row.target_period as Period,
+		active: toBool(row.active)
+	};
+}
+
+// ─── habits ────────────────────────────────────────────────────────────────
+
+export interface HabitFilters extends PageOptions {
+	activeOnly?: boolean;
+	areaId?: string;
+	ownerUserId?: string | null;
+	search?: string;
+	includeArchived?: boolean;
+}
+
+function habitConditions(sql: Queryable, viewer: Viewer, filters: HabitFilters): Fragment {
+	const parts: Fragment[] = [
+		readableScope(sql, viewer, TABLE),
+		liveScope(sql, TABLE, filters.includeArchived)
+	];
+	if (filters.activeOnly) parts.push(sql`active = true`);
+	if (filters.areaId) parts.push(sql`area_id = ${filters.areaId}::uuid`);
+	if (filters.ownerUserId !== undefined) {
+		parts.push(
+			filters.ownerUserId === null
+				? sql`owner_user_id is null`
+				: sql`owner_user_id = ${filters.ownerUserId}::uuid`
+		);
+	}
+	if (filters.search?.trim()) parts.push(sql`name ilike ${`%${filters.search.trim()}%`}`);
+	return parts.reduce((all, part) => sql`${all} and ${part}`);
+}
+
+export async function listHabits(
+	sql: Queryable,
+	viewer: Viewer,
+	filters: HabitFilters = {}
+): Promise<HabitRecord[]> {
+	const { limit, offset } = pageOf(filters);
+	const rows = await sql<HabitRow[]>`
+		select ${columns(sql)} from habits
+		where ${habitConditions(sql, viewer, filters)}
+		order by name asc
+		limit ${limit} offset ${offset}
+	`;
+	return rows.map(mapHabit);
+}
+
+export async function getHabit(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string
+): Promise<HabitRecord | null> {
+	const row = await getScoped<HabitRow>(
+		sql,
+		TABLE,
+		id,
+		readableScope(sql, viewer, TABLE),
+		columns(sql)
+	);
+	return row ? mapHabit(row) : null;
+}
+
+export interface HabitInput extends OwnershipInput {
+	name?: unknown;
+	description?: unknown;
+	areaId?: unknown;
+	targetCount?: unknown;
+	targetPeriod?: unknown;
+	active?: unknown;
+}
+
+async function checkArea(sql: Queryable, viewer: Viewer, areaId: string | null): Promise<void> {
+	if (areaId === null) return;
+	if (!isUuid(areaId)) throw new InvalidInput('area is not a valid id');
+	const found = await getScoped<{ id: string }>(
+		sql,
+		'areas',
+		areaId,
+		readableScope(sql, viewer, 'areas'),
+		sql`id`
+	);
+	if (!found) throw new InvalidInput('area was not found');
+}
+
+export function createHabit(
+	sql: Queryable,
+	viewer: Viewer,
+	input: HabitInput
+): Promise<WriteResult<HabitRecord>> {
+	return guarded<HabitRecord>(async () => {
+		const name = requiredText(input.name, 'name', 200);
+		const areaId = optionalId(input.areaId, 'area');
+		const { ownerUserId, visibility } = resolveOwnership(viewer, input, {
+			ownerUserId: viewer.userId,
+			visibility: 'household'
+		});
+		await checkArea(sql, viewer, areaId);
+
+		const rows = await sql<HabitRow[]>`
+			insert into habits (
+				household_id, owner_user_id, visibility, name, description, area_id,
+				target_count, target_period, active, created_by, updated_by
+			) values (
+				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
+				${optionalText(input.description, 'description')}, ${areaId}::uuid,
+				${optionalInt(input.targetCount, 'target', { min: 1 }) ?? 1}::int,
+				${optionalOneOf(input.targetPeriod, 'period', HABIT_PERIODS) ?? 'day'},
+				${optionalBool(input.active, 'active') ?? true}::boolean,
+				${viewer.userId}::uuid, ${viewer.userId}::uuid
+			)
+			returning ${columns(sql)}
+		`;
+		const row = rows[0];
+		if (!row) throw new Error('insert returned no row');
+		return { ok: true, record: mapHabit(row) };
+	});
+}
+
+export function updateHabit(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: HabitInput,
+	expectedUpdatedAt: Date | string
+): Promise<WriteResult<HabitRecord>> {
+	return guarded<HabitRecord>(async () => {
+		const current = await getHabit(sql, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 200)),
+			description: patched(patch, 'description', current.description, (v) =>
+				optionalText(v, 'description')
+			),
+			areaId: patched(patch, 'areaId', current.areaId, (v) => optionalId(v, 'area')),
+			targetCount: patched(
+				patch,
+				'targetCount',
+				current.targetCount,
+				(v) => optionalInt(v, 'target', { min: 1 }) ?? 1
+			),
+			targetPeriod: patched(
+				patch,
+				'targetPeriod',
+				current.targetPeriod,
+				(v) => optionalOneOf(v, 'period', HABIT_PERIODS) ?? current.targetPeriod
+			),
+			active: patched(patch, 'active', current.active, (v) => optionalBool(v, 'active') ?? true)
+		};
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+		if (next.areaId !== current.areaId) await checkArea(sql, viewer, next.areaId);
+
+		return writeScoped<HabitRow, HabitRecord>({
+			sql,
+			table: TABLE,
+			id,
+			readScope: readableScope(sql, viewer, TABLE),
+			writeScope: writableScope(sql, viewer, TABLE),
+			expectedUpdatedAt,
+			assignments: sql`
+				name = ${next.name},
+				description = ${next.description},
+				area_id = ${next.areaId}::uuid,
+				target_count = ${next.targetCount}::int,
+				target_period = ${next.targetPeriod},
+				active = ${next.active}::boolean,
+				owner_user_id = ${ownership.ownerUserId}::uuid,
+				visibility = ${ownership.visibility},
+				updated_by = ${viewer.userId}::uuid`,
+			columns: columns(sql),
+			map: mapHabit,
+			mayWrite: writableBy(viewer)
+		});
+	});
+}
+
+export const setHabitArchived = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<HabitRecord>> =>
+	archiveScoped<HabitRow, HabitRecord>({
+		sql,
+		table: TABLE,
+		viewer,
+		id,
+		archived,
+		expectedUpdatedAt,
+		columns: columns(sql),
+		map: mapHabit
+	});
+
+export const archiveHabit = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	expectedUpdatedAt?: Date | string
+) => setHabitArchived(sql, viewer, id, true, expectedUpdatedAt);
+
+export const unarchiveHabit = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	expectedUpdatedAt?: Date | string
+) => setHabitArchived(sql, viewer, id, false, expectedUpdatedAt);
+
+// ─── habit logs ────────────────────────────────────────────────────────────
+
+export interface HabitLogRecord {
+	id: string;
+	habitId: string;
+	userId: string;
+	onDate: string;
+	completed: boolean;
+	note: string | null;
+	createdAt: Date;
+}
+
+interface HabitLogRow {
+	id: string;
+	habit_id: string;
+	user_id: string;
+	on_date: string;
+	completed: unknown;
+	note: string | null;
+	created_at: unknown;
+}
+
+const mapLog = (row: HabitLogRow): HabitLogRecord => ({
+	id: row.id,
+	habitId: row.habit_id,
+	userId: row.user_id,
+	onDate: toDay(row.on_date),
+	completed: toBool(row.completed),
+	note: toTextOrNull(row.note),
+	createdAt: toDate(row.created_at)
+});
+
+const logColumns = (sql: Queryable): Fragment =>
+	sql`id, habit_id, user_id, on_date::text as on_date, completed, note, created_at`;
+
+/**
+ * Records a check-in, for the viewer and nobody else.
+ *
+ * `habit_logs` carries no visibility of its own, so the habit's own
+ * readability is the gate — and it is applied by selecting *through* the
+ * habits table rather than by checking first and inserting after. A habit in
+ * another household matches nothing, so the insert writes nothing.
+ *
+ * Idempotent by (habit, user, day), which is a database constraint rather than
+ * something the application has to remember. That is also why there is no
+ * version precondition here: checking a box twice is not a conflict.
+ */
+export function logHabit(
+	sql: Queryable,
+	viewer: Viewer,
+	input: { habitId: string; onDate: string; completed?: boolean; note?: unknown }
+): Promise<WriteResult<HabitLogRecord>> {
+	return guarded<HabitLogRecord>(async () => {
+		const onDate = requiredDay(input.onDate, 'date');
+		if (!isUuid(input.habitId)) return { ok: false, reason: 'not_found' };
+
+		const rows = await sql<HabitLogRow[]>`
+			insert into habit_logs (habit_id, user_id, on_date, completed, note)
+			select h.id, ${viewer.userId}::uuid, ${onDate}::date,
+			       ${input.completed ?? true}::boolean, ${optionalText(input.note, 'note', 2000)}
+			from habits h
+			where h.id = ${input.habitId}::uuid
+			  and h.archived_at is null
+			  and ${readableScope(sql, viewer, 'h')}
+			on conflict (habit_id, user_id, on_date) do update
+				set completed = excluded.completed, note = excluded.note
+			returning ${logColumns(sql)}
+		`;
+		const row = rows[0];
+		if (!row) return { ok: false, reason: 'not_found' };
+		return { ok: true, record: mapLog(row) };
+	});
+}
+
+/** Removes a check-in. Missing is success: the day ends up unlogged either way. */
+export async function unlogHabit(
+	sql: Queryable,
+	viewer: Viewer,
+	habitId: string,
+	onDate: string
+): Promise<boolean> {
+	if (!isUuid(habitId)) return false;
+	const rows = await sql<{ id: string }[]>`
+		delete from habit_logs hl
+		using habits h
+		where hl.habit_id = h.id
+		  and hl.habit_id = ${habitId}::uuid
+		  and hl.user_id = ${viewer.userId}::uuid
+		  and hl.on_date = ${requiredDay(onDate, 'date')}::date
+		  and ${readableScope(sql, viewer, 'h')}
+		returning hl.id
+	`;
+	return rows.length > 0;
+}
+
+export async function listHabitLogs(
+	sql: Queryable,
+	viewer: Viewer,
+	habitId: string,
+	range: { from: string; to: string; userId?: string }
+): Promise<HabitLogRecord[]> {
+	if (!isUuid(habitId)) return [];
+	const rows = await sql<HabitLogRow[]>`
+		select ${logColumns(sql)} from habit_logs hl
+		where hl.habit_id = ${habitId}::uuid
+		  and hl.user_id = ${range.userId ?? viewer.userId}::uuid
+		  and hl.on_date between ${requiredDay(range.from, 'from')}::date
+		                     and ${requiredDay(range.to, 'to')}::date
+		  and exists (
+		      select 1 from habits h
+		      where h.id = hl.habit_id and ${readableScope(sql, viewer, 'h')}
+		  )
+		order by hl.on_date asc
+	`;
+	return rows.map(mapLog);
+}
+
+// ─── streaks and completion ────────────────────────────────────────────────
+
+export interface HabitPeriodSummary {
+	/** The first day of the period, which is its identity. */
+	key: string;
+	completed: number;
+	target: number;
+	met: boolean;
+}
+
+export interface HabitSummary {
+	habitId: string;
+	userId: string;
+	period: Period;
+	target: number;
+	from: string;
+	to: string;
+	/** Check-ins inside the window. */
+	completedCount: number;
+	/** Periods in the window multiplied by the target. */
+	expectedCount: number;
+	/** 0..1, capped: overshooting a target does not read as more than done. */
+	completionRate: number;
+	periodsMet: number;
+	periods: HabitPeriodSummary[];
+	currentStreak: number;
+	longestStreak: number;
+}
+
+export interface SummariseInput {
+	completedDays: readonly string[];
+	period: Period;
+	target: number;
+	from: string;
+	to: string;
+	today: string;
+	weekStartsOn?: WeekStart;
+}
+
+/**
+ * Turns a set of completed days into completion and streak numbers.
+ *
+ * Pure, so the rules are testable without a database. Two of them are
+ * judgements worth stating:
+ *
+ *  - **An unfinished current period does not break a streak.** Asking at
+ *    breakfast whether today is done and being told the streak is zero is both
+ *    wrong and discouraging. The current period only counts once it is met;
+ *    until then the streak is measured from the previous one.
+ *  - **The streak is counted in periods, not days.** A habit with a target of
+ *    three per week is unbroken as long as each week reaches three, whichever
+ *    days those were.
+ */
+export function summariseHabit(input: SummariseInput): Omit<HabitSummary, 'habitId' | 'userId'> {
+	const { period, target, from, to, today } = input;
+	const weekStartsOn = input.weekStartsOn ?? 1;
+
+	const counts = new Map<string, number>();
+	for (const day of input.completedDays) {
+		const key = periodKey(day, period, weekStartsOn);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+
+	const windowKeys = periodsBetween(from, to, period, weekStartsOn);
+	const periods: HabitPeriodSummary[] = windowKeys.map((key) => {
+		const completed = counts.get(key) ?? 0;
+		return { key, completed, target, met: completed >= target };
+	});
+
+	const completedCount = input.completedDays.filter((day) => day >= from && day <= to).length;
+	const expectedCount = windowKeys.length * target;
+	const met = (key: string) => (counts.get(key) ?? 0) >= target;
+
+	// Current streak: walk back from the period containing today.
+	const currentKey = periodKey(today, period, weekStartsOn);
+	let cursor = met(currentKey) ? currentKey : previousPeriod(currentKey, period);
+	let currentStreak = 0;
+	for (let guard = 0; guard < 4000 && met(cursor); guard++) {
+		currentStreak++;
+		cursor = previousPeriod(cursor, period);
+	}
+
+	// Longest streak: over every period from the first check-in to today.
+	let longestStreak = 0;
+	const earliest = [...counts.keys()].sort()[0];
+	if (earliest !== undefined) {
+		let run = 0;
+		let key = earliest;
+		for (let guard = 0; guard < 4000 && key <= currentKey; guard++) {
+			run = met(key) ? run + 1 : 0;
+			if (run > longestStreak) longestStreak = run;
+			key = nextPeriod(key, period);
+		}
+	}
+
+	return {
+		period,
+		target,
+		from,
+		to,
+		completedCount,
+		expectedCount,
+		completionRate: expectedCount === 0 ? 0 : Math.min(1, completedCount / expectedCount),
+		periodsMet: periods.filter((p) => p.met).length,
+		periods,
+		currentStreak,
+		longestStreak
+	};
+}
+
+export interface HabitSummaryOptions {
+	from: string;
+	to: string;
+	today: string;
+	weekStartsOn?: WeekStart;
+	/** Whose check-ins to count. Defaults to the viewer's own. */
+	userId?: string;
+	/** How far back to look for the streak, beyond the reported window. */
+	streakLookbackDays?: number;
+}
+
+/** Completion and streak for one habit, or null if the viewer cannot see it. */
+export async function habitSummary(
+	sql: Queryable,
+	viewer: Viewer,
+	habitId: string,
+	options: HabitSummaryOptions
+): Promise<HabitSummary | null> {
+	const habit = await getHabit(sql, viewer, habitId);
+	if (!habit) return null;
+	const [summary] = await summariseMany(sql, viewer, [habit], options);
+	return summary ?? null;
+}
+
+/**
+ * The same numbers for every habit at once, in two queries rather than two per
+ * habit. The check-in screen shows the whole list, so the loop belongs here.
+ */
+export async function habitSummaries(
+	sql: Queryable,
+	viewer: Viewer,
+	options: HabitSummaryOptions & { filters?: HabitFilters }
+): Promise<HabitSummary[]> {
+	const habits = await listHabits(sql, viewer, options.filters ?? { activeOnly: true });
+	return summariseMany(sql, viewer, habits, options);
+}
+
+async function summariseMany(
+	sql: Queryable,
+	viewer: Viewer,
+	habits: HabitRecord[],
+	options: HabitSummaryOptions
+): Promise<HabitSummary[]> {
+	if (habits.length === 0) return [];
+	const userId = options.userId ?? viewer.userId;
+	const lookback = options.streakLookbackDays ?? 400;
+
+	const rows = await sql<{ habit_id: string; on_date: string }[]>`
+		select hl.habit_id, hl.on_date::text as on_date
+		from habit_logs hl
+		join habits h on h.id = hl.habit_id
+		where hl.habit_id in ${sql(habits.map((h) => h.id))}
+		  and hl.user_id = ${userId}::uuid
+		  and hl.completed = true
+		  and hl.on_date >= (${options.to}::date - ${lookback}::int)
+		  and hl.on_date <= ${options.to}::date
+		  and ${readableScope(sql, viewer, 'h')}
+		order by hl.on_date asc
+	`;
+
+	const byHabit = new Map<string, string[]>();
+	for (const row of rows) {
+		const days = byHabit.get(row.habit_id) ?? [];
+		days.push(toDay(row.on_date));
+		byHabit.set(row.habit_id, days);
+	}
+
+	return habits.map((habit) => ({
+		habitId: habit.id,
+		userId,
+		...summariseHabit({
+			completedDays: byHabit.get(habit.id) ?? [],
+			period: habit.targetPeriod,
+			target: habit.targetCount,
+			from: options.from,
+			to: options.to,
+			today: options.today,
+			weekStartsOn: options.weekStartsOn
+		})
+	}));
+}
