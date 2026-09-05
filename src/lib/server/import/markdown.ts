@@ -7,9 +7,13 @@ import { parseRelationCell, type RelationRef } from './csv.ts';
  * then the page body. The CSVs carry the properties but not the body, so this
  * is the only source for notes, nested checklists, and rich content.
  *
- * The property block is where the parsing has to be careful: a body paragraph
- * can easily look like `Something: like this`, so the block is terminated at
- * the first line that is not a property rather than scanning the whole file.
+ * The property block is where the parsing has to be careful. It runs from the
+ * title to the first blank line, and only when the first line is itself a
+ * property — Notion always emits properties first, so anything else means the
+ * page has none. Within the block a `Key: value` line starts a property and any
+ * other line continues the one above it, because property values can span
+ * lines. Terminating at "the first line that is not a property" instead put the
+ * remaining properties into the body of 200 pages.
  */
 
 export interface MarkdownPage {
@@ -35,7 +39,19 @@ const NOTION_ID = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
  */
 const PROPERTY_LINE = /^([A-Za-z][A-Za-z0-9 '&/?()-]{0,60}?):[ \t](.*)$/;
 
-export function parseMarkdownPage(source: string): MarkdownPage {
+/**
+ * @param knownProperties Column names from the database's CSV header. When
+ * supplied, only those keys start a property, which removes the one genuine
+ * ambiguity in this format: a body line like `Note: buy milk` is
+ * indistinguishable from a property without knowing the schema. Callers that
+ * have the header should always pass it.
+ */
+export function parseMarkdownPage(
+	source: string,
+	knownProperties?: Iterable<string>
+): MarkdownPage {
+	const known = knownProperties ? new Set([...knownProperties].map((k) => k.trim())) : null;
+	const isKnown = (key: string) => known === null || known.has(key);
 	const lines = source.replace(/\r\n?/g, '\n').split('\n');
 
 	let index = 0;
@@ -49,17 +65,34 @@ export function parseMarkdownPage(source: string): MarkdownPage {
 	}
 	while (index < lines.length && lines[index]!.trim() === '') index++;
 
-	// Property block: consecutive `Key: value` lines. Stops at the first line
-	// that is not one, which is what keeps body prose out.
+	// Property block: everything up to the first blank line, but only when the
+	// first line is actually a property. Notion always emits properties before
+	// the body, so a non-property first line means the page simply has none.
+	//
+	// The terminator is the blank line, not "the first line that is not a
+	// property". A property value can span lines — an Area Report renders as
+	// two — and stopping at the first continuation line dumped the remaining
+	// properties into the body of 200 pages.
 	const properties: Record<string, string> = {};
-	while (index < lines.length) {
-		const line = lines[index]!;
-		if (line.trim() === '') break;
-		const match = PROPERTY_LINE.exec(line);
-		if (!match) break;
-		const key = match[1]!.trim();
-		if (!(key in properties)) properties[key] = (match[2] ?? '').trim();
-		index++;
+	const firstMatch = index < lines.length ? PROPERTY_LINE.exec(lines[index]!) : null;
+	if (firstMatch && isKnown(firstMatch[1]!.trim())) {
+		let currentKey: string | null = null;
+		while (index < lines.length) {
+			const line = lines[index]!;
+			if (line.trim() === '') break;
+
+			const match = PROPERTY_LINE.exec(line);
+			if (match && isKnown(match[1]!.trim())) {
+				currentKey = match[1]!.trim();
+				if (!(currentKey in properties)) properties[currentKey] = (match[2] ?? '').trim();
+			} else if (currentKey) {
+				// A continuation of the value above.
+				properties[currentKey] = `${properties[currentKey]}\n${line.trim()}`.trim();
+			}
+			index++;
+		}
+		// Skip the blank line that ended the block.
+		while (index < lines.length && lines[index]!.trim() === '') index++;
 	}
 
 	const body = lines

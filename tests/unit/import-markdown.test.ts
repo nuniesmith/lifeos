@@ -118,3 +118,52 @@ describe('property agreement', () => {
 		);
 	});
 });
+
+describe('multi-line property values', () => {
+	// An Area Report renders across two lines. Ending the property block at the
+	// first continuation line pushed every property after it into the body.
+	const page = parseMarkdownPage(
+		[
+			'# Relationship & Connection',
+			'',
+			'Area Report: 🌿 Quiet right now',
+			'↻ Review current · Sep 13',
+			'Archive: No',
+			'Review Every: Month',
+			'',
+			'🌿 **This Part of Life**',
+			'',
+			'Real body prose.'
+		].join('\n')
+	);
+
+	it('keeps a continuation line with its property', () => {
+		expect(page.properties['Area Report']).toBe('🌿 Quiet right now\n↻ Review current · Sep 13');
+	});
+
+	it('still reads the properties that follow the multi-line one', () => {
+		expect(page.properties['Archive']).toBe('No');
+		expect(page.properties['Review Every']).toBe('Month');
+	});
+
+	it('does not leak any property into the body', () => {
+		expect(page.body).not.toContain('Archive: No');
+		expect(page.body).not.toContain('Review Every');
+		expect(page.body.startsWith('🌿 **This Part of Life**')).toBe(true);
+	});
+
+	it('uses the known column names to tell a property from prose', () => {
+		// `Just prose: with a colon.` is indistinguishable from a property on
+		// its own. The importer knows the database's columns, so it passes them.
+		const src = '# Title\n\nJust prose: with a colon.\n\nMore.';
+		expect(parseMarkdownPage(src, ['Status', 'Archive']).properties).toEqual({});
+		expect(parseMarkdownPage(src, ['Status', 'Archive']).body).toContain('Just prose:');
+	});
+
+	it('still parses real properties when the columns are supplied', () => {
+		const src = '# T\n\nStatus: To Do\nArchive: No\n\nBody.';
+		const parsed = parseMarkdownPage(src, ['Status', 'Archive']);
+		expect(parsed.properties).toEqual({ Status: 'To Do', Archive: 'No' });
+		expect(parsed.body).toBe('Body.');
+	});
+});

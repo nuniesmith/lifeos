@@ -69,6 +69,7 @@ try {
 	row('page files in export', s.pageFiles, 504);
 	row('rows matched to a page', s.pageIds, s.rows - s.untitledRows);
 	row('untitled rows (no page)', s.untitledRows);
+	row('rows with page body', s.rowsWithBody);
 	row('media files', s.mediaFiles, 525);
 	row('unique media (sha256)', s.uniqueMedia, 298);
 	row('media stored this run', s.mediaStored);

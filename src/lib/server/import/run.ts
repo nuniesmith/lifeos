@@ -52,6 +52,8 @@ export interface ImportSummary {
 	mediaStored: number;
 	mediaRejected: number;
 	pageIds: number;
+	/** Rows that carry body content from their page file. */
+	rowsWithBody: number;
 	/** Page files present in the export, whether or not a row matched one. */
 	pageFiles: number;
 	/** Rows with no title; a page file cannot exist for these. */
@@ -192,6 +194,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			let rowCount = 0;
 			let rowsWithoutPageId = 0;
 			let untitledRows = 0;
+			let rowsWithBody = 0;
 
 			// Cells are kept for pass two so each file is parsed exactly once.
 			const pendingRelations: { recordId: string; property: string; value: string }[] = [];
@@ -231,7 +234,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 							for (const candidate of free) {
 								const md = markdownById.get(candidate);
 								if (!md) continue;
-								const page = parseMarkdownPage(await readText(md));
+								const page = parseMarkdownPage(await readText(md), table.headers);
 								const score = propertyAgreement(record, page.properties);
 								if (score > bestScore) {
 									bestScore = score;
@@ -254,19 +257,39 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 						else untitledRows++;
 					}
 
+					// The page file is the only source of body content. Parsed
+					// here so promotion reads one staged row rather than going
+					// back to the filesystem.
+					let body: string | null = null;
+					let pageProperties: Record<string, string> = {};
+					let bodyImages: string[] = [];
+					if (pageId) {
+						const pageFile = markdownById.get(pageId);
+						if (pageFile) {
+							const page = parseMarkdownPage(await readText(pageFile), table.headers);
+							body = page.body || null;
+							pageProperties = page.properties;
+							bodyImages = page.images;
+						}
+					}
+
 					const inserted = one(
 						await tx<{ id: string }[]>`
 							insert into source_records (import_run_id, source_id, notion_page_id,
-							                            database_name, title, ordinal, raw)
+							                            database_name, title, ordinal, raw,
+							                            body, page_properties, body_images)
 							values (${run.id}, ${sourceId},
 							        ${pageId ? notionIdToUuid(pageId) : null},
 							        ${databaseName}, ${title || null}, ${ordinal},
-							        ${JSON.stringify(record)}::text::jsonb)
+							        ${JSON.stringify(record)}::text::jsonb,
+							        ${body}, ${JSON.stringify(pageProperties)}::text::jsonb,
+							        ${bodyImages})
 							returning id
 						`,
 						'source record'
 					);
 
+					if (body) rowsWithBody++;
 					if (pageId) recordIdByNotionId.set(pageId, inserted.id);
 
 					for (const [property, value] of Object.entries(record)) {
@@ -386,6 +409,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				mediaStored,
 				mediaRejected,
 				pageIds: recordIdByNotionId.size,
+				rowsWithBody,
 				pageFiles: inv.counts.markdown,
 				untitledRows,
 				issues,

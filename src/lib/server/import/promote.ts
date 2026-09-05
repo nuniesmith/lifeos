@@ -45,7 +45,22 @@ interface StagedRow {
 	database_name: string;
 	title: string | null;
 	raw: Record<string, string>;
+	/** Page body from the Markdown export; the CSVs do not carry it. */
+	body: string | null;
 }
+
+/**
+ * Combines a CSV column with the page body.
+ *
+ * The body is the richer content and goes first, but the column is kept when
+ * both exist — they are different fields in the source and discarding either
+ * would lose something the household wrote.
+ */
+const withBody = (row: StagedRow, column: string | null): string | null => {
+	const columnValue = column ? text(row, column) : null;
+	if (row.body && columnValue) return `${row.body}\n\n---\n\n${columnValue}`;
+	return row.body ?? columnValue;
+};
 
 const text = (row: StagedRow, column: string): string | null => {
 	const v = row.raw[column];
@@ -110,7 +125,7 @@ const GOAL_STATUS: Record<string, string> = {
 
 export async function promote(sql: Queryable, options: PromoteOptions): Promise<PromoteSummary> {
 	const rows = await sql<StagedRow[]>`
-		select id, notion_page_id, database_name, title, raw
+		select id, notion_page_id, database_name, title, raw, body
 		from source_records
 		where import_run_id = ${options.importRunId}
 		order by database_name, ordinal
@@ -285,15 +300,16 @@ function mapper(table: string, fn: MapFn): Mapper {
 
 const upsertAreas = mapper('areas', async (sql, row, o) => {
 	const [r] = await sql<{ id: string }[]>`
-		insert into areas (household_id, owner_user_id, name, review_every_days,
+		insert into areas (household_id, owner_user_id, name, description, review_every_days,
 		                   last_reviewed_on, notion_page_id, source_record_id,
 		                   created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
-		        ${int(row, 'Review Every')}, ${date(row, 'Last Reviewed')},
+		        ${withBody(row, null)}, ${int(row, 'Review Every')}, ${date(row, 'Last Reviewed')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
 		on conflict (notion_page_id) do update set
 			name = excluded.name,
+			description = excluded.description,
 			review_every_days = excluded.review_every_days,
 			last_reviewed_on = excluded.last_reviewed_on,
 			source_record_id = excluded.source_record_id
@@ -308,7 +324,7 @@ const upsertGoals = mapper('goals', async (sql, row, o) => {
 		                   target_date, achieved_on, notion_page_id, source_record_id,
 		                   created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
-		        ${text(row, 'Short Summary')},
+		        ${withBody(row, 'Short Summary')},
 		        ${mapStatus(text(row, 'Status'), GOAL_STATUS, 'active')},
 		        ${date(row, 'Deadline')}, ${date(row, 'Achieved on')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
@@ -331,7 +347,7 @@ const upsertProjects = mapper('projects', async (sql, row, o) => {
 		                      due_on, notion_page_id, source_record_id, created_by,
 		                      is_template, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
-		        ${text(row, 'Notes')},
+		        ${withBody(row, 'Notes')},
 		        ${mapStatus(text(row, 'Status'), PROJECT_STATUS, 'active')},
 		        ${date(row, 'Review Due')}, ${row.notion_page_id}, ${row.id},
 		        ${o.createdBy},
@@ -352,12 +368,13 @@ const upsertTasks = mapper('tasks', async (sql, row, o) => {
 	const energy = ['low', 'medium', 'high'].find((e) => energyRaw.includes(e)) ?? null;
 
 	const [r] = await sql<{ id: string }[]>`
-		insert into tasks (household_id, owner_user_id, title, kind, status, do_on,
+		insert into tasks (household_id, owner_user_id, title, notes, kind, status, do_on,
 		                   deadline_on, is_important, is_urgent, energy, context,
 		                   recurrence_rule, recurrence_every, next_due_on,
 		                   last_completed_on, is_template, notion_page_id,
 		                   source_record_id, created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
+		        ${withBody(row, null)},
 		        ${/milestone/i.test(text(row, 'Type') ?? '') ? 'milestone' : 'task'},
 		        ${mapStatus(text(row, 'Status'), TASK_STATUS, 'todo')},
 		        ${date(row, 'Do Date')}, ${date(row, 'Deadline')},
@@ -370,6 +387,7 @@ const upsertTasks = mapper('tasks', async (sql, row, o) => {
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
 		on conflict (notion_page_id) do update set
 			title = excluded.title,
+			notes = excluded.notes,
 			kind = excluded.kind,
 			status = excluded.status,
 			do_on = excluded.do_on,
@@ -414,7 +432,7 @@ const upsertImportantDates = mapper('important_dates', async (sql, row, o) => {
 		insert into important_dates (household_id, owner_user_id, title, notes, on_date,
 		                             recurrence, notion_page_id, source_record_id, created_by)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
-		        ${text(row, 'Notes')}, ${on}, ${recurrence}, ${row.notion_page_id},
+		        ${withBody(row, 'Notes')}, ${on}, ${recurrence}, ${row.notion_page_id},
 		        ${row.id}, ${o.createdBy})
 		on conflict (notion_page_id) do update set
 			title = excluded.title,
@@ -460,7 +478,7 @@ const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
 		insert into daily_logs (household_id, owner_user_id, on_date, note, energy_level,
 		                        gratitude, highlight, notion_page_id, source_record_id,
 		                        created_by)
-		values (${o.householdId}, ${o.ownerUserId}, ${on}, ${text(row, 'Intention')},
+		values (${o.householdId}, ${o.ownerUserId}, ${on}, ${withBody(row, 'Intention')},
 		        ${int(row, 'Energy')}, ${text(row, 'Gratitude')},
 		        ${text(row, 'Highlight of the Day')}, ${row.notion_page_id}, ${row.id},
 		        ${o.createdBy})
