@@ -1,126 +1,98 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
+	import { enhance } from '$app/forms';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
-	import Checkbox from '$lib/components/Checkbox.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import List from '$lib/components/List.svelte';
 	import ListRow from '$lib/components/ListRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import Tag from '$lib/components/Tag.svelte';
-	import Textarea from '$lib/components/Textarea.svelte';
-	import { appPath } from '$lib/components/nav';
+
+	let { data, form } = $props();
 
 	/**
-	 * Today — layout only.
+	 * Today, from live derived queries.
 	 *
-	 * ─────────────────────────────────────────────────────────────────────
-	 * EVERYTHING BELOW IS PLACEHOLDER DATA. UI-002 replaces it with derived
-	 * queries loaded in a +page.server.ts that this file does not have yet;
-	 * the data layer is another agent's ticket. Nothing here reads from the
-	 * server, and the local $state exists only so the interactions can be
-	 * felt on a real phone — a tick does not persist and is not meant to.
-	 *
-	 * What the data agent needs to supply, in the shape this page consumes:
-	 *   tasks   { id, title, meta, priority: 'high'|'normal'|'low', tags[] }
-	 *   habits  { id, name, streak, target }
-	 *   counts  { dueToday, overdue, habitsDone }
-	 * ─────────────────────────────────────────────────────────────────────
+	 * The date comes from the server as a plain `YYYY-MM-DD` in the household's
+	 * timezone. Deriving it here from `new Date()` would give the browser's day,
+	 * which is a different day for anyone up late — and would disagree with the
+	 * dates the queries were run against.
 	 */
+	const longDate = $derived(
+		new Date(`${data.today}T12:00:00`).toLocaleDateString(undefined, {
+			weekday: 'long',
+			day: 'numeric',
+			month: 'long'
+		})
+	);
 
-	const today = new Date();
-	const longDate = today.toLocaleDateString(undefined, {
-		weekday: 'long',
-		day: 'numeric',
-		month: 'long'
-	});
+	// Midday avoids any chance of a DST shift moving the label a day.
+	const dayAt = (key: string) => new Date(`${key}T12:00:00`);
 
-	// The week strip. Wide on a small phone, so it scrolls inside itself.
-	// Built by constructor arithmetic rather than setDate(): the constructor
-	// normalises an out-of-range day for us, and never mutating a Date keeps
-	// this clear of the reactivity trap that SvelteDate exists to solve.
-	const week = Array.from({ length: 7 }, (_, i) => {
-		const date = new Date(
-			today.getFullYear(),
-			today.getMonth(),
-			today.getDate() - today.getDay() + i
+	const week = $derived(
+		Array.from({ length: 7 }, (_, i) => {
+			const start = dayAt(data.week.start);
+			const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+			const pad = (n: number) => String(n).padStart(2, '0');
+			const key = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+			return {
+				key,
+				weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
+				day: date.getDate(),
+				isToday: key === data.today
+			};
+		})
+	);
+
+	const openToday = $derived(data.dueToday.filter((t) => t.status !== 'done').length);
+	const habitsDone = $derived(data.habits.filter((h) => h.doneToday).length);
+	const isDone = (status: string) => status === 'done' || status === 'dropped';
+
+	/** A due date as a person reads it. */
+	function due(task: { doOn: string | null; deadlineOn: string | null }): string {
+		const day = task.doOn ?? task.deadlineOn;
+		if (!day) return '';
+		if (day === data.today) return 'Today';
+		const delta = Math.round(
+			(Date.parse(`${day}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000
 		);
-		const pad = (n: number) => String(n).padStart(2, '0');
-		return {
-			// A local calendar date, not toISOString(): that converts to UTC
-			// first and hands back yesterday for anyone west of Greenwich in
-			// the evening — exactly the household using this.
-			key: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
-			weekday: date.toLocaleDateString(undefined, { weekday: 'short' }),
-			day: date.getDate(),
-			isToday: date.toDateString() === today.toDateString()
-		};
-	});
-
-	let tasks = $state([
-		{
-			id: 't1',
-			title: 'Book the vet for Juno',
-			meta: 'Health · due 4:00 pm',
-			priority: 'high' as const,
-			tags: ['pets', 'calls'],
-			done: false
-		},
-		{
-			id: 't2',
-			title: 'Pay the hydro bill',
-			meta: 'Money · due today',
-			priority: 'normal' as const,
-			tags: ['bills'],
-			done: false
-		},
-		{
-			id: 't3',
-			title: 'Defrost the chicken for tomorrow',
-			meta: 'Meals · due 6:00 pm',
-			priority: 'low' as const,
-			tags: [],
-			done: true
-		}
-	]);
-
-	let habits = $state([
-		{ id: 'h1', name: 'Morning walk', streak: 12, done: true },
-		{ id: 'h2', name: 'Vitamins', streak: 4, done: false },
-		{ id: 'h3', name: 'Read 10 pages', streak: 31, done: false }
-	]);
-
-	let journal = $state('');
-
-	const openTasks = $derived(tasks.filter((t) => !t.done).length);
-	const habitsDone = $derived(habits.filter((h) => h.done).length);
-
-	const priorityTone = { high: 'crit', normal: 'accent', low: 'neutral' } as const;
+		if (delta === -1) return 'Yesterday';
+		if (delta < 0) return `${Math.abs(delta)} days ago`;
+		if (delta === 1) return 'Tomorrow';
+		return `in ${delta} days`;
+	}
 </script>
 
 <svelte:head><title>Today · LifeOS</title></svelte:head>
 
 <PageHeader title="Today" description={longDate}>
 	{#snippet meta()}
-		<Badge tone={openTasks > 0 ? 'accent' : 'ok'} dot>
-			{openTasks} task{openTasks === 1 ? '' : 's'} left
+		<Badge tone={openToday > 0 ? 'accent' : 'ok'} dot>
+			{openToday} task{openToday === 1 ? '' : 's'} left
 		</Badge>
-		<Badge tone={habitsDone === habits.length ? 'ok' : 'neutral'} dot>
-			{habitsDone}/{habits.length} habits
-		</Badge>
+		{#if data.habits.length > 0}
+			<Badge tone={habitsDone === data.habits.length ? 'ok' : 'neutral'} dot>
+				{habitsDone}/{data.habits.length} habits
+			</Badge>
+		{/if}
 	{/snippet}
 </PageHeader>
 
-<!-- Seven day chips exceed a narrow phone; the strip scrolls, the page does not. -->
+{#if form?.error}
+	<p class="notice" role="alert">{form.error}</p>
+{/if}
+
+<!-- Seven day chips exceed a narrow phone; the strip scrolls, the page does not.
+     These are labels rather than links until the journal route exists (UI-009);
+     a chip that navigates to a 404 is worse than one that does nothing. -->
 <div class="scroll-x week-strip">
 	<ul class="week">
 		{#each week as day (day.key)}
 			<li>
-				<a href={resolve(appPath(`/journal/${day.key}`))} class="day" class:is-today={day.isToday}>
+				<span class="day" class:is-today={day.isToday}>
 					<span class="weekday">{day.weekday}</span>
 					<span class="date numeric">{day.day}</span>
-				</a>
+				</span>
 			</li>
 		{/each}
 	</ul>
@@ -132,63 +104,95 @@
 			<Button size="sm" href="/tasks">All tasks</Button>
 		{/snippet}
 
-		<List label="Tasks due today">
-			{#each tasks as task (task.id)}
-				<ListRow title={task.title} meta={task.meta} href="/tasks/{task.id}" muted={task.done}>
-					{#snippet lead()}
-						<Checkbox bind:checked={task.done} label="Complete: {task.title}" hideLabel />
-					{/snippet}
-					{#snippet trail()}
-						{#if !task.done}
-							<Badge tone={priorityTone[task.priority]}>{task.priority}</Badge>
-						{/if}
-					{/snippet}
-					{#if task.tags.length > 0 && !task.done}
-						{#each task.tags as tag (tag)}
-							<Tag label={tag} href="/tasks?tag={tag}" />
-						{/each}
-					{/if}
-				</ListRow>
-			{/each}
-		</List>
+		{#if data.dueToday.length === 0}
+			<EmptyState
+				title="Nothing due today"
+				description="Anything you schedule for today will appear here."
+				icon="check"
+			/>
+		{:else}
+			<List label="Tasks due today">
+				{#each data.dueToday as task (task.id)}
+					<ListRow
+						title={task.title}
+						meta={due(task)}
+						href="/tasks/{task.id}"
+						muted={isDone(task.status)}
+					>
+						{#snippet lead()}
+							<form method="POST" action="?/toggleTask" use:enhance>
+								<input type="hidden" name="id" value={task.id} />
+								<input type="hidden" name="updatedAt" value={task.updatedAt} />
+								<input type="hidden" name="done" value={isDone(task.status) ? 'false' : 'true'} />
+								<button
+									class="tick"
+									type="submit"
+									aria-pressed={isDone(task.status)}
+									aria-label={isDone(task.status)
+										? `Reopen ${task.title}`
+										: `Complete ${task.title}`}>{isDone(task.status) ? '✓' : ''}</button
+								>
+							</form>
+						{/snippet}
+						{#snippet trail()}
+							{#if task.isImportant && !isDone(task.status)}
+								<Badge tone="warn">Important</Badge>
+							{/if}
+						{/snippet}
+					</ListRow>
+				{/each}
+			</List>
+		{/if}
 	</Card>
 
 	<Card title="Habits" subtitle="Tick them off as you go" flush>
-		<List label="Habits for today">
-			{#each habits as habit (habit.id)}
-				<ListRow title={habit.name} muted={false}>
-					{#snippet lead()}
-						<Checkbox bind:checked={habit.done} label="Log: {habit.name}" hideLabel />
-					{/snippet}
-					{#snippet trail()}
-						<Badge tone={habit.done ? 'ok' : 'neutral'}>
-							{habit.streak} day{habit.streak === 1 ? '' : 's'}
-						</Badge>
-					{/snippet}
-				</ListRow>
-			{/each}
-		</List>
+		{#if data.habits.length === 0}
+			<EmptyState title="No habits yet" description="Habits you track will show up here." />
+		{:else}
+			<List label="Habits for today">
+				{#each data.habits as habit (habit.id)}
+					<ListRow title={habit.name}>
+						{#snippet lead()}
+							<form method="POST" action="?/toggleHabit" use:enhance>
+								<input type="hidden" name="id" value={habit.id} />
+								<input type="hidden" name="day" value={data.today} />
+								<input type="hidden" name="done" value={habit.doneToday ? 'false' : 'true'} />
+								<button
+									class="tick"
+									type="submit"
+									aria-pressed={habit.doneToday}
+									aria-label={habit.doneToday ? `Undo ${habit.name}` : `Log ${habit.name}`}
+									>{habit.doneToday ? '✓' : ''}</button
+								>
+							</form>
+						{/snippet}
+						{#snippet trail()}
+							<Badge tone={habit.doneToday ? 'ok' : 'neutral'}>
+								{habit.streak} day{habit.streak === 1 ? '' : 's'}
+							</Badge>
+						{/snippet}
+					</ListRow>
+				{/each}
+			</List>
+		{/if}
 	</Card>
 
-	<Card title="Overdue">
-		<EmptyState
-			title="Nothing is overdue"
-			description="Anything you miss will show up here the next morning."
-			icon="check"
-		/>
-	</Card>
-
-	<Card title="Daily log" subtitle="A line or two is plenty">
-		<Textarea
-			label="How did today go?"
-			bind:value={journal}
-			rows={4}
-			placeholder="Slept badly, walked anyway."
-			hint="Saved to the daily log for {longDate}."
-		/>
-		<div class="log-actions">
-			<Button variant="primary" disabled={!journal.trim()}>Save entry</Button>
-		</div>
+	<Card title="Overdue" flush>
+		{#if data.overdue.length === 0}
+			<EmptyState
+				title="Nothing is overdue"
+				description="Anything you miss will show up here the next morning."
+				icon="check"
+			/>
+		{:else}
+			<List label="Overdue tasks">
+				{#each data.overdue as task (task.id)}
+					<ListRow title={task.title} meta={due(task)} href="/tasks/{task.id}">
+						{#snippet trail()}<Badge tone="crit">Overdue</Badge>{/snippet}
+					</ListRow>
+				{/each}
+			</List>
+		{/if}
 	</Card>
 </div>
 
@@ -259,11 +263,5 @@
 	.is-today .date,
 	.is-today .weekday {
 		color: var(--c-accent);
-	}
-
-	.log-actions {
-		display: flex;
-		justify-content: flex-end;
-		margin-top: var(--sp-3);
 	}
 </style>
