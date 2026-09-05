@@ -167,3 +167,32 @@ describe('multi-line property values', () => {
 		expect(parsed.body).toBe('Body.');
 	});
 });
+
+describe('targets containing parentheses', () => {
+	it('keeps a filename with parentheses intact', () => {
+		// Notion exports assets like ChatGPT_Image_..._(2).png. Stopping at the
+		// first ')' produced a path that matched nothing — the same mistake as
+		// the relation-cell parser made.
+		const md = '![img](Recipe%20Library/ChatGPT_Image_(2).png)';
+		expect(extractImages(md)).toEqual(['Recipe Library/ChatGPT_Image_(2).png']);
+	});
+
+	it('handles several such images in one body', () => {
+		const md = '![a](x/a_(1).png)\n![b](x/b_(2).png)';
+		expect(extractImages(md)).toEqual(['x/a_(1).png', 'x/b_(2).png']);
+	});
+
+	it('still separates images from page links', () => {
+		const md = '![a](x/a_(1).png)\n[p](y/Page%20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md)';
+		expect(extractImages(md)).toEqual(['x/a_(1).png']);
+		expect(extractPageLinks(md)).toEqual(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
+	});
+});
+
+describe('angle-bracket targets', () => {
+	it('unwraps a target wrapped in <>', () => {
+		// Markdown allows this for targets containing spaces, and formatters
+		// rewrite plain targets into this form.
+		expect(extractImages('![a](<x/my file_(1).png>)')).toEqual(['x/my file_(1).png']);
+	});
+});

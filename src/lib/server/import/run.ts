@@ -51,6 +51,8 @@ export interface ImportSummary {
 	/** Media rows created this run, after deduplication. */
 	mediaStored: number;
 	mediaRejected: number;
+	/** Body image references linked to a stored attachment. */
+	imageLinks: number;
 	pageIds: number;
 	/** Rows that carry body content from their page file. */
 	rowsWithBody: number;
@@ -133,6 +135,10 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			// a re-import a no-op rather than a duplicate.
 			let mediaStored = 0;
 			let mediaRejected = 0;
+			// Relative path -> attachment id, so a body's image reference can be
+			// resolved to the row that was actually stored for it.
+			const attachmentByPath = new Map<string, string>();
+			const attachmentBySha = new Map<string, string>();
 			const uploadDir = options.uploadDir ?? 'var/uploads';
 
 			for (const file of inv.files) {
@@ -167,8 +173,28 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					returning id
 				`;
 
+				const shaHex = sha256.toString('hex');
 				if (inserted.length > 0) {
 					mediaStored++;
+					attachmentBySha.set(shaHex, inserted[0]!.id);
+				}
+
+				// A deduplicated file still needs its path mapped, otherwise the
+				// second reference to identical bytes would resolve to nothing.
+				const attachmentId =
+					attachmentBySha.get(shaHex) ??
+					(
+						await tx<{ id: string }[]>`
+							select id from attachments
+							where household_id = ${options.householdId} and sha256 = ${sha256}
+						`
+					)[0]?.id;
+				if (attachmentId) {
+					attachmentBySha.set(shaHex, attachmentId);
+					attachmentByPath.set(file.relativePath, attachmentId);
+				}
+
+				if (inserted.length > 0) {
 					// Written only for a real import: a dry run must leave the
 					// filesystem untouched, since a rollback cannot undo a write.
 					if (!dryRun) {
@@ -198,6 +224,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 
 			// Cells are kept for pass two so each file is parsed exactly once.
 			const pendingRelations: { recordId: string; property: string; value: string }[] = [];
+			const pendingImages: { recordId: string; pageDir: string; images: string[] }[] = [];
 
 			for (const file of canonical) {
 				const table = parseCsvTable(await readText(file));
@@ -290,6 +317,15 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					);
 
 					if (body) rowsWithBody++;
+					if (bodyImages.length && pageId) {
+						const pageFile = markdownById.get(pageId);
+						if (pageFile) {
+							// Image paths in a page body are relative to the page's
+							// own directory, not to the export root.
+							const pageDir = pageFile.relativePath.split('/').slice(0, -1).join('/');
+							pendingImages.push({ recordId: inserted.id, pageDir, images: bodyImages });
+						}
+					}
 					if (pageId) recordIdByNotionId.set(pageId, inserted.id);
 
 					for (const [property, value] of Object.entries(record)) {
@@ -301,6 +337,54 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					ordinal++;
 					rowCount++;
 				}
+			}
+
+			// ─── body images become attachment links ─────────────────────────
+			let imageLinks = 0;
+			let unresolvedImages = 0;
+
+			for (const pending of pendingImages) {
+				let position = 0;
+				for (const image of pending.images) {
+					// Try the page-relative path first, then the export-root path:
+					// Notion writes both forms depending on where the asset lives.
+					const candidates = [
+						`${pending.pageDir}/${image}`,
+						image,
+						`${pending.pageDir}/${image}`.replace(/\/\.\//g, '/')
+					];
+					const attachmentId = candidates
+						.map((c) => attachmentByPath.get(c))
+						.find((id): id is string => Boolean(id));
+
+					if (!attachmentId) {
+						unresolvedImages++;
+						position++;
+						continue;
+					}
+
+					// Counted from what was inserted, not from what was attempted:
+					// a page that shows the same image twice conflicts on the
+					// primary key, and reporting the attempt would overstate it.
+					const link = await tx<{ attachment_id: string }[]>`
+						insert into attachment_links (attachment_id, entity_type, entity_id,
+						                              role, position)
+						values (${attachmentId}, 'source_record', ${pending.recordId},
+						        'body_image', ${position})
+						on conflict do nothing
+						returning attachment_id
+					`;
+					if (link.length > 0) imageLinks++;
+					position++;
+				}
+			}
+
+			if (unresolvedImages > 0) {
+				note(
+					'warning',
+					'unresolved_body_image',
+					`${unresolvedImages} image reference(s) in page bodies did not resolve to a stored file`
+				);
 			}
 
 			// ─── pass two: relations ─────────────────────────────────────────
@@ -408,6 +492,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				uniqueMedia: mediaHashes.size,
 				mediaStored,
 				mediaRejected,
+				imageLinks,
 				pageIds: recordIdByNotionId.size,
 				rowsWithBody,
 				pageFiles: inv.counts.markdown,

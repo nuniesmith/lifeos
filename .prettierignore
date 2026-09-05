@@ -4,3 +4,8 @@ node_modules/
 data/
 var/
 package-lock.json
+
+# Fixtures reproduce an external export byte for byte. Formatting them
+# rewrites the very syntax they exist to test — prettier wrapped a link
+# target in <> and broke image resolution.
+tests/fixtures/

@@ -115,39 +115,68 @@ export function parseMarkdownPage(
 	};
 }
 
+/**
+ * Extracts `[text](target)` pairs, tracking parenthesis depth in the target.
+ *
+ * A regex that stops at the first `)` is wrong here for the same reason it was
+ * wrong for relation cells: filenames contain parentheses. Notion exports
+ * assets like `ChatGPT_Image_..._(2).png`, and truncating at the inner bracket
+ * produced a path that matches nothing.
+ */
+function extractLinks(markdown: string, wantImages: boolean): string[] {
+	const out: string[] = [];
+	let i = 0;
+
+	while (i < markdown.length) {
+		const open = markdown.indexOf('[', i);
+		if (open === -1) break;
+
+		const isImage = open > 0 && markdown[open - 1] === '!';
+		const close = markdown.indexOf(']', open);
+		if (close === -1) break;
+		if (markdown[close + 1] !== '(') {
+			i = close + 1;
+			continue;
+		}
+
+		let depth = 0;
+		let j = close + 1;
+		for (; j < markdown.length; j++) {
+			if (markdown[j] === '(') depth++;
+			else if (markdown[j] === ')') {
+				depth--;
+				if (depth === 0) break;
+			}
+		}
+		if (depth !== 0) break;
+
+		if (isImage === wantImages) {
+			// A target containing spaces may be wrapped in angle brackets.
+			const target = markdown.slice(close + 2, j).replace(/^<(.*)>$/s, '$1');
+			if (!/^https?:/i.test(target)) {
+				try {
+					out.push(decodeURIComponent(target));
+				} catch {
+					out.push(target);
+				}
+			}
+		}
+		i = j + 1;
+	}
+
+	return out;
+}
+
 /** Local image paths, ignoring anything hosted elsewhere. */
 export function extractImages(markdown: string): string[] {
-	const out: string[] = [];
-	const pattern = /!\[[^\]]*\]\(([^)]+)\)/g;
-	let match: RegExpExecArray | null;
-	while ((match = pattern.exec(markdown)) !== null) {
-		const raw = match[1]!;
-		if (/^https?:/i.test(raw)) continue;
-		try {
-			out.push(decodeURIComponent(raw));
-		} catch {
-			out.push(raw);
-		}
-	}
-	return out;
+	return extractLinks(markdown, true);
 }
 
 /** Notion ids of internal page links in the body. */
 export function extractPageLinks(markdown: string): string[] {
 	const out = new Set<string>();
-	// Deliberately not the image syntax: a `![...](...)` is an asset, not a link.
-	const pattern = /(?<!!)\[[^\]]*\]\(([^)]+)\)/g;
-	let match: RegExpExecArray | null;
-	while ((match = pattern.exec(markdown)) !== null) {
-		const raw = match[1]!;
-		if (/^https?:/i.test(raw)) continue;
-		let decoded = raw;
-		try {
-			decoded = decodeURIComponent(raw);
-		} catch {
-			// keep the encoded form
-		}
-		const id = NOTION_ID.exec(decoded)?.[0];
+	for (const target of extractLinks(markdown, false)) {
+		const id = NOTION_ID.exec(target)?.[0];
 		if (id) out.add(id);
 	}
 	return [...out];

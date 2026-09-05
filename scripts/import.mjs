@@ -74,6 +74,7 @@ try {
 	row('unique media (sha256)', s.uniqueMedia, 298);
 	row('media stored this run', s.mediaStored);
 	row('media rejected', s.mediaRejected, 0);
+	row('body image links', s.imageLinks);
 	row('relation links', s.links);
 	row('unresolved links', s.unresolvedLinks);
 	console.log('');

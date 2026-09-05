@@ -140,10 +140,11 @@ describe('committed import', () => {
 	it('deduplicates byte-identical media under different names', async () => {
 		const summary = await run(false);
 		// Three files, two of which are identical.
-		expect(summary.mediaFiles).toBe(3);
-		expect(summary.uniqueMedia).toBe(2);
-		expect(summary.mediaStored).toBe(2);
-		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from attachments`)).toBe(2);
+		// Four files now: three in media/ plus the page's own scan.
+		expect(summary.mediaFiles).toBe(4);
+		expect(summary.uniqueMedia).toBe(3);
+		expect(summary.mediaStored).toBe(3);
+		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from attachments`)).toBe(3);
 	});
 
 	it('detects content type from bytes', async () => {
@@ -176,4 +177,31 @@ describe('rerunning', () => {
 
 afterAll(async () => {
 	if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
+});
+
+describe('page bodies and their images', () => {
+	it('promotes the page body into the task notes', async () => {
+		await run(false);
+		const task = one(
+			await sql<{ notes: string | null }[]>`
+				select notes from tasks where title = 'Call Andrea Hunt, NP'
+			`
+		);
+		expect(task.notes).toContain('bring the paperwork');
+		// Property lines must not leak in; they once did, on 200 real pages.
+		expect(task.notes).not.toContain('Status: To Do');
+		expect(task.notes).not.toContain('Life Area:');
+	});
+
+	it('links a body image whose filename contains parentheses', async () => {
+		await run(false);
+		const rows = await sql<{ role: string }[]>`
+			select l.role from attachment_links l
+			join source_records r on r.id = l.entity_id
+			where r.title = 'Call Andrea Hunt, NP' and l.entity_type = 'source_record'
+		`;
+		// scan_(1).png: stopping at the first ')' produced a path matching nothing.
+		expect(rows).toHaveLength(1);
+		expect(rows[0]!.role).toBe('body_image');
+	});
 });
