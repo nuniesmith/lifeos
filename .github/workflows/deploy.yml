@@ -10,6 +10,9 @@ on:
       image:
         description: Image reference to deploy (defaults to the commit that ran CI)
         required: false
+      revision:
+        description: Source revision matching a manual image (SHA tags are detected automatically)
+        required: false
 
 # Deploys are serialised, never cancelled. Interrupting one mid-migration is
 # how a database ends up half-way between two schemas.
@@ -24,30 +27,53 @@ jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
-    # A deploy only follows a CI run that actually passed.
+    # Only pushes to main publish an image; manual CI and PR runs do not.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     environment: production
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
 
       - name: Resolve the image to deploy
         id: image
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          REQUESTED_IMAGE: ${{ inputs.image }}
+          REQUESTED_REVISION: ${{ inputs.revision }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          sha="${{ github.event.workflow_run.head_sha || github.sha }}"
-          image="${{ inputs.image }}"
+          image="$REQUESTED_IMAGE"
+          revision="${REQUESTED_REVISION:-$SOURCE_SHA}"
           if [ -z "$image" ]; then
-            image="ghcr.io/${{ github.repository }}:${sha}"
+            image="ghcr.io/${REPOSITORY}:${revision}"
+          elif [ -z "$REQUESTED_REVISION" ]; then
+            if [[ "$image" =~ :([a-f0-9]{40})$ ]]; then
+              revision="${BASH_REMATCH[1]}"
+            else
+              echo "Set revision to the source commit matching this image." >&2
+              exit 1
+            fi
           fi
+          [[ "$image" =~ ^[a-zA-Z0-9][a-zA-Z0-9./:@_-]*$ ]] || {
+            echo "Invalid image reference" >&2; exit 1;
+          }
+          [[ "$revision" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]] || {
+            echo "Invalid source revision" >&2; exit 1;
+          }
           echo "ref=$image" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "Deploying $image"
 
-      # Shared with Princess and reused unchanged. This composite ends by
-      # running `tailscale logout`, so anything after it must not depend on
-      # tailnet name resolution — see §4 of IMPLEMENTATION_PLAN.md.
+      # Pin the shared composites to the reviewed actions commit. The previous
+      # pin logged out before SSH could run.
       - name: Connect to Tailscale
-        uses: nuniesmith/actions/.github/actions/tailscale-connect@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        uses: nuniesmith/actions/.github/actions/tailscale-connect@7667ebd82741873cf9ee7be716b14f43e09e82d4
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
@@ -56,27 +82,43 @@ jobs:
       - name: Resolve the target address
         id: target
         env:
-          OVERRIDE: ${{ secrets.LIFEOS_TAILSCALE_IP }}
+          TARGET_IP: ${{ secrets.PROD_TAILSCALE_IP || secrets.LIFEOS_TAILSCALE_IP }}
         run: |
-          # The override is load-bearing, not a convenience: the composite
-          # above has already logged out, so `tailscale ip -4 <host>` cannot
-          # be relied on here.
-          if [ -z "$OVERRIDE" ]; then
-            echo "LIFEOS_TAILSCALE_IP is not set." >&2
-            echo "Run 'tailscale status' on the server and add its 100.x address" >&2
-            echo "as a repository secret." >&2
+          if [ -z "$TARGET_IP" ]; then
+            echo "PROD_TAILSCALE_IP is not set; copy it from generate-secrets.sh." >&2
             exit 1
           fi
-          echo "ip=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          echo "ip=$TARGET_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare repository and registry credentials
+        id: credentials
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          REGISTRY_USER: ${{ secrets.GHCR_USERNAME || github.actor }}
+        run: |
+          # Encoded values are safe to embed in the remote shell script.
+          repository_auth=$(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 -w 0)
+          registry_token=$(printf '%s' "$REGISTRY_TOKEN" | base64 -w 0)
+          registry_user=$(printf '%s' "$REGISTRY_USER" | base64 -w 0)
+          echo "::add-mask::$repository_auth"
+          if [ -n "$registry_token" ]; then echo "::add-mask::$registry_token"; fi
+          echo "::add-mask::$registry_user"
+          echo "repository_auth=$repository_auth" >> "$GITHUB_OUTPUT"
+          echo "registry_token=$registry_token" >> "$GITHUB_OUTPUT"
+          echo "registry_user=$registry_user" >> "$GITHUB_OUTPUT"
 
       - name: Deploy
         id: deploy
-        uses: nuniesmith/actions/.github/actions/ssh-deploy@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        uses: nuniesmith/actions/.github/actions/ssh-deploy@7667ebd82741873cf9ee7be716b14f43e09e82d4
         with:
           host: ${{ steps.target.outputs.ip }}
-          port: ${{ secrets.SSH_PORT || '22' }}
-          username: ${{ secrets.SSH_USER || 'actions' }}
-          ssh-key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.PROD_SSH_PORT || secrets.SSH_PORT || '22' }}
+          username: ${{ secrets.PROD_SSH_USER || secrets.SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.PROD_SSH_KEY || secrets.SSH_KEY }}
+          use-tailscale-ssh: false
+          # A failed migration must not cause the whole deploy to run twice.
+          command-retries: '1'
           project-path: lifeos
           git-pull: false
           docker-prune: false
@@ -87,31 +129,35 @@ jobs:
           pre-deploy-command: |
             set -Eeuo pipefail
 
-            # The repository is cloned for its scripts and compose files only.
-            # The application itself is never built here — it arrives as an
-            # image built and scanned by CI.
-            if [ -d "$HOME/lifeos/.git" ]; then
-              cd "$HOME/lifeos"
-              git fetch origin main
-              git reset --hard origin/main
-            else
-              git clone --depth 50 https://github.com/${{ github.repository }}.git "$HOME/lifeos"
-              cd "$HOME/lifeos"
+            # This private repository needs a read credential. Pass the job
+            # token through transient Git configuration, never a saved URL.
+            export GIT_TERMINAL_PROMPT=0
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            export GIT_CONFIG_VALUE_0='AUTHORIZATION: basic ${{ steps.credentials.outputs.repository_auth }}'
+            if [ ! -d "$HOME/lifeos/.git" ]; then
+              mkdir -p "$HOME/lifeos"
+              git -C "$HOME/lifeos" init
+              git -C "$HOME/lifeos" remote add origin https://github.com/${{ github.repository }}.git
             fi
+            cd "$HOME/lifeos"
+            git fetch --depth 1 origin '${{ steps.image.outputs.revision }}'
+            git checkout --force --detach FETCH_HEAD
+            unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
             chmod +x scripts/*.sh run.sh 2>/dev/null || true
 
             # .env lives outside the checkout and is generated on the server by
             # scripts/setup-server.sh; it is never written from a runner.
-            test -f /srv/lifeos/.env || {
-              echo "/srv/lifeos/.env is missing — run scripts/setup-server.sh first" >&2
+            test -r /srv/lifeos/.env && test -w /srv/lifeos/.env || {
+              echo "/srv/lifeos/.env must be readable and writable by the deploy user — run scripts/setup-server.sh first" >&2
               exit 1
             }
             ln -sfn /srv/lifeos/.env "$HOME/lifeos/.env"
 
             # Private packages need a pull credential on the server.
-            if [ -n "${{ secrets.GHCR_READ_TOKEN }}" ]; then
-              echo "${{ secrets.GHCR_READ_TOKEN }}" \
-                | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME || github.actor }}" --password-stdin
+            if [ -n '${{ steps.credentials.outputs.registry_token }}' ]; then
+              printf '%s' '${{ steps.credentials.outputs.registry_token }}' | base64 --decode \
+                | docker login ghcr.io -u "$(printf '%s' '${{ steps.credentials.outputs.registry_user }}' | base64 --decode)" --password-stdin
             fi
           deploy-command: |
             set -Eeuo pipefail
@@ -122,13 +168,13 @@ jobs:
       # result here means something the script could not fix.
       - name: Health check
         id: health
-        uses: nuniesmith/actions/.github/actions/health-check@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        uses: nuniesmith/actions/.github/actions/health-check@7667ebd82741873cf9ee7be716b14f43e09e82d4
         with:
           containers: lifeos-app-1 lifeos-db-1 lifeos-nginx-1
           ssh-host: ${{ steps.target.outputs.ip }}
-          ssh-port: ${{ secrets.SSH_PORT || '22' }}
-          ssh-user: ${{ secrets.SSH_USER || 'actions' }}
-          ssh-key: ${{ secrets.SSH_KEY }}
+          ssh-port: ${{ secrets.PROD_SSH_PORT || secrets.SSH_PORT || '22' }}
+          ssh-user: ${{ secrets.PROD_SSH_USER || secrets.SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.PROD_SSH_KEY || secrets.SSH_KEY }}
           initial-delay: 10
           retry-count: 4
           retry-delay: 10
@@ -136,7 +182,7 @@ jobs:
 
       - name: Notify
         if: always()
-        uses: nuniesmith/actions/.github/actions/discord-notify@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        uses: nuniesmith/actions/.github/actions/discord-notify@7667ebd82741873cf9ee7be716b14f43e09e82d4
         continue-on-error: true
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_ACTIONS }}

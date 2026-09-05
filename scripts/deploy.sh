@@ -11,7 +11,6 @@ set -Eeuo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-COMPOSE="docker compose -f compose.prod.yml --env-file .env"
 STATE_DIR="${LIFEOS_STATE_DIR:-/srv/lifeos}"
 RELEASES="$STATE_DIR/releases"
 
@@ -20,7 +19,28 @@ ok()   { printf '\033[32m✔\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m✘\033[0m %s\n' "$*" >&2; exit 1; }
 
 : "${LIFEOS_IMAGE:?LIFEOS_IMAGE must be set to the image to deploy}"
-[[ -f .env ]] || die ".env is missing; run scripts/setup-server.sh first"
+[[ -r .env && -w .env ]] || die ".env must be readable and writable; run scripts/setup-server.sh first"
+# Resolve the symlink before replacing the file, so checkout/.env continues
+# to point to the persistent environment on subsequent deployments.
+ENV_FILE="$(readlink -f .env)"
+COMPOSE=(docker compose -f compose.prod.yml --env-file "$ENV_FILE")
+
+set_image() {
+    LIFEOS_IMAGE="$1"
+    export LIFEOS_IMAGE
+    local pending
+    pending=$(mktemp "${ENV_FILE}.XXXXXX")
+    # Environment lookup avoids interpreting image text as an awk program.
+    if ! awk '
+        /^LIFEOS_IMAGE=/ { if (!found++) print "LIFEOS_IMAGE=" ENVIRON["LIFEOS_IMAGE"]; next }
+        { print }
+        END { if (!found) print "LIFEOS_IMAGE=" ENVIRON["LIFEOS_IMAGE"] }
+    ' "$ENV_FILE" > "$pending"; then
+        rm -f "$pending"
+        die "could not update the image in $ENV_FILE"
+    fi
+    mv "$pending" "$ENV_FILE"
+}
 
 # ─── preflight ─────────────────────────────────────────────────────────────
 say "Preflight"
@@ -43,12 +63,12 @@ ok "image present"
 
 # ─── database up, and backed up before any migration ───────────────────────
 say "Ensuring the database is running"
-LIFEOS_IMAGE="$LIFEOS_IMAGE" $COMPOSE up -d db
+LIFEOS_IMAGE="$LIFEOS_IMAGE" "${COMPOSE[@]}" up -d db
 for _ in $(seq 1 60); do
-    $COMPOSE exec -T db pg_isready -q && break
+    "${COMPOSE[@]}" exec -T db pg_isready -q && break
     sleep 2
 done
-$COMPOSE exec -T db pg_isready -q || die "database did not become ready"
+"${COMPOSE[@]}" exec -T db pg_isready -q || die "database did not become ready"
 ok "database ready"
 
 if [[ -x scripts/backup.sh ]]; then
@@ -56,19 +76,27 @@ if [[ -x scripts/backup.sh ]]; then
     ./scripts/backup.sh --pre-deploy || die "backup failed; not migrating"
     ok "backup taken"
 else
-    # Explicit rather than silent: migrating without a backup is a decision.
-    printf '\033[33m!\033[0m %s\n' "scripts/backup.sh not present — migrating without a fresh backup"
+    say "Pre-deploy database backup"
+    mkdir -p "$STATE_DIR/backups"
+    backup=$(mktemp "$STATE_DIR/backups/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")
+    if ! "${COMPOSE[@]}" exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$backup"; then
+        rm -f "$backup"
+        die "backup failed; not migrating"
+    fi
+    [[ -s "$backup" ]] || { rm -f "$backup"; die "backup was empty; not migrating"; }
+    mv "$backup" "$backup.dump"
+    ok "database backup taken"
 fi
 
 # ─── migrate with the app stopped ──────────────────────────────────────────
 # Stopping the app first means no request can hit a half-migrated schema.
 say "Stopping the application for migration"
-$COMPOSE stop app 2>/dev/null || true
+"${COMPOSE[@]}" stop app 2>/dev/null || true
 
 say "Running migrations"
 docker run --rm \
-    --network "$($COMPOSE ps --format json db | head -1 | grep -o '"Networks":"[^"]*"' | cut -d'"' -f4)" \
-    --env-file .env \
+    --network "$("${COMPOSE[@]}" ps --format json db | head -1 | grep -o '"Networks":"[^"]*"' | cut -d'"' -f4)" \
+    --env-file "$ENV_FILE" \
     -e DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' .env | cut -d= -f2- || grep -E '^DATABASE_URL=' .env | cut -d= -f2-)" \
     "$LIFEOS_IMAGE" node scripts/migrate.mjs \
     || die "migration failed; the application was not started on this image"
@@ -76,9 +104,8 @@ ok "migrations applied"
 
 # ─── roll out ──────────────────────────────────────────────────────────────
 say "Starting the application"
-sed -i "s|^LIFEOS_IMAGE=.*|LIFEOS_IMAGE=$LIFEOS_IMAGE|" .env
-grep -qE '^LIFEOS_IMAGE=' .env || echo "LIFEOS_IMAGE=$LIFEOS_IMAGE" >> .env
-$COMPOSE up -d app nginx
+set_image "$LIFEOS_IMAGE"
+"${COMPOSE[@]}" up -d app nginx
 
 # ─── hard health gate ──────────────────────────────────────────────────────
 say "Waiting for health"
@@ -95,8 +122,8 @@ if [[ "$healthy" != true ]]; then
     printf '\033[31m✘\033[0m %s\n' "new image failed its health check"
     if [[ -n "$PREVIOUS" ]]; then
         say "Rolling back to $PREVIOUS"
-        sed -i "s|^LIFEOS_IMAGE=.*|LIFEOS_IMAGE=$PREVIOUS|" .env
-        $COMPOSE up -d app nginx
+        set_image "$PREVIOUS"
+        "${COMPOSE[@]}" up -d app nginx
         # The database is never rolled back: a migration may already have
         # committed, and reversing it blindly is how data is lost.
         die "rolled back the application; the database was left as migrated"

@@ -7,15 +7,33 @@ The application is never built on the server — CI publishes a multi-arch image
 
 ## One-time server setup
 
+Create the `actions` deploy account and its SSH key with the canonical setup
+scripts first. The generator downloads `setup-prod-server.sh` automatically
+when that account is missing:
+
 ```sh
-sudo tailscale up --ssh
+curl -fL https://raw.githubusercontent.com/nuniesmith/scripts/main/scripts/setup/generate-secrets.sh \
+  -o /tmp/generate-secrets.sh
+sudo bash /tmp/generate-secrets.sh --no-confirm --env prod
+```
+
+Copy the generated `PROD_SSH_*` and `PROD_TAILSCALE_IP` values into the LifeOS
+repository's Actions secrets. Then prepare the application directory:
+
+```sh
 git clone https://github.com/nuniesmith/lifeos.git ~/lifeos
 cd ~/lifeos && sudo ./scripts/setup-server.sh
 ```
 
-`setup-server.sh` installs Docker, creates `/srv/lifeos`, and generates a
-root-owned `/srv/lifeos/.env` with a random `POSTGRES_PASSWORD`. The password
-is generated on the server and never travels through a CI runner.
+If Tailscale is not connected yet, run `sudo tailscale up` before recording the
+server address below. `setup-server.sh` expects the `actions` account created by
+the canonical generator and repairs its state-directory permissions safely on
+re-runs.
+
+`setup-server.sh` installs Docker, creates `/srv/lifeos`, and generates
+`/srv/lifeos/.env` with a random `POSTGRES_PASSWORD`. The file is owned by the
+`actions` deploy account and remains on the server; the password never travels
+through a CI runner.
 
 Then expose it and record the address:
 
@@ -24,7 +42,7 @@ sudo tailscale serve --bg --https=443 8080
 tailscale status                      # note the 100.x address
 ```
 
-Put that 100.x address in the `LIFEOS_TAILSCALE_IP` repository secret, and set
+Put that 100.x address in the `PROD_TAILSCALE_IP` repository secret, and set
 `ORIGIN` in `/srv/lifeos/.env` to the `https://…ts.net` name Serve printed.
 `ORIGIN` must match exactly or every form post is rejected as cross-site.
 
@@ -61,13 +79,13 @@ is a restore, not a deploy.
 
 ## Required secrets
 
-| Secret                                                 | Purpose                                                                                                       |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `LIFEOS_TAILSCALE_IP`                                  | The server's 100.x address. **Load-bearing** — `tailscale-connect` logs out before name resolution would run. |
-| `TAILSCALE_OAUTH_CLIENT_ID` / `TAILSCALE_OAUTH_SECRET` | Joins the runner to the tailnet as `tag:ci`.                                                                  |
-| `SSH_USER` / `SSH_KEY` / `SSH_PORT`                    | Deploy account. The private key is generated off-server.                                                      |
-| `GHCR_USERNAME` / `GHCR_READ_TOKEN`                    | Pull credential for the private image. `read:packages` only.                                                  |
-| `DISCORD_WEBHOOK_ACTIONS`                              | Deploy notifications.                                                                                         |
+| Secret                                                 | Purpose                                                                                                  |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `PROD_TAILSCALE_IP`                                    | The server's 100.x address. The legacy `LIFEOS_TAILSCALE_IP` name is accepted as a fallback.             |
+| `TAILSCALE_OAUTH_CLIENT_ID` / `TAILSCALE_OAUTH_SECRET` | Joins the runner to the tailnet as `tag:ci`.                                                             |
+| `PROD_SSH_USER` / `PROD_SSH_KEY` / `PROD_SSH_PORT`     | Deploy account. The private key is generated off-server; old unprefixed names are accepted as fallbacks. |
+| `GHCR_USERNAME` / `GHCR_READ_TOKEN`                    | Pull credential for the private image. `read:packages` only.                                             |
+| `DISCORD_WEBHOOK_ACTIONS`                              | Deploy notifications.                                                                                    |
 
 `POSTGRES_PASSWORD` is deliberately **not** a repository secret. It is
 generated on the server into `/srv/lifeos/.env`, so a runner compromise does

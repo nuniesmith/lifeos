@@ -9,7 +9,7 @@
 set -Eeuo pipefail
 
 STATE_DIR="${LIFEOS_STATE_DIR:-/srv/lifeos}"
-SERVICE_USER="${SUDO_USER:-${USER}}"
+SERVICE_USER="${LIFEOS_DEPLOY_USER:-actions}"
 
 say()  { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✔\033[0m %s\n' "$*"; }
@@ -17,6 +17,8 @@ warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m✘\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
+id "$SERVICE_USER" >/dev/null 2>&1 || die "deploy user '$SERVICE_USER' is missing; run nuniesmith/scripts generate-secrets.sh first"
+SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 
 say "Architecture: $(uname -m)"
 case "$(uname -m)" in
@@ -44,6 +46,9 @@ fi
 # ─── layout ────────────────────────────────────────────────────────────────
 say "Creating $STATE_DIR"
 mkdir -p "$STATE_DIR"/{releases,backups,data/uploads,data/postgres}
+# The SSH deployment account writes the lock, release history and backups.
+chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR" "$STATE_DIR/releases" "$STATE_DIR/backups"
+chmod 750 "$STATE_DIR" "$STATE_DIR/releases" "$STATE_DIR/backups"
 # The postgres image runs as uid 999; uploads are written by the app as node
 # (uid 1000). Ownership is set explicitly rather than left to whoever writes
 # first, which is how a container ends up unable to read its own volume.
@@ -79,10 +84,12 @@ LIFEOS_CURRENCY=CAD
 # Replaced by each deploy with the digest that was rolled out.
 LIFEOS_IMAGE=
 EOF
-    chown root:root "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    ok ".env generated (root-owned, 0600)"
+    ok ".env generated"
 fi
+# Also repair permissions from earlier setups without rotating credentials.
+chown "$SERVICE_USER:$SERVICE_GROUP" "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+ok ".env available to $SERVICE_USER (0600)"
 
 # ─── tailscale ─────────────────────────────────────────────────────────────
 if ! command -v tailscale >/dev/null 2>&1; then
@@ -94,16 +101,16 @@ fi
 if tailscale status >/dev/null 2>&1; then
     ok "Tailscale is connected as $(tailscale status --json | grep -o '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4)"
 else
-    warn "Tailscale is not connected. Run: sudo tailscale up --ssh"
+    warn "Tailscale is not connected. Run: sudo tailscale up"
 fi
 
 cat <<'NEXT'
 
 Next steps
-  1. sudo tailscale up --ssh                     (if not already connected)
+  1. sudo tailscale up                           (if not already connected)
   2. sudo tailscale serve --bg --https=443 8080  (HTTPS in front of loopback nginx)
   3. tailscale status                            (note the 100.x address)
-  4. Put that address in the LIFEOS_TAILSCALE_IP repository secret
+  4. Put that address in the PROD_TAILSCALE_IP repository secret
   5. Set ORIGIN in /srv/lifeos/.env to the https:// name tailscale serve printed
   6. Push to main — the deploy workflow takes it from there
 
