@@ -17,7 +17,7 @@ curl -fL https://raw.githubusercontent.com/nuniesmith/scripts/main/scripts/setup
 sudo bash /tmp/generate-secrets.sh --no-confirm --env prod
 ```
 
-Copy the generated `PROD_SSH_*` and `PROD_TAILSCALE_IP` values into the LifeOS
+Copy the generated SSH values into the LifeOS
 repository's Actions secrets. Then prepare the application directory:
 
 ```sh
@@ -42,7 +42,7 @@ sudo tailscale serve --bg --https=443 8080
 tailscale status                      # note the 100.x address
 ```
 
-Put that 100.x address in the `PROD_TAILSCALE_IP` repository secret, and set
+Put that 100.x address in the `LIFEOS_TAILSCALE_IP` repository secret, and set
 `ORIGIN` in `/srv/lifeos/.env` to the `https://…ts.net` name Serve printed.
 `ORIGIN` must match exactly or every form post is rejected as cross-site.
 
@@ -79,13 +79,18 @@ is a restore, not a deploy.
 
 ## Required secrets
 
-| Secret                                                 | Purpose                                                                                                  |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `PROD_TAILSCALE_IP`                                    | The server's 100.x address. The legacy `LIFEOS_TAILSCALE_IP` name is accepted as a fallback.             |
-| `TAILSCALE_OAUTH_CLIENT_ID` / `TAILSCALE_OAUTH_SECRET` | Joins the runner to the tailnet as `tag:ci`.                                                             |
-| `PROD_SSH_USER` / `PROD_SSH_KEY` / `PROD_SSH_PORT`     | Deploy account. The private key is generated off-server; old unprefixed names are accepted as fallbacks. |
-| `GHCR_USERNAME` / `GHCR_READ_TOKEN`                    | Pull credential for the private image. `read:packages` only.                                             |
-| `DISCORD_WEBHOOK_ACTIONS`                              | Deploy notifications.                                                                                    |
+Secret names are the unprefixed ones. `nuniesmith/scripts`
+`generate-secrets.sh --env prod` emits `PROD_`-prefixed names instead; those
+are accepted as a fallback, so running the generator later does not quietly
+stop matching. Set one spelling or the other, not both.
+
+| Secret                                                 | Purpose                                                                                                                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LIFEOS_TAILSCALE_IP`                                  | The server's 100.x address. **Load-bearing** — `tailscale-connect` logs out before name resolution would run. `PROD_TAILSCALE_IP` is accepted as a fallback. |
+| `TAILSCALE_OAUTH_CLIENT_ID` / `TAILSCALE_OAUTH_SECRET` | Joins the runner to the tailnet as `tag:ci`.                                                                                                                 |
+| `SSH_USER` / `SSH_KEY` / `SSH_PORT`                    | Deploy account. The private key is generated off-server. The `PROD_SSH_*` spelling is accepted as a fallback.                                                |
+| `GHCR_USERNAME` / `GHCR_READ_TOKEN`                    | Pull credential for the private image. `read:packages` only.                                                                                                 |
+| `DISCORD_WEBHOOK_ACTIONS`                              | Deploy notifications.                                                                                                                                        |
 
 `POSTGRES_PASSWORD` is deliberately **not** a repository secret. It is
 generated on the server into `/srv/lifeos/.env`, so a runner compromise does

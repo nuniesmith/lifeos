@@ -83,13 +83,18 @@ jobs:
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
           tags: tag:ci
 
+      # Secrets use the unprefixed names this repository already has.
+      # The PROD_* spelling that nuniesmith/scripts generate-secrets.sh
+      # emits is accepted as a fallback, so running that generator later
+      # does not quietly stop matching.
       - name: Resolve the target address
         id: target
         env:
-          TARGET_IP: ${{ secrets.PROD_TAILSCALE_IP || secrets.LIFEOS_TAILSCALE_IP }}
+          TARGET_IP: ${{ secrets.LIFEOS_TAILSCALE_IP || secrets.PROD_TAILSCALE_IP }}
         run: |
           if [ -z "$TARGET_IP" ]; then
-            echo "PROD_TAILSCALE_IP is not set; copy it from generate-secrets.sh." >&2
+            echo "LIFEOS_TAILSCALE_IP is not set." >&2
+            echo "Run 'tailscale status' on the server and add its 100.x address." >&2
             exit 1
           fi
           echo "ip=$TARGET_IP" >> "$GITHUB_OUTPUT"
@@ -120,9 +125,9 @@ jobs:
         uses: nuniesmith/actions/.github/actions/ssh-deploy@7667ebd82741873cf9ee7be716b14f43e09e82d4
         with:
           host: ${{ steps.target.outputs.ip }}
-          port: ${{ secrets.PROD_SSH_PORT || secrets.SSH_PORT || '22' }}
-          username: ${{ secrets.PROD_SSH_USER || secrets.SSH_USER || 'actions' }}
-          ssh-key: ${{ secrets.PROD_SSH_KEY || secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || secrets.PROD_SSH_PORT || '22' }}
+          username: ${{ secrets.SSH_USER || secrets.PROD_SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.SSH_KEY || secrets.PROD_SSH_KEY }}
           use-tailscale-ssh: false
           # A failed migration must not cause the whole deploy to run twice.
           command-retries: '1'
@@ -179,9 +184,9 @@ jobs:
         with:
           containers: lifeos-app-1 lifeos-db-1 lifeos-nginx-1
           ssh-host: ${{ steps.target.outputs.ip }}
-          ssh-port: ${{ secrets.PROD_SSH_PORT || secrets.SSH_PORT || '22' }}
-          ssh-user: ${{ secrets.PROD_SSH_USER || secrets.SSH_USER || 'actions' }}
-          ssh-key: ${{ secrets.PROD_SSH_KEY || secrets.SSH_KEY }}
+          ssh-port: ${{ secrets.SSH_PORT || secrets.PROD_SSH_PORT || '22' }}
+          ssh-user: ${{ secrets.SSH_USER || secrets.PROD_SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.SSH_KEY || secrets.PROD_SSH_KEY }}
           initial-delay: 10
           retry-count: 4
           retry-delay: 10

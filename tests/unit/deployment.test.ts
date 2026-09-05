@@ -161,3 +161,44 @@ describe('production deployment shell scripts', () => {
 		expect(f.log()).toContain('usermod -aG docker actions');
 	});
 });
+
+describe('deployment secret names', () => {
+	const workflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
+
+	// The repository's secrets use the unprefixed names. generate-secrets.sh
+	// emits PROD_-prefixed ones. Both must resolve, or a deploy fails at the
+	// SSH step with an empty key and no useful message.
+	it.each([
+		['tailscale address', 'LIFEOS_TAILSCALE_IP', 'PROD_TAILSCALE_IP'],
+		['ssh key', 'SSH_KEY', 'PROD_SSH_KEY'],
+		['ssh user', 'SSH_USER', 'PROD_SSH_USER'],
+		['ssh port', 'SSH_PORT', 'PROD_SSH_PORT']
+	])('accepts either spelling for the %s', (_label, plain, prefixed) => {
+		expect(workflow).toContain(`secrets.${plain}`);
+		expect(workflow).toContain(`secrets.${prefixed}`);
+	});
+
+	it('prefers the unprefixed name this repository actually has', () => {
+		for (const [plain, prefixed] of [
+			['LIFEOS_TAILSCALE_IP', 'PROD_TAILSCALE_IP'],
+			['SSH_KEY', 'PROD_SSH_KEY'],
+			['SSH_USER', 'PROD_SSH_USER'],
+			['SSH_PORT', 'PROD_SSH_PORT']
+		]) {
+			const line = workflow
+				.split('\n')
+				.find((l) => l.includes(`secrets.${plain}`) && l.includes(`secrets.${prefixed}`));
+			expect(line, `${plain} and ${prefixed} should share a fallback expression`).toBeDefined();
+			expect(line!.indexOf(`secrets.${plain}`)).toBeLessThan(line!.indexOf(`secrets.${prefixed}`));
+		}
+	});
+
+	it('asks for packages: read so GITHUB_TOKEN can pull the private image', () => {
+		// Without this the deploy reaches `docker pull` and fails unauthorized.
+		expect(workflow).toMatch(/permissions:[\s\S]*?packages: read/);
+	});
+
+	it('falls back to the job token when no registry PAT is configured', () => {
+		expect(workflow).toContain('secrets.GHCR_READ_TOKEN || github.token');
+	});
+});
