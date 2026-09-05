@@ -32,6 +32,11 @@ ENV NODE_ENV=production \
 # dumb-init reaps zombies and forwards signals, so container stop is a clean
 # SIGTERM to node rather than a 10s timeout kill.
 RUN apt-get update \
+ # Pick up base-image security fixes at build time. The scan gates the image on
+ # HIGH and CRITICAL findings, and a base image is a moving target: libssh2
+ # shipped two HIGH CVEs that had fixes in Debian but not yet in the published
+ # node tag, which failed the build for a reason no application change caused.
+ && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends dumb-init curl \
  && rm -rf /var/lib/apt/lists/* \
  # The runtime runs `node build/index.js` and never installs anything, but
