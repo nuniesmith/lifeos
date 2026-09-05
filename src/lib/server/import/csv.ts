@@ -1,0 +1,241 @@
+/**
+ * CSV parsing for the Notion export (IMP-002).
+ *
+ * Hand-written rather than pulled from a dependency: the parsing rules needed
+ * here are narrow, the whole corpus is 436 rows, and every hazard is already
+ * characterised (plan §7). The relation-cell grammar below is specific to this
+ * export and no general parser would handle it anyway.
+ */
+
+/** Strips a UTF-8 BOM. Every first column in this export carries one. */
+export function stripBom(text: string): string {
+	return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
+/**
+ * RFC 4180 parse. Handles quoted fields containing commas, newlines, and
+ * escaped double quotes — all three occur in this export, which is why row
+ * counts must never come from counting lines.
+ */
+export function parseCsv(input: string): string[][] {
+	const text = stripBom(input);
+	const rows: string[][] = [];
+	let row: string[] = [];
+	let field = '';
+	let inQuotes = false;
+	let i = 0;
+
+	const endField = () => {
+		row.push(field);
+		field = '';
+	};
+	const endRow = () => {
+		endField();
+		rows.push(row);
+		row = [];
+	};
+
+	while (i < text.length) {
+		const c = text[i]!;
+
+		if (inQuotes) {
+			if (c === '"') {
+				if (text[i + 1] === '"') {
+					field += '"';
+					i += 2;
+					continue;
+				}
+				inQuotes = false;
+				i++;
+				continue;
+			}
+			field += c;
+			i++;
+			continue;
+		}
+
+		if (c === '"') {
+			inQuotes = true;
+			i++;
+			continue;
+		}
+		if (c === ',') {
+			endField();
+			i++;
+			continue;
+		}
+		if (c === '\r') {
+			// Normalise CRLF and a bare CR.
+			if (text[i + 1] === '\n') i++;
+			endRow();
+			i++;
+			continue;
+		}
+		if (c === '\n') {
+			endRow();
+			i++;
+			continue;
+		}
+		field += c;
+		i++;
+	}
+
+	// A trailing newline must not produce a phantom final row.
+	if (field.length > 0 || row.length > 0) endRow();
+
+	return rows;
+}
+
+export interface CsvTable {
+	headers: string[];
+	rows: Record<string, string>[];
+}
+
+/** Parses into records keyed by header. Duplicate headers keep the first. */
+export function parseCsvTable(input: string): CsvTable {
+	const raw = parseCsv(input);
+	if (raw.length === 0) return { headers: [], rows: [] };
+
+	const headers = (raw[0] ?? []).map((h) => h.trim());
+	const rows = raw.slice(1).map((cells) => {
+		const record: Record<string, string> = {};
+		headers.forEach((h, idx) => {
+			if (!(h in record)) record[h] = cells[idx] ?? '';
+		});
+		return record;
+	});
+	return { headers, rows };
+}
+
+// ─── relation cells ────────────────────────────────────────────────────────
+
+/**
+ * A 32-hex Notion id, anchored so it cannot start mid-run.
+ *
+ * The lookarounds are load-bearing. Percent-encoding digits are themselves
+ * valid hex, so in `Sweet%20Potato%203c8879a5…` an unanchored match starts at
+ * the `20` of `%20` and returns a 32-character id that is off by two.
+ */
+const NOTION_ID = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
+
+export interface RelationRef {
+	/** Display text. Not a key — this export has duplicate titles. */
+	title: string;
+	/** The 32-hex Notion id, the only reliable identifier. */
+	notionId: string;
+	/** The percent-decoded path, retained for provenance. */
+	path: string;
+}
+
+/**
+ * Parses a relation cell.
+ *
+ * The grammar is `Title (Percent%20Encoded%20Path/Name%20<32hex>.csv)`, joined
+ * by `, ` when multi-valued. Splitting on `, ` is wrong: 32 titles in this
+ * export contain commas ("Andrea Hunt, NP", "@August 9, 2026"). Matching the
+ * parenthesised group instead makes the separator irrelevant.
+ */
+export function parseRelationCell(value: string): RelationRef[] {
+	if (!value || !value.includes('(')) return [];
+
+	const refs: RelationRef[] = [];
+	let i = 0;
+	let titleStart = 0;
+
+	while (i < value.length) {
+		if (value[i] !== '(') {
+			i++;
+			continue;
+		}
+
+		// Scan to the matching close paren, tracking depth. A regex cannot do
+		// this: paths in this export contain parentheses of their own, e.g.
+		// "Tags & Topics (Resources) Database". Matching to the first `)`
+		// dropped every tag relation — 19 cells — without any error.
+		let depth = 0;
+		let j = i;
+		for (; j < value.length; j++) {
+			if (value[j] === '(') depth++;
+			else if (value[j] === ')') {
+				depth--;
+				if (depth === 0) break;
+			}
+		}
+		if (depth !== 0) break; // unbalanced; stop rather than guess
+
+		const rawPath = value.slice(i + 1, j);
+		const rawTitle = value
+			.slice(titleStart, i)
+			.replace(/^[\s,]+/, '')
+			.trim();
+
+		// Decode before extracting the id: percent-escapes are hex too, so
+		// matching against the encoded form finds an id shifted by two.
+		let path = rawPath;
+		try {
+			path = decodeURIComponent(rawPath);
+		} catch {
+			// Leave it encoded rather than dropping the reference.
+		}
+
+		const id = NOTION_ID.exec(path)?.[0] ?? NOTION_ID.exec(rawPath)?.[0];
+		// A parenthetical without a Notion id is ordinary text, not a relation.
+		if (id) refs.push({ title: rawTitle, notionId: id, path });
+
+		i = j + 1;
+		titleStart = i;
+	}
+
+	return refs;
+}
+
+/** True when a cell looks like a relation rather than plain text. */
+export function isRelationCell(value: string): boolean {
+	return parseRelationCell(value).length > 0;
+}
+
+/** Formats a 32-hex Notion id as a UUID so it can be stored in a uuid column. */
+export function notionIdToUuid(id: string): string {
+	if (!/^[0-9a-f]{32}$/.test(id)) throw new TypeError(`not a Notion id: ${id}`);
+	return [id.slice(0, 8), id.slice(8, 12), id.slice(12, 16), id.slice(16, 20), id.slice(20)].join(
+		'-'
+	);
+}
+
+/** Extracts the Notion id from an export filename, when present. */
+export function notionIdFromFilename(name: string): string | null {
+	return NOTION_ID.exec(name)?.[0] ?? null;
+}
+
+// ─── scalar values ─────────────────────────────────────────────────────────
+
+/**
+ * Parses the human-formatted dates this export uses, e.g.
+ * "July 30, 2026 2:57 PM" and "August 31, 2026". There is no timezone in the
+ * source, so the caller supplies the household one rather than letting the
+ * host's locale decide.
+ */
+export function parseSourceDate(value: string): { date: string; hasTime: boolean } | null {
+	const text = value.trim();
+	if (!text) return null;
+
+	const parsed = Date.parse(text);
+	if (Number.isNaN(parsed)) return null;
+
+	const d = new Date(parsed);
+	const iso = [
+		d.getFullYear(),
+		String(d.getMonth() + 1).padStart(2, '0'),
+		String(d.getDate()).padStart(2, '0')
+	].join('-');
+
+	return { date: iso, hasTime: /\d:\d/.test(text) };
+}
+
+/** Notion writes checkboxes as Yes/No. Anything else is treated as unset. */
+export function parseSourceBoolean(value: string): boolean | null {
+	const v = value.trim().toLowerCase();
+	if (v === 'yes' || v === 'true' || v === 'checked') return true;
+	if (v === 'no' || v === 'false' || v === 'unchecked') return false;
+	return null;
+}

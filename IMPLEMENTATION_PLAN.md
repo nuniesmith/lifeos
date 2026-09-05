@@ -860,11 +860,11 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 ### Phase 3 — Domain schema and importer
 
-- [ ] **MODEL-001** Add MVP domain migrations for areas, goals, projects, tasks, tags, important dates, daily logs, habits, and links/logs.
+- [x] **MODEL-001** Add MVP domain migrations for areas, goals, projects, tasks, tags, important dates, daily logs, habits, and links/logs.
 - [ ] **MODEL-002** Add feature-pack migrations or staged schema modules for library/people, food, health, finance, media, and yearly review.
 - [ ] **MODEL-003** Implement tested repository/service boundaries, transactions, archive/trash, optimistic conflict handling, and shared derived-query modules.
 - [ ] **IMP-001** Implement safe ZIP reader, limits, entry inventory, Notion ID extraction, hashing, and duplicate-path reporting.
-- [ ] **IMP-002** Parse 36 `_all.csv` inventories with a real CSV parser reading `utf-8-sig`, and validate expected headers/row counts against the 436-row baseline. Reject line-count-based row totals.
+- [x] **IMP-002** Parse 36 `_all.csv` inventories with a real CSV parser reading `utf-8-sig`, and validate expected headers/row counts against the 436-row baseline. Reject line-count-based row totals.
 - [ ] **IMP-003** Parse HTML pages/tables for page IDs, typed values, stable relation IDs, and asset references.
 - [ ] **IMP-004** Parse Markdown properties/body, nested tasks, links, and rich content fallback.
 - [ ] **IMP-005** Implement two-pass page/relationship import into provenance and domain tables.
