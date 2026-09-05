@@ -61,6 +61,15 @@ services:
     volumes:
       - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on: [app]
+    # Without this the container reports no health state at all, and the
+    # deploy's health gate reads "unknown" as a failure — every deploy then
+    # reports failure while succeeding, which teaches you to ignore the gate.
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8080/nginx-health']
+      interval: 30s
+      timeout: 4s
+      start_period: 10s
+      retries: 3
     deploy:
       resources:
         limits:
