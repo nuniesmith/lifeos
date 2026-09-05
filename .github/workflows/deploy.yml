@@ -160,10 +160,28 @@ jobs:
 
             # .env lives outside the checkout and is generated on the server by
             # scripts/setup-server.sh; it is never written from a runner.
-            test -r /srv/lifeos/.env && test -w /srv/lifeos/.env || {
-              echo "/srv/lifeos/.env must be readable and writable by the deploy user — run scripts/setup-server.sh first" >&2
+            # A bare test tells you it failed but not why, which costs a round
+            # trip to the server every time. Report the actual state instead.
+            if ! { test -r /srv/lifeos/.env && test -w /srv/lifeos/.env; }; then
+              {
+                echo "/srv/lifeos/.env is not readable and writable by the deploy user."
+                echo "  running as:  $(id -un) ($(id -u):$(id -g)), groups: $(id -Gn)"
+                if [ -e /srv/lifeos/.env ]; then
+                  echo "  .env:        $(stat -c '%U:%G %a' /srv/lifeos/.env 2>/dev/null)"
+                else
+                  echo "  .env:        does not exist"
+                fi
+                for d in /srv /srv/lifeos; do
+                  if [ -e "$d" ]; then
+                    echo "  $d:$(printf '%*s' $((12 - ${#d})) '')$(stat -c '%U:%G %a' "$d" 2>/dev/null)"
+                  else
+                    echo "  $d: does not exist"
+                  fi
+                done
+                echo "Run scripts/setup-server.sh on the server, or check that it completed."
+              } >&2
               exit 1
-            }
+            fi
             ln -sfn /srv/lifeos/.env "$HOME/lifeos/.env"
 
             # Private packages need a pull credential on the server.
