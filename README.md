@@ -9,12 +9,17 @@ across 8 phases, with per-phase gates. Start there.
 
 ## Status
 
-Phase 1 complete. The app skeleton, container, and CI are in place and
-verified: a clean clone passes `./run.sh doctor`, and CI is green across
-static checks, unit, integration, e2e, dependency audit, and a scanned
-image published to GHCR.
+Phases 1 and 2 complete. The application skeleton, container, CI, database
+schema, and the whole authentication and account layer are in place and
+verified end to end: first-run bootstrap, sign-in with lockout, sessions,
+forced credential rotation, account administration, household and privacy
+authorization, and a recovery CLI.
 
-Phase 2 (data model and migrations) is next. No product features exist yet.
+CI is green across static checks, 55 unit tests, 23 integration tests, 10
+end-to-end tests, a first-run check against the built artifact, a dependency
+audit, and a scanned image published to GHCR.
+
+Phase 3 (core domain model) is next. No product features exist yet.
 
 ## Source data
 
