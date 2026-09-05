@@ -49,6 +49,13 @@ COPY --from=deps  --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/package.json ./package.json
 
+# The deploy runs migrations inside this image, before starting the app, so
+# the runner and the SQL have to be here. Leaving them out was invisible
+# locally, where migrate.mjs runs from a checkout — it only failed on the
+# server, at the one step that must not fail half-way.
+COPY --from=build --chown=node:node /app/migrations ./migrations
+COPY --from=build --chown=node:node /app/scripts/migrate.mjs ./scripts/migrate.mjs
+
 USER node
 EXPOSE 3000
 

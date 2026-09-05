@@ -202,3 +202,31 @@ describe('deployment secret names', () => {
 		expect(workflow).toContain('secrets.GHCR_READ_TOKEN || github.token');
 	});
 });
+
+describe('the runtime image ships what the deploy runs inside it', () => {
+	const dockerfile = readFileSync('Dockerfile', 'utf8');
+	const deployScript = readFileSync('scripts/deploy.sh', 'utf8');
+
+	// deploy.sh executes this inside the container. If the image does not
+	// contain it the deploy fails after the database is already up and backed
+	// up, which is the worst point to discover a packaging mistake.
+	it('includes every path deploy.sh executes in the image', () => {
+		const invoked = [...deployScript.matchAll(/"\$LIFEOS_IMAGE"\s+node\s+(\S+)/g)].map(
+			(m) => m[1]!
+		);
+		expect(invoked.length).toBeGreaterThan(0);
+		for (const path of invoked) {
+			expect(dockerfile, `Dockerfile must COPY ${path}`).toContain(path.replace(/^\.\//, ''));
+		}
+	});
+
+	it('includes the migrations directory the runner reads', () => {
+		// migrate.mjs resolves ../migrations relative to itself.
+		expect(dockerfile).toMatch(/COPY[^\n]*\/app\/migrations \.\/migrations/);
+	});
+
+	it('still omits the application source and the private export', () => {
+		expect(dockerfile).not.toMatch(/COPY[^\n]*\/app\/src /);
+		expect(dockerfile).not.toMatch(/COPY[^\n]*\/app\/data /);
+	});
+});
