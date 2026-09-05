@@ -94,8 +94,21 @@ say "Stopping the application for migration"
 "${COMPOSE[@]}" stop app 2>/dev/null || true
 
 say "Running migrations"
+# `compose ps --format json` has changed shape across Compose versions, so the
+# result is checked rather than interpolated blindly — an empty value would
+# become `docker run --network ""`, which fails with a message that says
+# nothing about the real cause.
+DB_NETWORK=$("${COMPOSE[@]}" ps --format json db 2>/dev/null | head -1 \
+    | grep -o '"Networks":"[^"]*"' | cut -d'"' -f4 || true)
+if [[ -z "$DB_NETWORK" ]]; then
+    DB_NETWORK=$(docker inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}}{{end}}' \
+        "$("${COMPOSE[@]}" ps -q db)" 2>/dev/null | head -1 || true)
+fi
+[[ -n "$DB_NETWORK" ]] || die "could not determine the database network; is the db container running?"
+say "Database network: $DB_NETWORK"
+
 docker run --rm \
-    --network "$("${COMPOSE[@]}" ps --format json db | head -1 | grep -o '"Networks":"[^"]*"' | cut -d'"' -f4)" \
+    --network "$DB_NETWORK" \
     --env-file "$ENV_FILE" \
     -e DATABASE_URL="$(grep -E '^MIGRATION_DATABASE_URL=' .env | cut -d= -f2- || grep -E '^DATABASE_URL=' .env | cut -d= -f2-)" \
     "$LIFEOS_IMAGE" node scripts/migrate.mjs \

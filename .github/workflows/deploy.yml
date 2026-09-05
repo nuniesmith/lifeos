@@ -22,6 +22,10 @@ concurrency:
 
 permissions:
   contents: read
+  # Lets GITHUB_TOKEN pull the image from GHCR. The package is published
+  # by this repository's CI, so the job token can read it and no
+  # long-lived personal access token has to exist or be stored.
+  packages: read
 
 jobs:
   deploy:
@@ -94,7 +98,10 @@ jobs:
         id: credentials
         env:
           REPOSITORY_TOKEN: ${{ github.token }}
-          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          # GHCR_READ_TOKEN is optional. Without it the job's own token is used,
+          # which can read packages owned by this repository and expires with
+          # the run — a better default than a stored PAT.
+          REGISTRY_TOKEN: ${{ secrets.GHCR_READ_TOKEN || github.token }}
           REGISTRY_USER: ${{ secrets.GHCR_USERNAME || github.actor }}
         run: |
           # Encoded values are safe to embed in the remote shell script.
