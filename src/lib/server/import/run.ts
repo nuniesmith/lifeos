@@ -6,6 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { imageDimensions, isPlausibleImage, sniffContentType, storageKeyFor } from './media.ts';
+import { compareDerived, type DerivedComparison } from './derived.ts';
 import { parseMarkdownPage } from './markdown.ts';
 import { promote, type PromoteSummary } from './promote.ts';
 import { hashFile, inventory, readText, type SourceFile } from './source.ts';
@@ -63,6 +64,8 @@ export interface ImportSummary {
 	issues: { severity: string; code: string; message: string }[];
 	/** Present when promotion ran. */
 	promoted?: PromoteSummary;
+	/** Formula and rollup replacements checked against the source (IMP-008). */
+	derived?: DerivedComparison[];
 }
 
 /** Derives the database name from an `_all.csv` filename. */
@@ -480,6 +483,10 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 							createdBy: options.startedBy ?? null
 						});
 
+			// Runs after promotion: the replacements query the domain tables, so
+			// they can only be compared once those rows exist.
+			const derived = promoted ? await compareDerived(tx, run.id) : undefined;
+
 			const result: ImportSummary = {
 				importRunId: run.id,
 				dryRun,
@@ -498,7 +505,8 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				pageFiles: inv.counts.markdown,
 				untitledRows,
 				issues,
-				promoted
+				promoted,
+				derived
 			};
 
 			await tx`

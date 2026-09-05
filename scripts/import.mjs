@@ -95,6 +95,34 @@ try {
 		console.log('');
 	}
 
+	if (s.derived?.length) {
+		console.log('  Formula/rollup replacements checked against the source:');
+		const needs = [];
+		for (const d of s.derived) {
+			const ok = d.status === 'matches';
+			const mark = ok ? `${GREEN}ok${OFF}` : `${RED}??${OFF}`;
+			console.log(
+				`    ${mark} ${(d.database + ' / ' + d.column).padEnd(42)}` +
+					` ${d.agree}/${d.compared} agree`
+			);
+			if (!ok) {
+				needs.push(`${d.database} / ${d.column}`);
+				for (const e of d.examples) {
+					console.log(
+						`         ${String(e.title).slice(0, 34).padEnd(36)} source=${e.source} computed=${e.computed}`
+					);
+				}
+			}
+		}
+		if (needs.length) {
+			console.log('');
+			console.log('    These columns carry a filter the export does not include.');
+			console.log('    Capture their definition from live Notion (DISC-004) before');
+			console.log('    trusting the replacement; do not infer it from the numbers.');
+		}
+		console.log('');
+	}
+
 	if (s.issues.length) {
 		console.log('  Issues:');
 		for (const i of s.issues) console.log(`    [${i.severity}] ${i.code}: ${i.message}`);

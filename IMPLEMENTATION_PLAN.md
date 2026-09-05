@@ -844,7 +844,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [ ] **DISC-001** Record SHA-256, byte size, archive entry count, duplicate paths, and file-type counts for both supplied ZIPs.
 - [x] **DISC-002** Add private-data paths to `.gitignore`/`.dockerignore`. Done: exports are at `data/` (416 MB, 1,829 files, incl. medical/income/spending records); `data/`, `var/imports/`, `var/uploads/`, and `*.zip` are ignored and verified untracked. The repo is private, but the constraint is history permanence, not visibility.
 - [ ] **DISC-003** Create the 36-database source catalog and checked mapping file from the reviewed headers.
-- [ ] **DISC-004** Capture formulas, rollups, button behavior, select/status options, relation cardinality, templates, views, filters, sorts, and groups from live Notion.
+- [ ] **DISC-004** Capture formulas, rollups, button behavior, select/status options, relation cardinality, templates, views, filters, sorts, and groups from live Notion. **IMP-008 has narrowed which of these actually matter.** The straightforward replacement already reproduces `Projects / Completed Tasks` exactly (7/7). Three columns do not reproduce and their filters must be captured before the replacement can be trusted: `Areas / Open Direct Tasks` (12/15), `Projects / Total Tasks` (6/7), `Tasks / Number of Subtasks` (30/31). Do **not** infer these from the numbers — three readings of "Open Direct Tasks" were tried (all open tasks, top-level only, not-via-a-project) and each matched some areas while contradicting others, so any of them would have agreed by accident.
 - [ ] **DISC-005** Confirm Accounts and Life Admin contents and obtain direct exports if non-empty.
 - [ ] **DISC-006** Classify every template/placeholder as migrate-as-content, convert-to-app-default, or archive-only.
 - [ ] **DISC-007** Confirm household sharing/privacy defaults, initial owner, CAD currency, and Toronto timezone.
@@ -894,7 +894,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [x] **IMP-005** Implement two-pass page/relationship import into provenance and domain tables.
 - [x] **IMP-006** Implement media validation, SHA-256 deduplication, immutable storage, derivatives, and attachment links.
 - [x] **IMP-007** Implement normalization per source mapping, including date/timezone, money, recurrence, template handling, and privacy defaults.
-- [ ] **IMP-008** Implement formula/rollup replacement comparisons and intentional-difference report.
+- [x] **IMP-008** Implement formula/rollup replacement comparisons and intentional-difference report.
 - [x] **IMP-009** Implement dry-run, transaction/promotion, idempotency, conflict behavior, redacted reports, and `run.sh import`.
 - [x] **IMP-010** Run the supplied exports and resolve every unexplained issue against the acceptance baseline.
 
