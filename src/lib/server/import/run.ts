@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
 import type { Sql } from 'postgres';
 import { one } from '../db/scalar.ts';
 import { notionIdToUuid, parseCsvTable, parseRelationCell } from './csv.ts';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { imageDimensions, isPlausibleImage, sniffContentType, storageKeyFor } from './media.ts';
 import { promote, type PromoteSummary } from './promote.ts';
 import { hashFile, inventory, readText, type SourceFile } from './source.ts';
 
@@ -25,6 +30,8 @@ export interface ImportOptions {
 	/** When set, staged rows are promoted into domain tables in the same pass. */
 	ownerUserId?: string | null;
 	promote?: boolean;
+	/** Where deduplicated media is written. Nothing is written on a dry run. */
+	uploadDir?: string;
 	startedBy?: string | null;
 	dryRun?: boolean;
 	appCommit?: string | null;
@@ -40,6 +47,9 @@ export interface ImportSummary {
 	unresolvedLinks: number;
 	mediaFiles: number;
 	uniqueMedia: number;
+	/** Media rows created this run, after deduplication. */
+	mediaStored: number;
+	mediaRejected: number;
 	pageIds: number;
 	/** Page files present in the export, whether or not a row matched one. */
 	pageFiles: number;
@@ -112,6 +122,62 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					'import source'
 				);
 				sourceIdByPath.set(file.relativePath, row.id);
+			}
+
+			// ─── media: content-addressed and deduplicated ───────────────────
+			// Keyed on the hash, so the 525 files collapse to the distinct ones
+			// with no comparison beyond SHA-256. `on conflict do nothing` makes
+			// a re-import a no-op rather than a duplicate.
+			let mediaStored = 0;
+			let mediaRejected = 0;
+			const uploadDir = options.uploadDir ?? 'var/uploads';
+
+			for (const file of inv.files) {
+				if (file.kind !== 'media') continue;
+
+				const bytes = await readFile(file.absolutePath);
+				const { contentType, extension } = sniffContentType(bytes);
+				const dimensions = imageDimensions(bytes, contentType);
+
+				if (!isPlausibleImage(dimensions)) {
+					mediaRejected++;
+					note(
+						'warning',
+						'implausible_image',
+						`${file.relativePath} reports impossible dimensions and was not stored`
+					);
+					continue;
+				}
+
+				const sha256 = createHash('sha256').update(bytes).digest();
+				const storageKey = storageKeyFor(sha256, extension);
+
+				const inserted = await tx<{ id: string }[]>`
+					insert into attachments (household_id, sha256, byte_size, content_type,
+					                         width, height, original_name, storage_key,
+					                         created_by)
+					values (${options.householdId}, ${sha256}, ${file.byteSize}, ${contentType},
+					        ${dimensions?.width ?? null}, ${dimensions?.height ?? null},
+					        ${file.relativePath.split('/').pop() ?? null}, ${storageKey},
+					        ${options.startedBy ?? null})
+					on conflict (household_id, sha256) do nothing
+					returning id
+				`;
+
+				if (inserted.length > 0) {
+					mediaStored++;
+					// Written only for a real import: a dry run must leave the
+					// filesystem untouched, since a rollback cannot undo a write.
+					if (!dryRun) {
+						const destination = join(uploadDir, storageKey);
+						await mkdir(dirname(destination), { recursive: true });
+						await writeFile(destination, bytes, { flag: 'wx' }).catch((err: unknown) => {
+							// EEXIST means the identical content is already there,
+							// which is the expected outcome of content addressing.
+							if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+						});
+					}
+				}
 			}
 
 			// ─── pass one: canonical rows ────────────────────────────────────
@@ -267,6 +333,8 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				unresolvedLinks: unresolved,
 				mediaFiles: inv.counts.media,
 				uniqueMedia: mediaHashes.size,
+				mediaStored,
+				mediaRejected,
 				pageIds: recordIdByNotionId.size,
 				pageFiles: inv.counts.markdown,
 				untitledRows,

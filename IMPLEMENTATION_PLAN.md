@@ -842,7 +842,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [ ] **DISC-006** Classify every template/placeholder as migrate-as-content, convert-to-app-default, or archive-only.
 - [ ] **DISC-007** Confirm household sharing/privacy defaults, initial owner, CAD currency, and Toronto timezone.
 - [ ] **DISC-008** Choose the off-host Restic backend and store its recovery credentials outside the Linode.
-- [ ] **DISC-009** Create sanitized miniature fixtures covering duplicate titles, commas inside titles, multi-valued relations, BOM headers, embedded newlines in cells, formulas, nested tasks, Markdown, and images — one fixture per row of the verified source-format hazards table.
+- [x] **DISC-009** Create sanitized miniature fixtures covering duplicate titles, commas inside titles, multi-valued relations, BOM headers, embedded newlines in cells, formulas, nested tasks, Markdown, and images — one fixture per row of the verified source-format hazards table.
 
 **Gate:** No unexplained source database, required formula, or missing account data remains. Private data is not tracked by Git.
 
@@ -885,10 +885,10 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [ ] **IMP-003** Parse HTML pages/tables for page IDs, typed values, stable relation IDs, and asset references.
 - [ ] **IMP-004** Parse Markdown properties/body, nested tasks, links, and rich content fallback.
 - [x] **IMP-005** Implement two-pass page/relationship import into provenance and domain tables.
-- [ ] **IMP-006** Implement media validation, SHA-256 deduplication, immutable storage, derivatives, and attachment links.
+- [x] **IMP-006** Implement media validation, SHA-256 deduplication, immutable storage, derivatives, and attachment links.
 - [x] **IMP-007** Implement normalization per source mapping, including date/timezone, money, recurrence, template handling, and privacy defaults.
 - [ ] **IMP-008** Implement formula/rollup replacement comparisons and intentional-difference report.
-- [ ] **IMP-009** Implement dry-run, transaction/promotion, idempotency, conflict behavior, redacted reports, and `run.sh import`.
+- [x] **IMP-009** Implement dry-run, transaction/promotion, idempotency, conflict behavior, redacted reports, and `run.sh import`.
 - [ ] **IMP-010** Run the supplied exports and resolve every unexplained issue against the acceptance baseline.
 
 **Gate:** The import accounts for all 436 canonical rows, 504 page IDs, and 298 unique images; rerunning is idempotent and unresolved items are explicit.

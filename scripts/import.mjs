@@ -71,6 +71,8 @@ try {
 	row('untitled rows (no page)', s.untitledRows);
 	row('media files', s.mediaFiles, 525);
 	row('unique media (sha256)', s.uniqueMedia, 298);
+	row('media stored this run', s.mediaStored);
+	row('media rejected', s.mediaRejected, 0);
 	row('relation links', s.links);
 	row('unresolved links', s.unresolvedLinks);
 	console.log('');
