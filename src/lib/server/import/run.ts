@@ -6,6 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { imageDimensions, isPlausibleImage, sniffContentType, storageKeyFor } from './media.ts';
+import { parseMarkdownPage } from './markdown.ts';
 import { promote, type PromoteSummary } from './promote.ts';
 import { hashFile, inventory, readText, type SourceFile } from './source.ts';
 
@@ -183,6 +184,10 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			// ─── pass one: canonical rows ────────────────────────────────────
 			const canonical = inv.files.filter((f) => f.kind === 'csv_all');
 			const pageIndex = buildPageIndex(inv.files);
+			const markdownById = new Map(
+				inv.files.filter((f) => f.kind === 'markdown' && f.notionId).map((f) => [f.notionId!, f])
+			);
+			let disambiguated = 0;
 			const recordIdByNotionId = new Map<string, string>();
 			let rowCount = 0;
 			let rowsWithoutPageId = 0;
@@ -197,8 +202,8 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				const titleColumn = table.headers[0] ?? '';
 				const sourceId = sourceIdByPath.get(file.relativePath)!;
 				const pageTitles = pageIndex.get(pageDirectoryFor(file.relativePath));
-				// Consumed in order so duplicate titles map one-to-one.
-				const consumed = new Map<string, number>();
+				// Which page files this database's rows have already claimed.
+				const claimed = new Map<string, Set<string>>();
 
 				if (!table.headers.length) {
 					note('error', 'empty_database', `${file.relativePath} has no header row`);
@@ -212,12 +217,34 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					let pageId: string | null = null;
 					for (const key of titleKeys(title)) {
 						const candidates = pageTitles?.get(key) ?? [];
-						const used = consumed.get(key) ?? 0;
-						if (candidates[used]) {
-							pageId = candidates[used]!;
-							consumed.set(key, used + 1);
-							break;
+						const taken = claimed.get(key) ?? new Set<string>();
+						const free = candidates.filter((id) => !taken.has(id));
+						if (free.length === 0) continue;
+
+						if (free.length === 1) {
+							pageId = free[0]!;
+						} else {
+							// Duplicate title: pick the page whose properties agree
+							// best with this row rather than trusting listing order.
+							let best = free[0]!;
+							let bestScore = -1;
+							for (const candidate of free) {
+								const md = markdownById.get(candidate);
+								if (!md) continue;
+								const page = parseMarkdownPage(await readText(md));
+								const score = propertyAgreement(record, page.properties);
+								if (score > bestScore) {
+									bestScore = score;
+									best = candidate;
+								}
+							}
+							pageId = best;
+							disambiguated++;
 						}
+
+						taken.add(pageId);
+						claimed.set(key, taken);
+						break;
 					}
 					// An untitled row cannot have a page file: Notion names those
 					// files after the title. Counted separately so it is not
@@ -284,6 +311,15 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					position++;
 					linkCount++;
 				}
+			}
+
+			if (disambiguated > 0) {
+				note(
+					'info',
+					'duplicate_title_disambiguated',
+					`${disambiguated} row(s) with a duplicate title were matched to a page by ` +
+						`property agreement rather than listing order`
+				);
 			}
 
 			if (untitledRows > 0) {
@@ -469,6 +505,30 @@ export function buildPageIndex(files: SourceFile[]): Map<string, Map<string, str
 	}
 
 	return index;
+}
+
+/**
+ * How well a page's properties agree with a CSV row, counted over scalar values.
+ *
+ * Only needed when a title is duplicated. Consuming candidates in listing order
+ * assumes the CSV's row order matches the directory's, which is not guaranteed:
+ * cross-checking the two sources found same-titled rows whose Status values were
+ * swapped, which would have attached every relation to the wrong record.
+ */
+export function propertyAgreement(
+	row: Record<string, string>,
+	properties: Record<string, string>
+): number {
+	let score = 0;
+	for (const [key, value] of Object.entries(properties)) {
+		const cell = (row[key] ?? '').trim();
+		if (!cell || !value) continue;
+		// Relation cells encode their paths differently in the two sources.
+		if (value.includes('(') || cell.includes('(')) continue;
+		// A multi-line CSV value appears truncated to its first line here.
+		if (cell === value || cell.split('\n')[0]!.trim() === value) score++;
+	}
+	return score;
 }
 
 /**
