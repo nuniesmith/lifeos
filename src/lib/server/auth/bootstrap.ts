@@ -71,7 +71,7 @@ export async function bootstrapIfEmpty(sql: Sql): Promise<BootstrapResult> {
 		const detail = JSON.stringify({ generated: !supplied });
 		await tx`
 			insert into auth_audit (event, user_id, detail)
-			values ('bootstrap.created', ${user.id}, ${detail}::jsonb)
+			values ('bootstrap.created', ${user.id}, ${detail}::text::jsonb)
 		`;
 
 		return {

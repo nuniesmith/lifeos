@@ -34,7 +34,7 @@ const sql = postgres(url, { max: 1, onnotice: () => {} });
 async function audit(event, detail, userId = null) {
 	await sql`
 		insert into auth_audit (event, user_id, detail)
-		values (${event}, ${userId}, ${JSON.stringify(detail)}::jsonb)
+		values (${event}, ${userId}, ${JSON.stringify(detail)}::text::jsonb)
 	`;
 }
 
@@ -91,7 +91,7 @@ async function reset(username) {
 		`;
 		await tx`
 			insert into auth_audit (event, user_id, detail)
-			values ('recovery.credential_issued', ${user.id}, ${JSON.stringify({ username })}::jsonb)
+			values ('recovery.credential_issued', ${user.id}, ${JSON.stringify({ username })}::text::jsonb)
 		`;
 	});
 

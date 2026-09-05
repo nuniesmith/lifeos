@@ -371,6 +371,21 @@ Use the two exports together:
 
 ### Driver type conversion is not relied on
 
+**JSON parameters must be cast twice: `${JSON.stringify(x)}::text::jsonb`.**
+
+A single `::jsonb` cast behaves differently depending on where the code runs.
+In the bundled server the driver applies no conversion, so the stringified JSON
+lands correctly. Under plain `node` — which is how the CLIs run — the driver
+sees a jsonb-typed parameter and JSON-encodes the string _again_, storing a
+JSON scalar instead of an object.
+
+This was found because the importer promoted 31 tasks with every field null.
+Nothing errored: `raw` was a JSON string, so every `raw['Do Date']` was
+`undefined`, and only the two mappers that _require_ a date returned early and
+gave the symptom away. Tables that fall back to defaults imported silently and
+looked successful. Forcing the parameter to text first makes both environments
+agree.
+
 The `postgres` driver's JS type conversion does not apply in the bundled server
 build, in either direction, and this was found three times before the pattern
 was recognised:
@@ -871,7 +886,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [ ] **IMP-004** Parse Markdown properties/body, nested tasks, links, and rich content fallback.
 - [x] **IMP-005** Implement two-pass page/relationship import into provenance and domain tables.
 - [ ] **IMP-006** Implement media validation, SHA-256 deduplication, immutable storage, derivatives, and attachment links.
-- [ ] **IMP-007** Implement normalization per source mapping, including date/timezone, money, recurrence, template handling, and privacy defaults.
+- [x] **IMP-007** Implement normalization per source mapping, including date/timezone, money, recurrence, template handling, and privacy defaults.
 - [ ] **IMP-008** Implement formula/rollup replacement comparisons and intentional-difference report.
 - [ ] **IMP-009** Implement dry-run, transaction/promotion, idempotency, conflict behavior, redacted reports, and `run.sh import`.
 - [ ] **IMP-010** Run the supplied exports and resolve every unexplained issue against the acceptance baseline.

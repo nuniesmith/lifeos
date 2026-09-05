@@ -41,7 +41,19 @@ try {
 
 	console.log(`> ${dryRun ? 'Dry run' : 'Import'} from ${root} into "${household.name}"`);
 	const started = Date.now();
-	const s = await runImport(sql, { root, householdId: household.id, dryRun });
+	const [owner] = await sql`
+		select u.id from users u
+		join household_members hm on hm.user_id = u.id
+		where hm.household_id = ${household.id}
+		order by u.created_at limit 1
+	`;
+	const s = await runImport(sql, {
+		root,
+		householdId: household.id,
+		ownerUserId: owner?.id ?? null,
+		startedBy: owner?.id ?? null,
+		dryRun
+	});
 
 	const row = (label, value, baseline) => {
 		const ok = baseline === undefined || value === baseline;
@@ -62,6 +74,22 @@ try {
 	row('relation links', s.links);
 	row('unresolved links', s.unresolvedLinks);
 	console.log('');
+
+	if (s.promoted) {
+		console.log('  Promoted into domain tables:');
+		for (const [table, n] of Object.entries(s.promoted.counts).sort()) {
+			console.log(`    ${table.padEnd(18)} ${String(n).padStart(5)}`);
+		}
+		const rel = Object.entries(s.promoted.relations).sort();
+		if (rel.length) {
+			console.log('  Relations linked:');
+			for (const [name, n] of rel) console.log(`    ${name.padEnd(18)} ${String(n).padStart(5)}`);
+		}
+		if (s.promoted.skippedWithoutPageId) {
+			console.log(`    (${s.promoted.skippedWithoutPageId} row(s) skipped: no page id)`);
+		}
+		console.log('');
+	}
 
 	if (s.issues.length) {
 		console.log('  Issues:');

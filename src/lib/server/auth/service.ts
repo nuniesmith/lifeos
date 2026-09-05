@@ -88,7 +88,7 @@ async function audit(
 			insert into auth_audit (event, user_id, actor_id, client_ip, user_agent, detail)
 			values (
 				${event}, ${fields.userId ?? null}, ${fields.actorId ?? null},
-				${fields.clientIp ?? null}, ${fields.userAgent ?? null}, ${detail}::jsonb
+				${fields.clientIp ?? null}, ${fields.userAgent ?? null}, ${detail}::text::jsonb
 			)
 		`;
 	} catch (err) {

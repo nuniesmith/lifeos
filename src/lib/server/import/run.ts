@@ -1,6 +1,7 @@
 import type { Sql } from 'postgres';
 import { one } from '../db/scalar.ts';
 import { notionIdToUuid, parseCsvTable, parseRelationCell } from './csv.ts';
+import { promote, type PromoteSummary } from './promote.ts';
 import { hashFile, inventory, readText, type SourceFile } from './source.ts';
 
 /**
@@ -21,6 +22,9 @@ export const IMPORTER_VERSION = '1.0.0';
 export interface ImportOptions {
 	root: string;
 	householdId: string;
+	/** When set, staged rows are promoted into domain tables in the same pass. */
+	ownerUserId?: string | null;
+	promote?: boolean;
 	startedBy?: string | null;
 	dryRun?: boolean;
 	appCommit?: string | null;
@@ -42,6 +46,8 @@ export interface ImportSummary {
 	/** Rows with no title; a page file cannot exist for these. */
 	untitledRows: number;
 	issues: { severity: string; code: string; message: string }[];
+	/** Present when promotion ran. */
+	promoted?: PromoteSummary;
 }
 
 /** Derives the database name from an `_all.csv` filename. */
@@ -162,7 +168,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 							values (${run.id}, ${sourceId},
 							        ${pageId ? notionIdToUuid(pageId) : null},
 							        ${databaseName}, ${title || null}, ${ordinal},
-							        ${JSON.stringify(record)}::jsonb)
+							        ${JSON.stringify(record)}::text::jsonb)
 							returning id
 						`,
 						'source record'
@@ -241,6 +247,16 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				`;
 			}
 
+			const promoted =
+				options.promote === false
+					? undefined
+					: await promote(tx, {
+							importRunId: run.id,
+							householdId: options.householdId,
+							ownerUserId: options.ownerUserId ?? null,
+							createdBy: options.startedBy ?? null
+						});
+
 			const result: ImportSummary = {
 				importRunId: run.id,
 				dryRun,
@@ -254,14 +270,15 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				pageIds: recordIdByNotionId.size,
 				pageFiles: inv.counts.markdown,
 				untitledRows,
-				issues
+				issues,
+				promoted
 			};
 
 			await tx`
 				update import_runs
 				set finished_at = now(),
 				    status = ${dryRun ? 'dry_run' : 'succeeded'},
-				    summary = ${JSON.stringify(result)}::jsonb
+				    summary = ${JSON.stringify(result)}::text::jsonb
 				where id = ${run.id}
 			`;
 

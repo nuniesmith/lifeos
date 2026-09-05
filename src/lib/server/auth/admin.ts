@@ -31,7 +31,7 @@ async function audit(
 ): Promise<void> {
 	await sql`
 		insert into auth_audit (event, user_id, actor_id, detail)
-		values (${event}, ${userId}, ${actorId}, ${JSON.stringify(detail)}::jsonb)
+		values (${event}, ${userId}, ${actorId}, ${JSON.stringify(detail)}::text::jsonb)
 	`;
 }
 
@@ -96,7 +96,7 @@ export async function createMember(
 			await tx`
 				insert into auth_audit (event, user_id, actor_id, detail)
 				values ('account.created', ${user.id}, ${actorId},
-				        ${JSON.stringify({ username, role: input.role })}::jsonb)
+				        ${JSON.stringify({ username, role: input.role })}::text::jsonb)
 			`;
 			return user.id;
 		});
