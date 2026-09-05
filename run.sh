@@ -28,12 +28,14 @@ cmd_up()    { compose up -d; }
 cmd_down()  { compose down; }
 cmd_logs()  { compose logs -f --tail=100 "${1:-}"; }
 cmd_build() { npm run build; }
+cmd_migrate() { compose up -d db >/dev/null && node scripts/migrate.mjs "$@"; }
 
 cmd_test() {
     case "${1:-all}" in
         unit)        npm run test:unit ;;
         integration) compose up -d db && npm run test:integration ;;
         e2e)         npm run test:e2e ;;
+        first-run)   compose up -d db >/dev/null && ./scripts/verify-first-run.sh ;;
         all)         npm run check && npm run test:unit ;;
         *)           die "unknown test target: $1" ;;
     esac
@@ -73,7 +75,8 @@ Usage: ./run.sh <command>
   init                 install deps, create .env and runtime dirs, start db
   dev                  start db and run the dev server
   build                production build
-  test [unit|integration|e2e|all]
+  migrate [--status|--verify]   apply database migrations
+  test [unit|integration|e2e|first-run|all]
   up | down | logs [service]
   doctor               diagnose the local setup
 USAGE
@@ -83,6 +86,7 @@ case "${1:-}" in
     init) shift; cmd_init "$@" ;;
     dev)  shift; cmd_dev "$@" ;;
     build) shift; cmd_build "$@" ;;
+    migrate) shift; cmd_migrate "$@" ;;
     test) shift; cmd_test "$@" ;;
     up)   shift; cmd_up "$@" ;;
     down) shift; cmd_down "$@" ;;

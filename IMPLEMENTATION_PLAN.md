@@ -823,12 +823,12 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 ### Phase 2 — Database, auth, and household boundary
 
-- [ ] **DB-001** Define migration owner, scoped runtime role, database, and least-privilege grants.
-- [ ] **DB-002** Create platform/auth/household/import/media/change-log migrations.
-- [ ] **DB-003** Add shared UUID/provenance/archive/time/visibility conventions and indexes.
-- [ ] **DB-004** Implement migration runner with locking, version table, empty-DB and upgrade tests.
-- [ ] **AUTH-001** Port/adapt the tested FKS scrypt, opaque token, session TTL, lockout, and audit concepts into isolated LifeOS auth modules.
-- [ ] **AUTH-002** Implement transactional first-run bootstrap and forced credential change.
+- [x] **DB-001** Define migration owner, scoped runtime role, database, and least-privilege grants.
+- [x] **DB-002** Create platform/auth/household/import/media/change-log migrations.
+- [x] **DB-003** Add shared UUID/provenance/archive/time/visibility conventions and indexes.
+- [x] **DB-004** Implement migration runner with locking, version table, empty-DB and upgrade tests.
+- [x] **AUTH-001** Port/adapt the tested FKS scrypt, opaque token, session TTL, lockout, and audit concepts into isolated LifeOS auth modules. _scrypt chosen over Argon2id: no native dependency, so the runtime image carries neither a compiled module nor its CVE stream. Parameters travel in the hash string and can be raised without invalidating credentials._
+- [x] **AUTH-002** Implement transactional first-run bootstrap and forced credential change.
 - [ ] **AUTH-003** Implement login/logout, CSRF/origin checks, protected layout, session refresh/revoke, and fail-closed database behavior.
 - [ ] **AUTH-004** Implement admin member creation/invites, role changes, disable/re-enable, one-time credential reset, and audit viewer.
 - [ ] **AUTH-005** Implement household/owner/visibility authorization helpers and enforce them at repository boundaries.
