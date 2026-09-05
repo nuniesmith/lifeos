@@ -51,14 +51,27 @@ mkdir -p "$BACKUP_DIR"
 free_kb=$(df --output=avail -k "$BACKUP_DIR" | tail -1)
 (( free_kb > 512 * 1024 )) || die "less than 512 MB free in $BACKUP_DIR"
 
-RUN_ID=$(psql_q "insert into backup_runs (kind) values ('$KIND') returning id" | tr -d '[:space:]')
-[[ -n "$RUN_ID" ]] || die "could not record the backup run"
+# The bookkeeping table is created by a migration, and this script runs
+# *before* migrations on purpose — so on the deploy that first introduces it,
+# the table does not exist yet. Recording is therefore optional: a backup that
+# refuses to run because it cannot log itself is worse than an unlogged
+# backup, and that ordering blocked a real deploy.
+HAS_RUNS_TABLE=$(psql_q "select to_regclass('public.backup_runs') is not null" | tr -d '[:space:]')
+RUN_ID=""
+if [[ "$HAS_RUNS_TABLE" == "t" ]]; then
+    RUN_ID=$(psql_q "insert into backup_runs (kind) values ('$KIND') returning id" | tr -d '[:space:]')
+fi
+[[ -n "$RUN_ID" ]] || say "backup_runs is not available yet; taking the backup without recording it"
 
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 TARGET="$BACKUP_DIR/lifeos-$KIND-$STAMP.dump"
 
 fail_run() {
     local message="$1"
+    if [[ -z "$RUN_ID" ]]; then
+        rm -f "$TARGET.partial"
+        die "$message"
+    fi
     # Single quotes are doubled for SQL rather than shell-escaped: %q produced
     # a backslash-escaped string that was stored verbatim and read badly.
     local escaped="${message//\'/\'\'}"
@@ -121,11 +134,13 @@ COUNTS=$(psql_q "
         where s.nspname = 'public' and c.relkind = 'r'
     ) t" | tr -d '\n')
 
-psql_q "update backup_runs set status='success', finished_at=now(),
-        file_path='$TARGET', byte_size=$BYTES,
-        sha256=decode('$SHA','hex'),
-        table_counts='${COUNTS:-{\}}'::jsonb
-        where id='$RUN_ID'" >/dev/null
+if [[ -n "$RUN_ID" ]]; then
+    psql_q "update backup_runs set status='success', finished_at=now(),
+            file_path='$TARGET', byte_size=$BYTES,
+            sha256=decode('$SHA','hex'),
+            table_counts='${COUNTS:-{\}}'::jsonb
+            where id='$RUN_ID'" >/dev/null
+fi
 
 ok "$(numfmt --to=iec "$BYTES" 2>/dev/null || echo "$BYTES bytes") -> $(basename "$TARGET")"
 
