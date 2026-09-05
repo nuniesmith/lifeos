@@ -902,15 +902,15 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 ### Phase 4 — Core daily-use vertical slice
 
-- [ ] **UI-001** Build authenticated responsive shell, desktop sidebar, mobile navigation, quick-add, command/search overlay, and theme tokens.
-- [ ] **UI-002** Build Home/Today from live derived queries—not imported System Status strings.
-- [ ] **UI-003** Build unified Quick Capture and Inbox triage.
-- [ ] **UI-004** Build task list/detail/edit, filters, hierarchy, dependencies, recurrence, complete/reopen, archive/trash, and bulk triage.
-- [ ] **UI-005** Build project list/detail/review and related task/milestone progress.
-- [ ] **UI-006** Build goal list/detail/review and related area/project/habit/task progress.
-- [ ] **UI-007** Build life-area and tag views.
-- [ ] **UI-008** Build important dates and upcoming view.
-- [ ] **UI-009** Build daily log editor and habit check-in/history/targets.
+- [x] **UI-001** Build authenticated responsive shell, desktop sidebar, mobile navigation, quick-add, command/search overlay, and theme tokens.
+- [x] **UI-002** Build Home/Today from live derived queries—not imported System Status strings.
+- [x] **UI-003** Build unified Quick Capture and Inbox triage.
+- [x] **UI-004** Build task list/detail/edit, filters, hierarchy, dependencies, recurrence, complete/reopen, archive/trash, and bulk triage.
+- [x] **UI-005** Build project list/detail/review and related task/milestone progress.
+- [x] **UI-006** Build goal list/detail/review and related area/project/habit/task progress.
+- [x] **UI-007** Build life-area and tag views.
+- [x] **UI-008** Build important dates and upcoming view.
+- [x] **UI-009** Build daily log editor and habit check-in/history/targets.
 - [ ] **UI-010** Build household-scoped PostgreSQL full-text search with privacy filters.
 - [ ] **UI-011** Add mobile/accessibility states and Playwright core-flow tests.
 
