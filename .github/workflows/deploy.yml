@@ -1,0 +1,150 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image reference to deploy (defaults to the commit that ran CI)
+        required: false
+
+# Deploys are serialised, never cancelled. Interrupting one mid-migration is
+# how a database ends up half-way between two schemas.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    # A deploy only follows a CI run that actually passed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    environment: production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve the image to deploy
+        id: image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha || github.sha }}"
+          image="${{ inputs.image }}"
+          if [ -z "$image" ]; then
+            image="ghcr.io/${{ github.repository }}:${sha}"
+          fi
+          echo "ref=$image" >> "$GITHUB_OUTPUT"
+          echo "Deploying $image"
+
+      # Shared with Princess and reused unchanged. This composite ends by
+      # running `tailscale logout`, so anything after it must not depend on
+      # tailnet name resolution — see §4 of IMPLEMENTATION_PLAN.md.
+      - name: Connect to Tailscale
+        uses: nuniesmith/actions/.github/actions/tailscale-connect@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Resolve the target address
+        id: target
+        env:
+          OVERRIDE: ${{ secrets.LIFEOS_TAILSCALE_IP }}
+        run: |
+          # The override is load-bearing, not a convenience: the composite
+          # above has already logged out, so `tailscale ip -4 <host>` cannot
+          # be relied on here.
+          if [ -z "$OVERRIDE" ]; then
+            echo "LIFEOS_TAILSCALE_IP is not set." >&2
+            echo "Run 'tailscale status' on the server and add its 100.x address" >&2
+            echo "as a repository secret." >&2
+            exit 1
+          fi
+          echo "ip=$OVERRIDE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        id: deploy
+        uses: nuniesmith/actions/.github/actions/ssh-deploy@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        with:
+          host: ${{ steps.target.outputs.ip }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          username: ${{ secrets.SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          project-path: lifeos
+          git-pull: false
+          docker-prune: false
+          # The custom deploy-command already overrides the action's build
+          # phase, but saying so explicitly means a future change to that
+          # precedence cannot start building on the server by surprise.
+          build-strategy: none
+          pre-deploy-command: |
+            set -Eeuo pipefail
+
+            # The repository is cloned for its scripts and compose files only.
+            # The application itself is never built here — it arrives as an
+            # image built and scanned by CI.
+            if [ -d "$HOME/lifeos/.git" ]; then
+              cd "$HOME/lifeos"
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              git clone --depth 50 https://github.com/${{ github.repository }}.git "$HOME/lifeos"
+              cd "$HOME/lifeos"
+            fi
+            chmod +x scripts/*.sh run.sh 2>/dev/null || true
+
+            # .env lives outside the checkout and is generated on the server by
+            # scripts/setup-server.sh; it is never written from a runner.
+            test -f /srv/lifeos/.env || {
+              echo "/srv/lifeos/.env is missing — run scripts/setup-server.sh first" >&2
+              exit 1
+            }
+            ln -sfn /srv/lifeos/.env "$HOME/lifeos/.env"
+
+            # Private packages need a pull credential on the server.
+            if [ -n "${{ secrets.GHCR_READ_TOKEN }}" ]; then
+              echo "${{ secrets.GHCR_READ_TOKEN }}" \
+                | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME || github.actor }}" --password-stdin
+            fi
+          deploy-command: |
+            set -Eeuo pipefail
+            cd "$HOME/lifeos"
+            LIFEOS_IMAGE="${{ steps.image.outputs.ref }}" ./scripts/deploy.sh
+
+      # A hard gate: deploy.sh already rolls back on failure, so an unhealthy
+      # result here means something the script could not fix.
+      - name: Health check
+        id: health
+        uses: nuniesmith/actions/.github/actions/health-check@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        with:
+          containers: lifeos-app-1 lifeos-db-1 lifeos-nginx-1
+          ssh-host: ${{ steps.target.outputs.ip }}
+          ssh-port: ${{ secrets.SSH_PORT || '22' }}
+          ssh-user: ${{ secrets.SSH_USER || 'actions' }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          initial-delay: 10
+          retry-count: 4
+          retry-delay: 10
+          fail-on-unhealthy: true
+
+      - name: Notify
+        if: always()
+        uses: nuniesmith/actions/.github/actions/discord-notify@5d4948b899fdda4abdcb1b80b8959030aa1571ea
+        continue-on-error: true
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_ACTIONS }}
+          title: LifeOS deployment
+          description: ${{ steps.image.outputs.ref }}
+          # Reports the combined result, not just the deploy step: a rollout
+          # that started but failed its health gate is not a success.
+          status: >-
+            ${{ (steps.deploy.outcome == 'success' && steps.health.outcome == 'success')
+                && 'success' || 'failure' }}
+          include-repo-info: true

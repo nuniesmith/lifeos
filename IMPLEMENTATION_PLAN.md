@@ -948,21 +948,21 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 ### Phase 7 — Production delivery
 
-- [ ] **OPS-001** Port Princess `provision/cloud-init.yaml`; retain users/SSH hardening, unattended upgrades, fail2ban, UFW, Docker log rotation, Docker/Tailscale boot ordering, and remove exit-node/non-local-bind settings.
-- [ ] **OPS-002** Add LifeOS-specific cloud-init for 2 GB swap, `/srv/lifeos/{releases,data/uploads,data/postgres,backups}`, root-owned environment files, directory ownership, journal limits, and systemd backup/verification timers.
+- [~] **OPS-001** Port Princess `provision/cloud-init.yaml`; retain users/SSH hardening, unattended upgrades, fail2ban, UFW, Docker log rotation, Docker/Tailscale boot ordering, and remove exit-node/non-local-bind settings.
+- [~] **OPS-002** Add LifeOS-specific cloud-init for 2 GB swap, `/srv/lifeos/{releases,data/uploads,data/postgres,backups}`, root-owned environment files, directory ownership, journal limits, and systemd backup/verification timers.
 - [ ] **OPS-003** Port Princess `provision.yml` with literal `lifeos` confirmation, label-based idempotency, `g6-nanode-1`/`ca-central` defaults, ephemeral root bootstrap key, cloud-init wait, rerun recovery, and cleanup.
-- [ ] **OPS-004** Provision a dedicated `actions` key or Tailscale SSH policy, pin the standard SSH host key, verify Lish recovery, and remove public SSH exposure after bootstrap if Tailscale recovery works.
-- [ ] **OPS-005** Join the server as `tag:lifeos`, keep runners as `tag:ci`, implement minimum tailnet grants, and prove the database/public interfaces are unreachable.
-- [ ] **OPS-006** Configure and idempotently verify Tailscale Serve to loopback Nginx; assert Funnel is disabled and remove Princess's Cloudflare, Certbot, wildcard DNS, certificate volume, and exit-node paths.
-- [ ] **OPS-007** Configure production secrets, explicit HTTPS `ORIGIN`, scoped DB credentials, GHCR pull credentials, Restic backend, and offline recovery material without per-deploy `.env` rewriting.
+- [~] **OPS-004** Provision a dedicated `actions` key or Tailscale SSH policy, pin the standard SSH host key, verify Lish recovery, and remove public SSH exposure after bootstrap if Tailscale recovery works.
+- [~] **OPS-005** Join the server as `tag:lifeos`, keep runners as `tag:ci`, implement minimum tailnet grants, and prove the database/public interfaces are unreachable.
+- [~] **OPS-006** Configure and idempotently verify Tailscale Serve to loopback Nginx; assert Funnel is disabled and remove Princess's Cloudflare, Certbot, wildcard DNS, certificate volume, and exit-node paths.
+- [~] **OPS-007** Configure production secrets, explicit HTTPS `ORIGIN`, scoped DB credentials, GHCR pull credentials, Restic backend, and offline recovery material without per-deploy `.env` rewriting.
 - [ ] **OPS-008** Reuse the `nuniesmith/actions` composites as-is (they are proven in Princess production); set a `LIFEOS_TAILSCALE_IP` override secret and pass it exactly as Princess passes `PRINCESS_TAILSCALE_IP`; pin every used component to a reviewed SHA and add a controlled pin-update process. **Do not modify the shared composites for LifeOS' benefit** — see the note below.
 - [ ] **OPS-009** Add `ci.yml` with lockfile install, static checks, PostgreSQL integration tests, Playwright, image build, and scanning; publish commit-tagged GHCR images only from trusted `main` runs.
-- [ ] **OPS-010** Add `deploy.yml` with the GitHub production environment, `cancel-in-progress: false`, tailnet discovery, exact commit/digest capture, and a remote `flock` deployment lock.
-- [ ] **OPS-011** Implement the custom stateful deploy sequence: resource preflight, image pull, required pre-deploy backup, one-shot migration, app/Nginx rollout with PostgreSQL kept alive, hard health gate, and sanitized Discord report.
-- [ ] **OPS-012** Test retry after interruption at every deploy boundary and prove exact-image rollback; document when a forward fix versus database restore is required after a migration failure.
+- [~] **OPS-010** Add `deploy.yml` with the GitHub production environment, `cancel-in-progress: false`, tailnet discovery, exact commit/digest capture, and a remote `flock` deployment lock.
+- [~] **OPS-011** Implement the custom stateful deploy sequence: resource preflight, image pull, required pre-deploy backup, one-shot migration, app/Nginx rollout with PostgreSQL kept alive, hard health gate, and sanitized Discord report.
+- [~] **OPS-012** Test retry after interruption at every deploy boundary and prove exact-image rollback; document when a forward fix versus database restore is required after a migration failure.
 - [ ] **OPS-013** Load-test the realistic dataset, measure memory/disk, tune PostgreSQL/app pool, and confirm no swap thrashing.
 - [ ] **OPS-014** Add actionable alerts for service unavailable, deployment failure, backup stale/failed, restore verification failed, and disk pressure.
-- [ ] **OPS-015** Reclaim disk after every deploy: prune dangling images/build cache and retain only the last N tagged LifeOS images (N ≥ 3, so the OPS-012 exact-image rollback target always survives). Never `docker system prune -a`, which would delete the rollback target and the PostgreSQL image. Assert free space after pruning and include reclaimed bytes in the Discord deploy report. Rationale: alerting at 70%/85% (OPS-014) detects disk pressure but nothing currently reclaims, and deploy-by-digest (OPS-010) adds an image per release on a 25 GB disk.
+- [~] **OPS-015** Reclaim disk after every deploy: prune dangling images/build cache and retain only the last N tagged LifeOS images (N ≥ 3, so the OPS-012 exact-image rollback target always survives). Never `docker system prune -a`, which would delete the rollback target and the PostgreSQL image. Assert free space after pruning and include reclaimed bytes in the Discord deploy report. Rationale: alerting at 70%/85% (OPS-014) detects disk pressure but nothing currently reclaims, and deploy-by-digest (OPS-010) adds an image per release on a 25 GB disk.
 
 **Gate:** Production survives container/host restart, is unreachable outside the intended tailnet ACL, and passes backup/rollback tests within the 1 GB memory envelope.
 
