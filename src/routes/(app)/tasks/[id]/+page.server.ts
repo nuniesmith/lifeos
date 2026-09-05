@@ -1,7 +1,10 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import {
+	addTaskDependency,
 	createTask,
 	getTask,
+	listTaskDependencies,
+	removeTaskDependency,
 	listAreas,
 	listProjects,
 	listTasks,
@@ -21,14 +24,31 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// disclosure. getTask already applies the readable scope.
 	if (!task) error(404, 'Task not found');
 
-	const [subtasks, projects, areas, parent] = await Promise.all([
+	const [subtasks, projects, areas, parent, dependencies, candidates] = await Promise.all([
 		listTasks(sql, viewer, { parentTaskId: task.id, includeArchived: true, order: 'manual' }),
 		listProjects(sql, viewer, { limit: 200 }),
 		listAreas(sql, viewer, { limit: 200 }),
-		task.parentTaskId ? getTask(sql, viewer, task.parentTaskId) : Promise.resolve(null)
+		task.parentTaskId ? getTask(sql, viewer, task.parentTaskId) : Promise.resolve(null),
+		listTaskDependencies(sql, viewer, task.id),
+		listTasks(sql, viewer, { status: 'open', limit: 100, order: 'title' })
 	]);
 
-	return { task, subtasks, parent, projects, areas };
+	// Anything already linked, or the task itself, is not offered again.
+	const linked = new Set([
+		task.id,
+		...dependencies.blockedBy.map((d) => d.blockingTaskId),
+		...dependencies.blocking.map((d) => d.blockedTaskId)
+	]);
+
+	return {
+		task,
+		subtasks,
+		parent,
+		projects,
+		areas,
+		dependencies,
+		candidates: candidates.filter((t) => !linked.has(t.id))
+	};
 };
 
 /** Empty select values arrive as '' and mean "no link", not "unchanged". */
@@ -103,6 +123,41 @@ export const actions: Actions = {
 			String(form.get('updatedAt') ?? '')
 		);
 		if (!result.ok) return fail(400, { error: 'Could not update that subtask.' });
+		return { ok: true };
+	},
+
+	addDependency: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+
+		const result = await addTaskDependency(
+			sql,
+			viewer,
+			params.id,
+			String(form.get('blockingTaskId') ?? '')
+		);
+		if (!result.ok) {
+			return fail(result.reason === 'invalid' ? 400 : 404, {
+				error:
+					result.reason === 'invalid'
+						? (result.message ?? 'That dependency is not allowed.')
+						: 'That task is not available.'
+			});
+		}
+		return { ok: true };
+	},
+
+	removeDependency: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		await removeTaskDependency(
+			sql,
+			viewer,
+			String(form.get('blockedTaskId') ?? ''),
+			String(form.get('blockingTaskId') ?? '')
+		);
+		// Removing an edge that is already gone is the state the caller asked
+		// for, so it is not reported as a failure.
 		return { ok: true };
 	},
 

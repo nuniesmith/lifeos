@@ -733,3 +733,167 @@ export const unarchiveTask = (
 	id: string,
 	expectedUpdatedAt?: Date | string
 ) => setTaskArchived(sql, viewer, id, false, expectedUpdatedAt);
+
+// ─── dependencies ──────────────────────────────────────────────────────────
+
+export interface TaskDependency {
+	/** The task that is waiting. */
+	blockedTaskId: string;
+	/** The task it is waiting on. */
+	blockingTaskId: string;
+	title: string;
+	status: TaskStatus;
+	archived: boolean;
+}
+
+/**
+ * What a task is waiting on, and what is waiting on it.
+ *
+ * Both directions come from the one `task_dependencies` row: the source stored
+ * "Blocked by" and "Blocking" as two Notion relations, but they describe a
+ * single edge and storing both would let them disagree.
+ *
+ * Each side is scoped, so a dependency on a task the viewer cannot read simply
+ * does not appear — rather than leaking its title through a join.
+ */
+export async function listTaskDependencies(
+	sql: Queryable,
+	viewer: Viewer,
+	taskId: string
+): Promise<{ blockedBy: TaskDependency[]; blocking: TaskDependency[] }> {
+	if (!isUuid(taskId)) return { blockedBy: [], blocking: [] };
+
+	const rows = await sql<
+		{
+			direction: 'blocked_by' | 'blocking';
+			blocked_task_id: string;
+			blocking_task_id: string;
+			title: string;
+			status: string;
+			archived: boolean;
+		}[]
+	>`
+		select 'blocked_by' as direction, d.blocked_task_id, d.blocking_task_id,
+		       t.title, t.status, (t.archived_at is not null) as archived
+		from task_dependencies d
+		join tasks t on t.id = d.blocking_task_id
+		where d.blocked_task_id = ${taskId}::uuid and ${readableScope(sql, viewer, 't')}
+		union all
+		select 'blocking' as direction, d.blocked_task_id, d.blocking_task_id,
+		       t.title, t.status, (t.archived_at is not null) as archived
+		from task_dependencies d
+		join tasks t on t.id = d.blocked_task_id
+		where d.blocking_task_id = ${taskId}::uuid and ${readableScope(sql, viewer, 't')}
+		order by title
+	`;
+
+	const map = (r: (typeof rows)[number]): TaskDependency => ({
+		blockedTaskId: r.blocked_task_id,
+		blockingTaskId: r.blocking_task_id,
+		title: r.title,
+		status: r.status as TaskStatus,
+		archived: Boolean(r.archived)
+	});
+
+	return {
+		blockedBy: rows.filter((r) => r.direction === 'blocked_by').map(map),
+		blocking: rows.filter((r) => r.direction === 'blocking').map(map)
+	};
+}
+
+/**
+ * Records that `blockedTaskId` is waiting on `blockingTaskId`.
+ *
+ * Refuses a cycle. Without that check a pair of tasks can end up waiting on
+ * each other and neither is ever actionable — the graph looks fine row by row
+ * and is unresolvable as a whole, which is precisely the sort of thing nobody
+ * notices until they are staring at an empty Today.
+ */
+export function addTaskDependency(
+	sql: Queryable,
+	viewer: Viewer,
+	blockedTaskId: string,
+	blockingTaskId: string
+): Promise<WriteResult<TaskDependency>> {
+	return guarded<TaskDependency>(async () => {
+		if (!isUuid(blockedTaskId) || !isUuid(blockingTaskId)) {
+			throw new InvalidInput('task id is not valid');
+		}
+		if (blockedTaskId === blockingTaskId) {
+			throw new InvalidInput('a task cannot depend on itself');
+		}
+
+		// The waiting task must be writable; the one waited on need only be
+		// readable, the same asymmetry as attaching a task to a project.
+		const blocked = await getScoped<{ id: string }>(
+			sql,
+			TABLE,
+			blockedTaskId,
+			writableScope(sql, viewer, TABLE),
+			sql`id`
+		);
+		if (!blocked) return { ok: false, reason: 'not_found' };
+
+		const blocking = await getScoped<{ id: string; title: string; status: string }>(
+			sql,
+			TABLE,
+			blockingTaskId,
+			readableScope(sql, viewer, TABLE),
+			sql`id, title, status`
+		);
+		if (!blocking) return { ok: false, reason: 'not_found' };
+
+		// Walk the existing edges: if the task we would wait on already waits
+		// on us, transitively, adding this edge closes a loop.
+		const cycle = await sql<{ found: boolean }[]>`
+			with recursive downstream as (
+				select blocking_task_id as id from task_dependencies
+				where blocked_task_id = ${blockingTaskId}::uuid
+				union
+				select d.blocking_task_id from task_dependencies d
+				join downstream x on d.blocked_task_id = x.id
+			)
+			select true as found from downstream where id = ${blockedTaskId}::uuid limit 1
+		`;
+		if (cycle.length > 0) {
+			throw new InvalidInput('that would make the two tasks wait on each other');
+		}
+
+		await sql`
+			insert into task_dependencies (blocked_task_id, blocking_task_id)
+			values (${blockedTaskId}::uuid, ${blockingTaskId}::uuid)
+			on conflict do nothing
+		`;
+
+		return {
+			ok: true,
+			record: {
+				blockedTaskId,
+				blockingTaskId,
+				title: blocking.title,
+				status: blocking.status as TaskStatus,
+				archived: false
+			}
+		};
+	});
+}
+
+/** Removes the edge. Returns false when there was nothing to remove. */
+export async function removeTaskDependency(
+	sql: Queryable,
+	viewer: Viewer,
+	blockedTaskId: string,
+	blockingTaskId: string
+): Promise<boolean> {
+	if (!isUuid(blockedTaskId) || !isUuid(blockingTaskId)) return false;
+	const rows = await sql<{ blocked_task_id: string }[]>`
+		delete from task_dependencies d
+		using tasks t
+		where t.id = d.blocked_task_id
+		  and d.blocked_task_id = ${blockedTaskId}::uuid
+		  and d.blocking_task_id = ${blockingTaskId}::uuid
+		  and ${writableScope(sql, viewer, 't')}
+		returning d.blocked_task_id
+	`;
+	return rows.length > 0;
+}

@@ -146,6 +146,54 @@
 	</form>
 </Card>
 
+<Card title="Waiting on" subtitle="This task cannot start until these are done" flush>
+	{#if data.dependencies.blockedBy.length === 0}
+		<EmptyState title="Not blocked" description="Nothing is holding this up." />
+	{:else}
+		<List label="Blocked by">
+			{#each data.dependencies.blockedBy as dep (dep.blockingTaskId)}
+				<ListRow
+					title={dep.title}
+					href="/tasks/{dep.blockingTaskId}"
+					muted={isDone(dep.status)}
+					meta={isDone(dep.status) ? 'Done' : undefined}
+				>
+					{#snippet trail()}
+						<form method="POST" action="?/removeDependency" use:enhance>
+							<input type="hidden" name="blockedTaskId" value={data.task.id} />
+							<input type="hidden" name="blockingTaskId" value={dep.blockingTaskId} />
+							<Button type="submit" size="sm" variant="ghost">Remove</Button>
+						</form>
+					{/snippet}
+				</ListRow>
+			{/each}
+		</List>
+	{/if}
+
+	{#if data.candidates.length > 0}
+		<form method="POST" action="?/addDependency" class="add-sub" use:enhance>
+			<Select
+				label="Add something this waits on"
+				name="blockingTaskId"
+				options={data.candidates.map((t) => ({ value: t.id, label: t.title }))}
+				placeholder="Choose a task"
+				required
+			/>
+			<Button type="submit">Add</Button>
+		</form>
+	{/if}
+</Card>
+
+{#if data.dependencies.blocking.length > 0}
+	<Card title="Blocking" subtitle="These are waiting on this task" flush>
+		<List label="Blocking">
+			{#each data.dependencies.blocking as dep (dep.blockedTaskId)}
+				<ListRow title={dep.title} href="/tasks/{dep.blockedTaskId}" muted={isDone(dep.status)} />
+			{/each}
+		</List>
+	</Card>
+{/if}
+
 <Card title={archived ? 'Restore' : 'Archive'}>
 	<p class="muted">
 		{archived
