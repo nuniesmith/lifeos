@@ -74,3 +74,32 @@ test('the session cookie is HttpOnly and SameSite=Lax', async ({ page, context }
 	// The stored value is a hash; the cookie must not be a guessable id.
 	expect(cookie!.value.length).toBeGreaterThan(30);
 });
+
+test('rotating credentials unlocks the app and the admin surface', async ({ page }) => {
+	// Runs last: it changes the bootstrap password, so earlier tests must have
+	// already used it.
+	await page.goto('/login');
+	await page.getByLabel('Username').fill('admin');
+	await page.getByLabel('Password').fill(PASSWORD);
+	await page.getByRole('button', { name: 'Sign in' }).click();
+	await expect(page).toHaveURL(/\/account\/credentials/);
+
+	await page.getByLabel('Username').fill('jordan');
+	await page.getByLabel('Current password').fill(PASSWORD);
+	await page.getByLabel('New password', { exact: true }).fill('a-much-longer-password');
+	await page.getByLabel('Confirm new password').fill('a-much-longer-password');
+	await page.getByRole('button', { name: 'Save and continue' }).click();
+
+	// The forced-rotation redirect no longer applies.
+	await expect(page).toHaveURL('/');
+
+	// An admin can now reach the account and audit surfaces.
+	await page.goto('/admin/people');
+	await expect(page.getByRole('heading', { name: 'People' })).toBeVisible();
+	await expect(page.getByRole('cell', { name: 'jordan' })).toBeVisible();
+
+	await page.goto('/admin/audit');
+	await expect(page.getByRole('heading', { name: 'Audit' })).toBeVisible();
+	// The rotation was recorded.
+	await expect(page.getByText('credentials.changed').first()).toBeVisible();
+});

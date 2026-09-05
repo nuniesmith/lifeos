@@ -4,6 +4,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	plugins: [sveltekit()],
 	test: {
+		// Integration test files share one database and truncate the same
+		// tables between cases. Run one file at a time: in parallel they
+		// deadlock and violate each other's foreign keys, which looks exactly
+		// like a product bug and is not one. Unit tests are fast enough that
+		// serialising them costs nothing.
+		fileParallelism: false,
 		projects: [
 			{
 				extends: true,

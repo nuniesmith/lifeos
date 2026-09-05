@@ -29,6 +29,7 @@ cmd_down()  { compose down; }
 cmd_logs()  { compose logs -f --tail=100 "${1:-}"; }
 cmd_build() { npm run build; }
 cmd_migrate() { compose up -d db >/dev/null && node scripts/migrate.mjs "$@"; }
+cmd_recover() { node scripts/recover-admin.mjs "$@"; }
 
 cmd_test() {
     case "${1:-all}" in
@@ -76,6 +77,7 @@ Usage: ./run.sh <command>
   dev                  start db and run the dev server
   build                production build
   migrate [--status|--verify]   apply database migrations
+  recover [--list|--reset <user>|--invalidate-sessions]   account recovery
   test [unit|integration|e2e|first-run|all]
   up | down | logs [service]
   doctor               diagnose the local setup
@@ -87,6 +89,7 @@ case "${1:-}" in
     dev)  shift; cmd_dev "$@" ;;
     build) shift; cmd_build "$@" ;;
     migrate) shift; cmd_migrate "$@" ;;
+    recover) shift; cmd_recover "$@" ;;
     test) shift; cmd_test "$@" ;;
     up)   shift; cmd_up "$@" ;;
     down) shift; cmd_down "$@" ;;

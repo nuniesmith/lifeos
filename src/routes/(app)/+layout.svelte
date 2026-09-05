@@ -6,6 +6,10 @@
 <header>
 	<a class="brand" href={resolve('/')}>LifeOS</a>
 	<nav>
+		{#if data.user?.role === 'admin'}
+			<a href={resolve('/admin/people')}>People</a>
+			<a href={resolve('/admin/audit')}>Audit</a>
+		{/if}
 		<span class="who">{data.user?.displayName}</span>
 		<form method="POST" action="/logout">
 			<button type="submit">Sign out</button>
@@ -38,6 +42,13 @@
 	.who {
 		color: var(--c-text-muted);
 		font-size: var(--fs-sm);
+	}
+	nav a {
+		font-size: var(--fs-sm);
+		text-decoration: none;
+	}
+	nav a:hover {
+		text-decoration: underline;
 	}
 	button {
 		background: none;

@@ -852,9 +852,9 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [x] **AUTH-001** Port/adapt the tested FKS scrypt, opaque token, session TTL, lockout, and audit concepts into isolated LifeOS auth modules. _scrypt chosen over Argon2id: no native dependency, so the runtime image carries neither a compiled module nor its CVE stream. Parameters travel in the hash string and can be raised without invalidating credentials._
 - [x] **AUTH-002** Implement transactional first-run bootstrap and forced credential change.
 - [x] **AUTH-003** Implement login/logout, CSRF/origin checks, protected layout, session refresh/revoke, and fail-closed database behavior.
-- [ ] **AUTH-004** Implement admin member creation/invites, role changes, disable/re-enable, one-time credential reset, and audit viewer.
-- [ ] **AUTH-005** Implement household/owner/visibility authorization helpers and enforce them at repository boundaries.
-- [ ] **AUTH-006** Add recovery CLI and restored-session invalidation.
+- [x] **AUTH-004** Implement admin member creation/invites, role changes, disable/re-enable, one-time credential reset, and audit viewer.
+- [x] **AUTH-005** Implement household/owner/visibility authorization helpers and enforce them at repository boundaries.
+- [x] **AUTH-006** Add recovery CLI and restored-session invalidation.
 
 **Gate:** Fresh setup creates exactly one unknown admin, forces rotation, supports the member account, and has tested household/privacy isolation.
 
