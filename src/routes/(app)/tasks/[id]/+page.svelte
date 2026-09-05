@@ -67,8 +67,11 @@
 <Card title="Details">
 	<form method="POST" action="?/save" class="edit" use:enhance>
 		<!-- Carries the version the form was rendered from, so a save from a
-		     stale tab is refused rather than silently overwriting. -->
-		<input type="hidden" name="updatedAt" value={data.task.updatedAt} />
+		     stale tab is refused rather than silently overwriting.
+		     `.toISOString()` is required: interpolating the Date directly uses
+		     its toString(), which drops milliseconds, and the precondition
+		     compares to the millisecond — so every save 409'd. -->
+		<input type="hidden" name="updatedAt" value={data.task.updatedAt.toISOString()} />
 
 		<Input label="Title" name="title" value={data.task.title} required />
 		<Textarea label="Notes" name="notes" rows={4} value={data.task.notes ?? ''} />
@@ -124,7 +127,7 @@
 					{#snippet lead()}
 						<form method="POST" action="?/toggleSubtask" use:enhance>
 							<input type="hidden" name="id" value={sub.id} />
-							<input type="hidden" name="updatedAt" value={sub.updatedAt} />
+							<input type="hidden" name="updatedAt" value={sub.updatedAt.toISOString()} />
 							<input type="hidden" name="done" value={isDone(sub.status) ? 'false' : 'true'} />
 							<button
 								class="tick"

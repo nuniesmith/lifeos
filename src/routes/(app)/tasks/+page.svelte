@@ -89,7 +89,7 @@
 				{#snippet lead()}
 					<form method="POST" action="?/toggle" use:enhance>
 						<input type="hidden" name="id" value={task.id} />
-						<input type="hidden" name="updatedAt" value={task.updatedAt} />
+						<input type="hidden" name="updatedAt" value={task.updatedAt.toISOString()} />
 						<input type="hidden" name="done" value={isDone(task.status) ? 'false' : 'true'} />
 						<button
 							class="tick"

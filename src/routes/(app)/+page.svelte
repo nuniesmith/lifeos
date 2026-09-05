@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Card from '$lib/components/Card.svelte';
@@ -7,6 +8,7 @@
 	import List from '$lib/components/List.svelte';
 	import ListRow from '$lib/components/ListRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
+	import { appPath } from '$lib/components/nav';
 
 	let { data, form } = $props();
 
@@ -82,17 +84,20 @@
 	<p class="notice" role="alert">{form.error}</p>
 {/if}
 
-<!-- Seven day chips exceed a narrow phone; the strip scrolls, the page does not.
-     These are labels rather than links until the journal route exists (UI-009);
-     a chip that navigates to a 404 is worse than one that does nothing. -->
+<!-- Seven day chips exceed a narrow phone; the strip scrolls, the page does not. -->
 <div class="scroll-x week-strip">
 	<ul class="week">
 		{#each week as day (day.key)}
 			<li>
-				<span class="day" class:is-today={day.isToday}>
+				<a
+					href={resolve(appPath(`/journal/${day.key}`))}
+					class="day"
+					class:is-today={day.isToday}
+					aria-current={day.isToday ? 'date' : undefined}
+				>
 					<span class="weekday">{day.weekday}</span>
 					<span class="date numeric">{day.day}</span>
-				</span>
+				</a>
 			</li>
 		{/each}
 	</ul>
@@ -122,7 +127,7 @@
 						{#snippet lead()}
 							<form method="POST" action="?/toggleTask" use:enhance>
 								<input type="hidden" name="id" value={task.id} />
-								<input type="hidden" name="updatedAt" value={task.updatedAt} />
+								<input type="hidden" name="updatedAt" value={task.updatedAt.toISOString()} />
 								<input type="hidden" name="done" value={isDone(task.status) ? 'false' : 'true'} />
 								<button
 									class="tick"
