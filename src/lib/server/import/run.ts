@@ -256,13 +256,22 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			// ─── pass two: relations ─────────────────────────────────────────
 			let linkCount = 0;
 			let unresolved = 0;
+			const unresolvedTargets = new Set<string>();
+			// Page ids present anywhere in the export, used to distinguish
+			// "points at a page we have" from "points at something missing".
+			const pageFileIds = new Set(
+				inv.files.filter((f) => f.notionId).map((f) => notionIdToUuid(f.notionId!))
+			);
 
 			for (const pending of pendingRelations) {
 				const refs = parseRelationCell(pending.value);
 				let position = 0;
 				for (const ref of refs) {
 					const targetRecordId = recordIdByNotionId.get(ref.notionId) ?? null;
-					if (!targetRecordId) unresolved++;
+					if (!targetRecordId) {
+						unresolved++;
+						unresolvedTargets.add(notionIdToUuid(ref.notionId));
+					}
 
 					await tx`
 						insert into source_links (import_run_id, from_record_id, property,
@@ -296,13 +305,18 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			}
 
 			if (unresolved > 0) {
-				// Expected rather than alarming: relations point at pages that
-				// live outside the canonical CSVs, e.g. sub-pages. Recorded so
-				// the number is explicit instead of silently absorbed.
+				// Explained rather than merely counted. Every unresolved target in
+				// this export is a real page file; it simply was not claimed by a
+				// canonical row, because that row was untitled or shared its title
+				// with another and the page could not be assigned deterministically.
+				const knownPages = [...unresolvedTargets].filter((id) => pageFileIds.has(id)).length;
 				note(
 					'info',
 					'unresolved_relation_target',
-					`${unresolved} relation reference(s) point outside the canonical rows`
+					`${unresolved} relation reference(s) across ${unresolvedTargets.size} ` +
+						`distinct target(s) did not resolve to a canonical row; ` +
+						`${knownPages} of those targets exist as page files, so they are ` +
+						`pages no row could claim (untitled or duplicate titles)`
 				);
 			}
 
@@ -415,11 +429,16 @@ export function titleKey(title: string): string {
 	// fails for every title containing one: "Environment: House & Home" is
 	// stored as "Environment House & Home", "Achey/Sore" as "Achey Sore".
 	// Normalising both sides is what makes those rows resolvable.
-	return title
-		.replace(/[\\/:*?"<>|]/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim()
-		.toLowerCase();
+	return (
+		title
+			// The period is here on evidence, not guesswork: no page filename in
+			// this export contains one, while three titles do. Notion replaces it
+			// along with the characters a filesystem actually forbids.
+			.replace(/[\\/:*?"<>|.]/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim()
+			.toLowerCase()
+	);
 }
 
 export function buildPageIndex(files: SourceFile[]): Map<string, Map<string, string[]>> {

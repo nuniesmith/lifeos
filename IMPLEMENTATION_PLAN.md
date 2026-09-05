@@ -423,6 +423,8 @@ Measured against the export in `data/` (36 `_all.csv`, 436 canonical rows, 504 M
 | **Directory name contains spaces**                 | `data/md and csv/`                                                                                                                   | Quote every path in shell tooling; prefer passing paths as arguments, not interpolating them.                                                                                  |
 | **Relation paths contain parentheses**             | `Tags & Topics (Resources) Database` — 19 cells, 37 references                                                                       | Match the closing parenthesis by tracking depth. A regex stopping at the first `)` drops every tag relation silently.                                                          |
 | **Percent-escapes are valid hex**                  | `Sweet%20Potato%203c8879a5…`                                                                                                         | Percent-decode _before_ extracting the 32-hex id, and anchor the match with lookarounds. Otherwise it begins at the `20` of `%20` and returns an id shifted by two characters. |
+| **Notion strips periods from filenames**           | `The Eisenhower Matrix 2.0` is stored as `The Eisenhower Matrix 2 0`                                                                 | Replace `.` along with the filesystem-illegal characters. Verified rather than guessed: **no** page filename in this export contains a period, while three titles do.          |
+| **Filename titles are capped at 50 characters**    | 13 Library rows, e.g. `The Eisenhower Matrix 2.0 – Beyond Urgent and Impo`                                                           | Try the exact key first, then a key truncated to 50, so the fallback cannot loosen ordinary matching.                                                                          |
 
 ### Import passes
 
@@ -889,7 +891,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [x] **IMP-007** Implement normalization per source mapping, including date/timezone, money, recurrence, template handling, and privacy defaults.
 - [ ] **IMP-008** Implement formula/rollup replacement comparisons and intentional-difference report.
 - [x] **IMP-009** Implement dry-run, transaction/promotion, idempotency, conflict behavior, redacted reports, and `run.sh import`.
-- [ ] **IMP-010** Run the supplied exports and resolve every unexplained issue against the acceptance baseline.
+- [x] **IMP-010** Run the supplied exports and resolve every unexplained issue against the acceptance baseline.
 
 **Gate:** The import accounts for all 436 canonical rows, 504 page IDs, and 298 unique images; rerunning is idempotent and unresolved items are explicit.
 

@@ -12,7 +12,9 @@ describe('title normalisation', () => {
 		['Environment: House & Home', 'environment house & home'],
 		['Achey/Sore', 'achey sore'],
 		['Upper Body: Biceps & Triceps', 'upper body biceps & triceps'],
-		['Already Plain', 'already plain']
+		['Already Plain', 'already plain'],
+		// No page filename in this export contains a period, while titles do.
+		['The Eisenhower Matrix 2.0', 'the eisenhower matrix 2 0']
 	])('matches the filename Notion writes for %s', (title, expected) => {
 		// Notion cannot put ':' or '/' in a filename, so comparing raw titles
 		// fails for every row containing one.
@@ -24,7 +26,7 @@ describe('title normalisation', () => {
 	});
 
 	it('handles every character illegal in a filename', () => {
-		expect(titleKey('a\\b/c:d*e?f"g<h>i|j')).toBe('a b c d e f g h i j');
+		expect(titleKey('a\\b/c:d*e?f"g<h>i|j.k')).toBe('a b c d e f g h i j k');
 	});
 });
 
