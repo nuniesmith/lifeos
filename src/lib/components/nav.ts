@@ -1,4 +1,3 @@
-import type { PathnameWithSearchOrHash } from '$app/types';
 import type { IconName } from './icons';
 
 /**
@@ -16,8 +15,29 @@ import type { IconName } from './icons';
  * widening one. It is the only such cast in the shell, so grep for it before
  * assuming a link is safe.
  */
-export function appPath(path: string): PathnameWithSearchOrHash {
-	return path as PathnameWithSearchOrHash;
+/**
+ * Asserts an application path that SvelteKit's generated route union does not
+ * contain yet.
+ *
+ * The cast target is `never`, which is assignable to every overload of
+ * `resolve`. Earlier attempts cast to a widened path type; that works only
+ * while no extra routes exist, because `resolve` is typed as a union of
+ * single-element tuples and a widened argument then satisfies none of them —
+ * the whole component library stopped compiling the moment `/tasks` landed.
+ *
+ * `resolve()` is still called for real at every site, which is both correct
+ * (it applies the configured base path) and what satisfies
+ * `svelte/no-navigation-without-resolve`. This is the only such cast; grep for
+ * it before assuming a link is checked. As each route lands its call can drop
+ * the cast entirely.
+ */
+export function appPath(path: string): '/' {
+	// The declared type is a route that exists, chosen so the call satisfies
+	// one concrete overload. `never` does not work: `resolve` is a union of
+	// single-element tuples and TypeScript then rejects `[never]` against
+	// `never`. The value returned is the caller's real path; only the type is
+	// a fiction, and `resolve` applies the base path to it as normal.
+	return path as '/';
 }
 
 /**

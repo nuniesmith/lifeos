@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
+	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { appPath } from './nav';
 
@@ -8,7 +8,13 @@
 		title: string;
 		/** A second line: due date, project, count. Kept to one short line. */
 		meta?: string;
-		/** Navigates to the record. The whole row becomes the hit area. */
+		/**
+		 * Navigates to the record. The whole row becomes the hit area.
+		 *
+		 * Pass a **raw** application path such as `/tasks/123`. This component
+		 * calls `resolve()` itself; passing an already-resolved href resolves it
+		 * twice, which yields a relative path and throws at render time.
+		 */
 		href?: string;
 		/** A checkbox, an avatar, a status dot. Stays clickable over a link. */
 		lead?: Snippet;

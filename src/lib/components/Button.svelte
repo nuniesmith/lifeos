@@ -1,7 +1,7 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { Snippet } from 'svelte';
 	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from 'svelte/elements';
-	import { resolve } from '$app/paths';
 	import Icon from './Icon.svelte';
 	import { appPath } from './nav';
 	import type { IconName } from './icons';

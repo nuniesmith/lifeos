@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
 	import { resolve } from '$app/paths';
+	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { appPath } from './nav';
 

@@ -35,6 +35,7 @@ export {
 	BAR_DESTINATIONS,
 	OVERFLOW_DESTINATIONS,
 	adminDestinationsFor,
+	appPath,
 	isCurrent,
 	type Destination
 } from './nav';
