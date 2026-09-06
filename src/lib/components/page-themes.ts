@@ -1,5 +1,6 @@
 export interface PageTheme {
 	image?: string;
+	icon?: string;
 	alt: string;
 	accent: string;
 	accentSoft: string;
@@ -62,16 +63,16 @@ const THEMES: Record<string, PageTheme> = {
 		accentSoft: '#3d3047'
 	},
 	perspectives: {
+		icon: '/images/pages/perspectives.png',
 		alt: 'A quiet lavender workspace for noticing, learning, and choosing a perspective.',
 		accent: '#b49ac1',
-		accentSoft: '#3e3048',
-		mark: '◌'
+		accentSoft: '#3e3048'
 	},
 	health: {
+		icon: '/images/pages/health.png',
 		alt: 'A calm green workspace for health and fitness.',
 		accent: '#8eb99b',
-		accentSoft: '#294936',
-		mark: '♡'
+		accentSoft: '#294936'
 	},
 	food: {
 		image: '/images/pages/food.png',
@@ -80,10 +81,10 @@ const THEMES: Record<string, PageTheme> = {
 		accentSoft: '#50332d'
 	},
 	finance: {
+		icon: '/images/pages/finance.png',
 		alt: 'A grounded green workspace for keeping finances clear.',
 		accent: '#91b58c',
-		accentSoft: '#294432',
-		mark: '$'
+		accentSoft: '#294432'
 	},
 	entertainment: {
 		image: '/images/pages/entertainment.png',
@@ -92,10 +93,10 @@ const THEMES: Record<string, PageTheme> = {
 		accentSoft: '#50312e'
 	},
 	reading: {
+		icon: '/images/pages/reading.png',
 		alt: 'A quiet lavender workspace for tracking books and reading.',
 		accent: '#ae9bc2',
-		accentSoft: '#3e3048',
-		mark: '▤'
+		accentSoft: '#3e3048'
 	},
 	knowledge: {
 		image: '/images/pages/knowledge.png',

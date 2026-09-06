@@ -20,7 +20,11 @@
 		/>
 	{:else}
 		<div class="cover-fallback" aria-label={theme.alt} role="img">
-			<span>{theme.mark ?? '✦'}</span>
+			{#if theme.icon}
+				<img class="fallback-icon" src={`${base}${theme.icon}`} alt="" width="188" height="164" />
+			{:else}
+				<span>{theme.mark ?? '✦'}</span>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -69,6 +73,13 @@
 		color: var(--page-accent);
 		font-size: clamp(2.2rem, 5vw, 4rem);
 		font-weight: 300;
+	}
+
+	.fallback-icon {
+		width: min(11rem, 22vw);
+		height: min(9rem, 18vw);
+		object-fit: contain;
+		filter: drop-shadow(0 0.5rem 0.75rem rgb(0 0 0 / 0.18));
 	}
 
 	@media (max-width: 47.999rem) {

@@ -16,6 +16,7 @@ import Select from '$lib/components/Select.svelte';
 import SideNav from '$lib/components/SideNav.svelte';
 import Textarea from '$lib/components/Textarea.svelte';
 import { WORKSPACE_GROUPS } from '$lib/components/workspace-nav';
+import { pageThemeFor } from '$lib/components/page-themes';
 import {
 	ADMIN_DESTINATIONS,
 	APP_DESTINATIONS,
@@ -162,6 +163,44 @@ describe('SideNav', () => {
 		});
 		expect(body).toContain('Jordan');
 		expect(body).toContain('action="/logout"');
+	});
+});
+
+describe('page themes', () => {
+	it('covers every workspace destination with accessible visual treatment', () => {
+		const paths = [
+			'/inbox',
+			'/brain-dump',
+			'/tasks',
+			'/projects',
+			'/review',
+			'/goals',
+			'/yearly-review',
+			'/habits',
+			'/perspectives',
+			'/areas',
+			'/journal',
+			'/health',
+			'/food',
+			'/finance',
+			'/entertainment',
+			'/reading',
+			'/knowledge',
+			'/library',
+			'/topics',
+			'/people',
+			'/wishlist'
+		];
+
+		for (const path of paths) {
+			const theme = pageThemeFor(path);
+			expect(theme).toMatchObject({
+				alt: expect.any(String),
+				accent: expect.any(String),
+				accentSoft: expect.any(String)
+			});
+			expect(theme?.image ?? theme?.icon).toBeTruthy();
+		}
 	});
 });
 
