@@ -643,7 +643,7 @@ const PAGES: Record<string, WorkspacePageConfig> = {
 						symbol: '⌫',
 						label: 'Dropped tasks',
 						body: 'Keep a record of work you consciously chose not to carry forward.',
-						href: '/tasks?view=done'
+						href: '/tasks?view=dropped'
 					},
 					{
 						symbol: '↶',

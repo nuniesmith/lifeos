@@ -685,6 +685,22 @@ describe('filters', () => {
 		expect(first.map((t) => t.title)).toEqual(['task 0', 'task 1']);
 		expect(second.map((t) => t.title)).toEqual(['task 2', 'task 3']);
 	});
+
+	it('finds either calendar date even when the earlier one is outside the window', async () => {
+		ok(
+			await createTask(sql, jordan, {
+				title: 'deadline in September',
+				doOn: '2026-08-01',
+				deadlineOn: '2026-09-15'
+			})
+		);
+
+		const tasks = await listTasks(sql, jordan, {
+			scheduledFrom: '2026-09-01',
+			scheduledTo: '2026-09-30'
+		});
+		expect(tasks.map((task) => task.title)).toEqual(['deadline in September']);
+	});
 });
 
 // ───────────────────────────────────────────────────────────────────────────

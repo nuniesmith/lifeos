@@ -76,6 +76,13 @@ const schema = z
 
 		LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info')
 	})
+	.refine(
+		(e) => (e.LIFEOS_WEATHER_LATITUDE === undefined) === (e.LIFEOS_WEATHER_LONGITUDE === undefined),
+		{
+			message: 'latitude and longitude must be configured together',
+			path: ['LIFEOS_WEATHER_LATITUDE']
+		}
+	)
 	.refine((e) => building || Boolean(e.DATABASE_URL), {
 		message: 'DATABASE_URL is required',
 		path: ['DATABASE_URL']

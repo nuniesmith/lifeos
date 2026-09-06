@@ -163,6 +163,9 @@ export interface TaskFilters extends PageOptions {
 	search?: string;
 	dueFrom?: string;
 	dueTo?: string;
+	/** Include a task when either its do date or deadline falls in this window. */
+	scheduledFrom?: string;
+	scheduledTo?: string;
 	includeArchived?: boolean;
 	/** Templates are hidden by default; they are stencils, not work. */
 	includeTemplates?: boolean;
@@ -240,6 +243,24 @@ function taskConditions(sql: Queryable, viewer: Viewer, filters: TaskFilters): F
 	// `least` skips nulls, so a task with only one of the two still sorts.
 	if (filters.dueFrom) parts.push(sql`least(do_on, deadline_on) >= ${filters.dueFrom}::date`);
 	if (filters.dueTo) parts.push(sql`least(do_on, deadline_on) <= ${filters.dueTo}::date`);
+
+	// A calendar renders both dates, so its range cannot use the task's single
+	// effective due date. A task started last month with a deadline this month
+	// still belongs on this month's deadline square.
+	if (filters.scheduledFrom && filters.scheduledTo) {
+		parts.push(sql`(
+			(do_on between ${filters.scheduledFrom}::date and ${filters.scheduledTo}::date)
+			or (deadline_on between ${filters.scheduledFrom}::date and ${filters.scheduledTo}::date)
+		)`);
+	} else if (filters.scheduledFrom) {
+		parts.push(
+			sql`(do_on >= ${filters.scheduledFrom}::date or deadline_on >= ${filters.scheduledFrom}::date)`
+		);
+	} else if (filters.scheduledTo) {
+		parts.push(
+			sql`(do_on <= ${filters.scheduledTo}::date or deadline_on <= ${filters.scheduledTo}::date)`
+		);
+	}
 
 	return parts.reduce((all, part) => sql`${all} and ${part}`);
 }

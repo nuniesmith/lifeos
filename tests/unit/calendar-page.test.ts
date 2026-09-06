@@ -47,11 +47,25 @@ describe('calendar page load', () => {
 		});
 		expect(mocks.listTasks).toHaveBeenCalledWith(mocks.sql, viewer, {
 			status: ['todo', 'in_progress', 'blocked', 'done', 'dropped'],
-			dueFrom: '2026-09-28',
-			dueTo: '2026-11-08',
+			scheduledFrom: '2026-09-28',
+			scheduledTo: '2026-11-08',
 			order: 'due',
-			limit: 500
+			limit: 501
 		});
+	});
+
+	it('only reports truncation when there is a row beyond the display cap', async () => {
+		mocks.listTasks.mockResolvedValue(
+			Array.from({ length: 501 }, (_, index) => ({ id: `task-${index}` }))
+		);
+		const data = await load({
+			locals: { user: { id: viewer.userId } },
+			url: new URL('http://lifeos.test/calendar')
+		} as Parameters<typeof load>[0]);
+
+		if (!data) throw new Error('calendar did not load');
+		expect(data.tasks).toHaveLength(500);
+		expect(data.calendarTruncated).toBe(true);
 	});
 
 	it('falls back to the household month for an invalid query', async () => {

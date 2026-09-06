@@ -20,10 +20,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const [tasks, importantDates] = await Promise.all([
 		listTasks(sql, viewer, {
 			status: [...TASK_STATUSES],
-			dueFrom: range.from,
-			dueTo: range.to,
+			scheduledFrom: range.from,
+			scheduledTo: range.to,
 			order: 'due',
-			limit: 500
+			limit: 501
 		}),
 		upcomingImportantDates(sql, viewer, {
 			today: range.from,
@@ -36,8 +36,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		today,
 		month,
 		range,
-		tasks,
-		calendarTruncated: tasks.length >= 500,
+		tasks: tasks.slice(0, 500),
+		calendarTruncated: tasks.length > 500,
 		dates: importantDates.map((item) => ({
 			id: item.record.id,
 			name: item.record.title,

@@ -47,10 +47,10 @@
 		const year = monthDate.getUTCFullYear();
 		const monthNumber = monthDate.getUTCMonth();
 		const precedingDays = (monthDate.getUTCDay() + 6) % 7;
-		const daysInMonth = new Date(Date.UTC(year, monthNumber + 1, 0)).getUTCDate();
-		const weekCount = Math.ceil((precedingDays + daysInMonth) / 7);
 
-		return Array.from({ length: weekCount }, (_, week) =>
+		// Match the server's fixed six-week query window. Keeping the grid height
+		// stable also prevents the rest of the dashboard jumping between months.
+		return Array.from({ length: 6 }, (_, week) =>
 			Array.from({ length: 7 }, (_, weekday) => {
 				const date = new Date(Date.UTC(year, monthNumber, week * 7 + weekday - precedingDays + 1));
 				const key = dateKey(date);

@@ -21,6 +21,7 @@
 		overdue: 'Overdue',
 		open: 'Open',
 		done: 'Done',
+		dropped: 'Dropped',
 		all: 'All'
 	};
 

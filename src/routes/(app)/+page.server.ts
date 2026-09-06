@@ -78,8 +78,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		// tasks assigned to the other member. Fetch one extra to disclose a cap.
 		listTasks(sql, viewer, {
 			status: 'open',
-			dueFrom: calendarRange.from,
-			dueTo: calendarRange.to,
+			scheduledFrom: calendarRange.from,
+			scheduledTo: calendarRange.to,
 			order: 'due',
 			limit: 101
 		}),

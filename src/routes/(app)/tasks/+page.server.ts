@@ -13,7 +13,7 @@ import { householdToday } from '$lib/server/repositories/base';
 import type { Actions, PageServerLoad } from './$types';
 
 /** The list's named views. `all` still excludes archived and templates. */
-const VIEWS = ['today', 'week', 'overdue', 'open', 'done', 'all'] as const;
+const VIEWS = ['today', 'week', 'overdue', 'open', 'done', 'dropped', 'all'] as const;
 type View = (typeof VIEWS)[number];
 
 const isView = (value: string | null): value is View => VIEWS.includes((value ?? '') as View);
@@ -29,6 +29,8 @@ function filtersFor(view: View, today: string): TaskFilters {
 			return { status: 'open', dueTo: addDays(today, -1), order: 'due' };
 		case 'done':
 			return { status: 'done' as TaskStatus, order: 'created' };
+		case 'dropped':
+			return { status: 'dropped' as TaskStatus, order: 'created' };
 		case 'all':
 			return { order: 'due' };
 		case 'open':

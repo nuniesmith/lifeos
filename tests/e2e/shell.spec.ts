@@ -246,8 +246,7 @@ test.describe('on a desktop', () => {
 		for (const label of ['Today', 'Tasks', 'Habits', 'Journal', 'Projects', 'Areas', 'Goals']) {
 			await expect(side.getByRole('link', { name: label })).toBeVisible();
 		}
-		await expect(side.getByRole('link', { name: 'Calendar', exact: true })).toHaveCount(0);
-		await expect(side.getByText('Calendar')).toContainText('Upcoming');
+		await expect(side.getByRole('link', { name: 'Calendar', exact: true })).toBeVisible();
 		await page.getByRole('button', { name: 'Close sidebar' }).click();
 		await expect(side).toBeHidden();
 	});

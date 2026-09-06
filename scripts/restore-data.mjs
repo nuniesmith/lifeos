@@ -26,6 +26,7 @@ const collision = valueOf('--collision', 'merge');
 const ownerUser = valueOf('--owner-user');
 const targetHousehold = valueOf('--household-id');
 const apply = argv.includes('--apply');
+const collapseUsers = argv.includes('--collapse-users');
 
 if (!input) {
 	console.error('--input is required');
@@ -126,6 +127,12 @@ async function readAndVerifyManifest() {
 		throw new Error('unsupported LifeOS portable export format');
 	}
 	if (!manifest.household?.id || !manifest.files) throw new Error('manifest is incomplete');
+	for (const table of TABLES) {
+		const required = `data/${table}.ndjson`;
+		if (!Object.hasOwn(manifest.files, required)) {
+			throw new Error(`manifest does not cover required payload: ${required}`);
+		}
+	}
 
 	for (const [relativePath, expected] of Object.entries(manifest.files)) {
 		const path = resolve(root, relativePath);
@@ -140,11 +147,12 @@ async function readAndVerifyManifest() {
 	return manifest;
 }
 
-function mappedValue(column, value, targetOwner) {
+function mappedValue(table, column, value, targetOwner) {
 	if (value === null || value === undefined) return value;
 	if (column === 'sha256' && typeof value === 'string') return Buffer.from(value, 'hex');
 	if (['owner_user_id', 'created_by', 'updated_by', 'started_by'].includes(column))
 		return targetOwner;
+	if (table === 'habit_logs' && column === 'user_id') return targetOwner;
 	return value;
 }
 
@@ -158,7 +166,7 @@ async function insertRow(tx, table, original, householdId, targetOwner) {
 	if (Object.hasOwn(row, 'household_id')) row.household_id = householdId;
 	if (table === 'import_issues') delete row.id; // let the target sequence own this serial key
 	for (const column of Object.keys(row))
-		row[column] = mappedValue(column, row[column], targetOwner);
+		row[column] = mappedValue(table, column, row[column], targetOwner);
 
 	const columns = Object.keys(row);
 	if (!columns.length) return false;
@@ -166,19 +174,53 @@ async function insertRow(tx, table, original, householdId, targetOwner) {
 	const names = columns.map(quotedIdentifier).join(', ');
 	const values = columns.map((column) => row[column]);
 	const hasId = columns.includes('id');
+	const hasHousehold = columns.includes('household_id');
 	let conflict = 'on conflict do nothing';
 	if (collision === 'merge' && hasId) {
 		const assignments = columns
 			.filter((column) => column !== 'id')
 			.map((column) => `${quotedIdentifier(column)} = excluded.${quotedIdentifier(column)}`)
 			.join(', ');
-		if (assignments) conflict = `on conflict (id) do update set ${assignments}`;
+		if (assignments) {
+			const sameHousehold = hasHousehold
+				? ` where ${quotedIdentifier(table)}."household_id" = excluded."household_id"`
+				: '';
+			conflict = `on conflict (id) do update set ${assignments}${sameHousehold}`;
+		}
 	}
 	const result = await tx.unsafe(
 		`insert into ${quotedIdentifier(table)} (${names}) values (${placeholders}) ${conflict} returning 1`,
 		values
 	);
+	if (collision === 'merge' && hasId && hasHousehold && result.length === 0) {
+		const existing = await tx.unsafe(
+			`select household_id::text as household_id from ${quotedIdentifier(table)} where id = $1`,
+			[row.id]
+		);
+		if (existing[0] && existing[0].household_id !== householdId) {
+			throw new Error(`refusing to move ${table} ${row.id} from another household`);
+		}
+	}
 	return result.length > 0;
+}
+
+/** Parents must exist before child rows satisfy tasks.parent_task_id. */
+function orderTaskRows(rows) {
+	const pending = new Map(rows.map((row) => [row.id, row]));
+	const ordered = [];
+	while (pending.size) {
+		let moved = 0;
+		for (const [id, row] of pending) {
+			if (row.parent_task_id && pending.has(row.parent_task_id)) continue;
+			ordered.push(row);
+			pending.delete(id);
+			moved++;
+		}
+		if (!moved) {
+			throw new Error(`task parent cycle in export: ${[...pending.keys()].slice(0, 5).join(', ')}`);
+		}
+	}
+	return ordered;
 }
 
 async function resolveTarget() {
@@ -233,8 +275,21 @@ async function main() {
 	const target = await resolveTarget();
 	const rowsByTable = new Map();
 	for (const table of TABLES) rowsByTable.set(table, await jsonRows(table));
+	rowsByTable.set('tasks', orderTaskRows(rowsByTable.get('tasks')));
+	for (const attachment of rowsByTable.get('attachments')) {
+		const extension = attachment.content_type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
+		const mediaPath = `media/${attachment.sha256}.${extension}`;
+		if (!Object.hasOwn(manifest.files, mediaPath)) {
+			throw new Error(`manifest does not cover attachment payload: ${mediaPath}`);
+		}
+	}
 
 	const sourceUserCount = manifest.members?.length ?? 0;
+	if (sourceUserCount > 1 && !collapseUsers) {
+		throw new Error(
+			`export contains ${sourceUserCount} household members; add --collapse-users to explicitly map every source member to --owner-user, or use an operational database restore to preserve separate accounts`
+		);
+	}
 	console.log(`${apply ? 'Applying' : 'Validating'} portable export from ${manifest.exportedAt}`);
 	console.log(
 		`Target household: ${target.household.name}; owner mapping: ${sourceUserCount} source member(s) -> ${target.user.username ?? target.user.id}`

@@ -102,8 +102,8 @@ describe('home dashboard load', () => {
 		expect(data.calendarTasks).toHaveLength(100);
 		expect(mocks.listTasks).toHaveBeenCalledWith(mocks.sql, viewer, {
 			status: 'open',
-			dueFrom: '2026-08-31',
-			dueTo: '2026-10-11',
+			scheduledFrom: '2026-08-31',
+			scheduledTo: '2026-10-11',
 			order: 'due',
 			limit: 101
 		});

@@ -39,6 +39,12 @@ to the chosen target account. Existing rows are merged by stable ID by
 default. Use `--collision skip` to leave existing IDs untouched. Destructive
 replacement is intentionally not available in this command.
 
+An export with more than one household member is rejected by default because
+portable restore does not recreate user accounts. If deliberately consolidating
+all source members into the selected owner is acceptable, add
+`--collapse-users` to both the dry run and apply commands. Use an operational
+database restore instead when separate account identities must be preserved.
+
 The export is a directory so it can be streamed or copied without loading a
 large media archive into memory. Preserve the whole directory, including
 `manifest.json`, `data/`, `csv/`, `content/`, and `media/`. The manifest stores
