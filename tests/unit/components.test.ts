@@ -189,7 +189,13 @@ describe('page themes', () => {
 			'/library',
 			'/topics',
 			'/people',
-			'/wishlist'
+			'/wishlist',
+			'/store',
+			'/content',
+			'/system',
+			'/dashboard',
+			'/archive',
+			'/bin'
 		];
 
 		for (const path of paths) {
@@ -199,7 +205,7 @@ describe('page themes', () => {
 				accent: expect.any(String),
 				accentSoft: expect.any(String)
 			});
-			expect(theme?.image ?? theme?.icon).toBeTruthy();
+			expect(theme?.image ?? theme?.icon ?? theme?.mark).toBeTruthy();
 		}
 	});
 });

@@ -78,8 +78,8 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		label: 'CREATE',
 		color: '#b6b58d',
 		items: [
-			{ label: 'Store', icon: 'projects' },
-			{ label: 'Content', icon: 'journal' }
+			{ label: 'Store', icon: 'projects', href: '/store' },
+			{ label: 'Content', icon: 'journal', href: '/content' }
 		]
 	},
 	{
@@ -87,10 +87,10 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		label: 'BACK END',
 		color: '#a7a5a1',
 		items: [
-			{ label: 'System', icon: 'areas' },
-			{ label: 'Dashboard', icon: 'audit' },
-			{ label: 'Archive', icon: 'projects' },
-			{ label: 'Bin', icon: 'inbox' }
+			{ label: 'System', icon: 'areas', href: '/system' },
+			{ label: 'Dashboard', icon: 'audit', href: '/dashboard' },
+			{ label: 'Archive', icon: 'projects', href: '/archive' },
+			{ label: 'Bin', icon: 'inbox', href: '/bin' }
 		]
 	}
 ];

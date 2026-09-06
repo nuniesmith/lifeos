@@ -449,6 +449,215 @@ const PAGES: Record<string, WorkspacePageConfig> = {
 				]
 			}
 		]
+	},
+	store: {
+		title: 'Store',
+		description: 'A home for the work of making, listing, and growing the things you sell.',
+		actions: [{ label: 'Open projects', href: '/projects' }],
+		sections: [
+			{
+				title: 'Keep the shop moving',
+				body: 'The Etsy Store Manager export gives this space a clear home for products, orders, and the work behind them.',
+				accent: '#d89276',
+				items: [
+					{
+						symbol: '▱',
+						label: 'Listings & ideas',
+						body: 'Keep products, variations, and the next listing visible.',
+						href: '/projects'
+					},
+					{
+						symbol: '✓',
+						label: 'Orders & fulfillment',
+						body: 'Give the small operational details somewhere to land.'
+					},
+					{
+						symbol: '✎',
+						label: 'Shop content',
+						body: 'Connect product work to the words and images that help it sell.',
+						href: '/content'
+					}
+				]
+			}
+		]
+	},
+	content: {
+		title: 'Content',
+		description:
+			'A calm place for ideas, drafts, publishing, and the creative work that supports the rest of life.',
+		actions: [{ label: 'Open projects', href: '/projects' }],
+		sections: [
+			{
+				title: 'Make the work findable',
+				body: 'The Content Creation export becomes a simple studio: collect the idea, shape the draft, and decide what happens next.',
+				accent: '#caa071',
+				items: [
+					{
+						symbol: '✦',
+						label: 'Ideas & prompts',
+						body: 'Capture the spark before it turns into another open loop.',
+						href: '/inbox'
+					},
+					{
+						symbol: '✎',
+						label: 'Drafts in progress',
+						body: 'Keep active pieces connected to a clear next step.',
+						href: '/projects'
+					},
+					{
+						symbol: '↗',
+						label: 'Publishing plan',
+						body: 'Make room for the cadence that feels sustainable.'
+					}
+				]
+			}
+		]
+	},
+	system: {
+		title: 'System',
+		description:
+			'The structure underneath Life OS: accounts, data, maintenance, and the small details that keep it dependable.',
+		sections: [
+			{
+				title: 'Keep the engine healthy',
+				body: 'A quiet place to check the foundation without letting maintenance take over the workspace.',
+				accent: '#a7a5a1',
+				items: [
+					{
+						symbol: '⚙',
+						label: 'Account & credentials',
+						body: 'Manage sign-in details and security settings.',
+						href: '/account/credentials'
+					},
+					{
+						symbol: '⌁',
+						label: 'Data & imports',
+						body: 'Keep the source material and the working records in step.'
+					},
+					{
+						symbol: '◌',
+						label: 'System status',
+						body: 'A future home for backups, health checks, and maintenance notes.'
+					}
+				]
+			},
+			{
+				title: 'Core records',
+				body: 'The records most of the workspace is built around.',
+				accent: '#8fa8c2',
+				items: [
+					{ symbol: '☑', label: 'Tasks', body: 'Actions and commitments.', href: '/tasks' },
+					{ symbol: '▱', label: 'Projects', body: 'Work with a finish line.', href: '/projects' },
+					{ symbol: '🌿', label: 'Life areas', body: 'The standing parts of life.', href: '/areas' }
+				]
+			}
+		]
+	},
+	dashboard: {
+		title: 'Dashboard',
+		description:
+			'A map of the spaces that make up your Life OS, with a clear path back to each one.',
+		sections: [
+			{
+				title: 'Start with today',
+				body: 'The dashboard is the overview; the linked spaces hold the detail.',
+				accent: '#8fa8c2',
+				items: [
+					{ symbol: '☀', label: 'Home', body: 'See today at a glance.', href: '/' },
+					{ symbol: '☑', label: 'Tasks', body: 'Choose the next action.', href: '/tasks' },
+					{ symbol: '📓', label: 'Journal', body: 'Keep the daily log moving.', href: '/journal' },
+					{ symbol: '◎', label: 'Review', body: 'Notice what needs attention.', href: '/review' }
+				]
+			},
+			{
+				title: 'Master dashboards',
+				body: 'The larger views for planning, reflection, life, and knowledge.',
+				accent: '#a7a5a1',
+				items: [
+					{
+						symbol: '🎯',
+						label: 'Direction',
+						body: 'Goals, habits, and perspectives.',
+						href: '/goals'
+					},
+					{ symbol: '🌿', label: 'Life', body: 'Areas, health, food, and more.', href: '/areas' },
+					{
+						symbol: '📚',
+						label: 'Knowledge',
+						body: 'Ideas, books, and connections.',
+						href: '/knowledge'
+					},
+					{ symbol: '✎', label: 'Create', body: 'Store and content work.', href: '/content' }
+				]
+			}
+		]
+	},
+	archive: {
+		title: 'Archive',
+		description:
+			'A quieter place for completed, paused, and inactive records that are still worth keeping.',
+		sections: [
+			{
+				title: 'Put things away with intention',
+				body: 'Archived does not mean forgotten. It means the active workspace can stay clear.',
+				accent: '#c6a16c',
+				items: [
+					{
+						symbol: '☑',
+						label: 'Completed tasks',
+						body: 'Review work that is finished.',
+						href: '/tasks?view=done'
+					},
+					{
+						symbol: '▱',
+						label: 'Archived projects',
+						body: 'Keep the history without the noise.',
+						href: '/projects?view=archived'
+					},
+					{
+						symbol: '◎',
+						label: 'Archived goals',
+						body: 'Remember directions that have changed.',
+						href: '/goals?view=archived'
+					},
+					{
+						symbol: '🌿',
+						label: 'Archived areas',
+						body: 'Retain the context for later.',
+						href: '/areas?view=archived'
+					}
+				]
+			}
+		]
+	},
+	bin: {
+		title: 'Bin',
+		description: 'A holding place for records that no longer belong in active views.',
+		sections: [
+			{
+				title: 'Clear without rushing',
+				body: 'The Tasks Bin export gives this space a home while the permanent delete and restore workflows are built out.',
+				accent: '#b58bad',
+				items: [
+					{
+						symbol: '⌫',
+						label: 'Dropped tasks',
+						body: 'Keep a record of work you consciously chose not to carry forward.',
+						href: '/tasks?view=done'
+					},
+					{
+						symbol: '↶',
+						label: 'Restore later',
+						body: 'A future restore flow can bring an item back without losing its history.'
+					},
+					{
+						symbol: '✦',
+						label: 'Keep the workspace light',
+						body: 'Use the bin as a pause between deciding and permanently removing.'
+					}
+				]
+			}
+		]
 	}
 };
 

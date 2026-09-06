@@ -128,6 +128,42 @@ const THEMES: Record<string, PageTheme> = {
 		accent: '#cf819a',
 		accentSoft: '#512d3c'
 	},
+	store: {
+		icon: '/images/pages/store.png',
+		alt: 'A warm illustrated shop icon for the store workspace.',
+		accent: '#d89276',
+		accentSoft: '#50302d'
+	},
+	content: {
+		icon: '/images/pages/content.png',
+		alt: 'A warm illustrated pencil icon for the content workspace.',
+		accent: '#caa071',
+		accentSoft: '#513a29'
+	},
+	system: {
+		icon: '/images/pages/system.png',
+		alt: 'A soft illustrated gear icon for system settings and maintenance.',
+		accent: '#a7a5a1',
+		accentSoft: '#373737'
+	},
+	dashboard: {
+		alt: 'A quiet blue workspace for seeing the whole Life OS at a glance.',
+		accent: '#8fa8c2',
+		accentSoft: '#293b4b',
+		mark: '▦'
+	},
+	archive: {
+		icon: '/images/pages/archive.png',
+		alt: 'A warm illustrated archive box for completed and inactive records.',
+		accent: '#c6a16c',
+		accentSoft: '#4e3926'
+	},
+	bin: {
+		alt: 'A muted mauve workspace for records that no longer belong in active views.',
+		accent: '#b58bad',
+		accentSoft: '#443344',
+		mark: '⌫'
+	},
 	quickDrop: {
 		image: '/images/pages/quick-drop.png',
 		alt: 'Lavender and cream banner for quickly capturing ideas.',
@@ -164,5 +200,11 @@ export function pageThemeFor(pathname: string): PageTheme | null {
 	if (pathname.startsWith('/topics')) return THEMES.topics!;
 	if (pathname.startsWith('/people')) return THEMES.people!;
 	if (pathname.startsWith('/wishlist')) return THEMES.wishlist!;
+	if (pathname.startsWith('/store')) return THEMES.store!;
+	if (pathname.startsWith('/content')) return THEMES.content!;
+	if (pathname.startsWith('/system')) return THEMES.system!;
+	if (pathname.startsWith('/dashboard')) return THEMES.dashboard!;
+	if (pathname.startsWith('/archive')) return THEMES.archive!;
+	if (pathname.startsWith('/bin')) return THEMES.bin!;
 	return null;
 }
