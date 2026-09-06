@@ -257,8 +257,8 @@ test.describe('on a desktop', () => {
 		await page.getByRole('button', { name: 'Open sidebar' }).click();
 		const side = page.getByRole('navigation', { name: 'Sections' });
 		await expect(side.getByRole('link', { name: 'Tasks' })).toBeVisible();
-		await expect(side.getByRole('link', { name: 'People' })).toHaveCount(0);
-		await expect(side.getByRole('link', { name: 'Audit' })).toHaveCount(0);
+		await expect(side.locator('a[href="/admin/people"]')).toHaveCount(0);
+		await expect(side.locator('a[href="/admin/audit"]')).toHaveCount(0);
 	});
 
 	test('the sidebar shows admin links to an admin', async ({ page }) => {
@@ -267,8 +267,8 @@ test.describe('on a desktop', () => {
 		await signIn(page, ADMIN.username);
 		await page.getByRole('button', { name: 'Open sidebar' }).click();
 		const side = page.getByRole('navigation', { name: 'Sections' });
-		await expect(side.getByRole('link', { name: 'People' })).toBeVisible();
-		await expect(side.getByRole('link', { name: 'Audit' })).toBeVisible();
+		await expect(side.locator('a[href="/admin/people"]')).toBeVisible();
+		await expect(side.locator('a[href="/admin/audit"]')).toBeVisible();
 	});
 
 	test('the sidebar opens the same quick-add sheet', async ({ page }) => {
