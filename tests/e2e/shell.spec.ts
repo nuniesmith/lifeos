@@ -102,11 +102,11 @@ test.describe('on a phone', () => {
 	test('the shell renders after signing in', async ({ page }) => {
 		await signIn(page, MEMBER.username);
 
-		await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Life OS', level: 1 })).toBeVisible();
 		// The shell chrome, not just the page.
 		await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Quick add' })).toBeVisible();
-		// The sidebar is the wide-viewport navigation and must not be here.
+		// Home starts with its directory collapsed, leaving room for the cover.
 		await expect(page.getByRole('navigation', { name: 'Sections' })).toBeHidden();
 	});
 
@@ -214,25 +214,47 @@ test.describe('on a phone', () => {
 		// move, or every swipe on a phone fights the layout.
 		expect(overflow).toBeLessThanOrEqual(0);
 	});
+
+	test('the theme toggle switches and remembers light mode', async ({ page }) => {
+		await signIn(page, MEMBER.username);
+
+		const toggle = page.getByRole('button', { name: 'Switch to light theme' });
+		await expect(toggle).toBeVisible();
+		await toggle.click();
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+		await expect(page.getByRole('button', { name: 'Switch to dark theme' })).toBeVisible();
+
+		await page.reload();
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+		await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+	});
 });
 
 test.describe('on a desktop', () => {
 	test.use({ viewport: DESKTOP });
 
-	test('the sidebar replaces the bottom bar', async ({ page }) => {
+	test('home starts full width and its sidebar can be opened and closed', async ({ page }) => {
 		await signIn(page, MEMBER.username);
 
 		const side = page.getByRole('navigation', { name: 'Sections' });
-		await expect(side).toBeVisible();
+		await expect(side).toBeHidden();
 		await expect(page.getByRole('navigation', { name: 'Main' })).toBeHidden();
+		await page.getByRole('button', { name: 'Open sidebar' }).click();
+		await expect(side).toBeVisible();
 
 		for (const label of ['Today', 'Tasks', 'Habits', 'Journal', 'Projects', 'Areas', 'Goals']) {
 			await expect(side.getByRole('link', { name: label })).toBeVisible();
 		}
+		await expect(side.getByRole('link', { name: 'Calendar', exact: true })).toHaveCount(0);
+		await expect(side.getByText('Calendar')).toContainText('Upcoming');
+		await page.getByRole('button', { name: 'Close sidebar' }).click();
+		await expect(side).toBeHidden();
 	});
 
 	test('the sidebar hides admin links from a member', async ({ page }) => {
 		await signIn(page, MEMBER.username);
+		await page.getByRole('button', { name: 'Open sidebar' }).click();
 		const side = page.getByRole('navigation', { name: 'Sections' });
 		await expect(side.getByRole('link', { name: 'Tasks' })).toBeVisible();
 		await expect(side.getByRole('link', { name: 'People' })).toHaveCount(0);
@@ -243,6 +265,7 @@ test.describe('on a desktop', () => {
 		// A separate test rather than a sign-out and back in: logout is
 		// POST-only by design, and each test already gets its own context.
 		await signIn(page, ADMIN.username);
+		await page.getByRole('button', { name: 'Open sidebar' }).click();
 		const side = page.getByRole('navigation', { name: 'Sections' });
 		await expect(side.getByRole('link', { name: 'People' })).toBeVisible();
 		await expect(side.getByRole('link', { name: 'Audit' })).toBeVisible();
@@ -250,6 +273,7 @@ test.describe('on a desktop', () => {
 
 	test('the sidebar opens the same quick-add sheet', async ({ page }) => {
 		await signIn(page, MEMBER.username);
+		await page.getByRole('button', { name: 'Open sidebar' }).click();
 
 		await page
 			.getByRole('navigation', { name: 'Sections' })
@@ -260,11 +284,29 @@ test.describe('on a desktop', () => {
 
 	test('the current section is marked, and only one of them', async ({ page }) => {
 		await signIn(page, MEMBER.username);
+		await page.getByRole('button', { name: 'Open sidebar' }).click();
 
 		const current = page
 			.getByRole('navigation', { name: 'Sections' })
 			.locator('[aria-current="page"]');
 		await expect(current).toHaveCount(1);
-		await expect(current).toHaveText('Today');
+		await expect(current).toHaveText('Home Today');
+	});
+
+	test('workspace capture shortcuts select the requested kind', async ({ page }) => {
+		await signIn(page, MEMBER.username);
+		await page.locator('summary').filter({ hasText: 'Quick Capture' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Quick add' });
+		for (const shortcut of [
+			['New note', 'note'],
+			['New journal entry', 'journal'],
+			['New task', 'task']
+		] as const) {
+			await page.getByRole('button', { name: shortcut[0], exact: true }).click();
+			await expect(dialog).toBeVisible();
+			await expect(dialog.getByLabel('Add as')).toHaveValue(shortcut[1]);
+			await page.keyboard.press('Escape');
+			await expect(dialog).toBeHidden();
+		}
 	});
 });

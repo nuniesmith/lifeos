@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Button from './Button.svelte';
 	import ErrorState from './ErrorState.svelte';
 	import Field from './Field.svelte';
@@ -10,6 +11,8 @@
 	interface Props {
 		/** Bindable so the sidebar's own "Quick add" can open the same sheet. */
 		open?: boolean;
+		/** Allows workspace shortcuts to choose the capture type. */
+		kind?: string;
 		/**
 		 * The capture endpoint. Overridable mainly so a test can point it
 		 * server-side validation; this component only needs somewhere to POST
@@ -19,7 +22,11 @@
 		endpoint?: string;
 	}
 
-	let { open = $bindable(false), endpoint = '/api/quick-add' }: Props = $props();
+	let {
+		open = $bindable(false),
+		kind = $bindable('task'),
+		endpoint = '/api/quick-add'
+	}: Props = $props();
 
 	const KINDS = [
 		{ value: 'task', label: 'Task' },
@@ -30,12 +37,21 @@
 		// on Today.
 	];
 
-	let kind = $state('task');
 	let title = $state('');
 	let detail = $state('');
 	let saving = $state(false);
 	let error = $state<string | undefined>();
 	let titleEl = $state<HTMLInputElement>();
+
+	onMount(() => {
+		const openFromWorkspace = (event: Event) => {
+			const requested = (event as CustomEvent<{ kind?: string }>).detail?.kind;
+			kind = requested && KINDS.some((option) => option.value === requested) ? requested : 'task';
+			open = true;
+		};
+		window.addEventListener('lifeos:quick-add', openFromWorkspace);
+		return () => window.removeEventListener('lifeos:quick-add', openFromWorkspace);
+	});
 
 	/**
 	 * Focus the text box as the sheet opens.

@@ -1,10 +1,17 @@
 import { fail } from '@sveltejs/kit';
 import {
+	addDays,
 	agenda,
+	countTasks,
 	habitSummaries,
+	listDailyLogs,
+	listGoals,
 	listHabits,
+	listProjects,
+	listTasks,
 	logHabit,
 	unlogHabit,
+	upcomingImportantDates,
 	updateTask
 } from '$lib/server/repositories';
 import { householdToday } from '$lib/server/repositories/base';
@@ -22,24 +29,76 @@ import type { Actions, PageServerLoad } from './$types';
  */
 export const load: PageServerLoad = async ({ locals }) => {
 	const viewer = await requireViewer(locals.user);
-	const today = await householdToday(sql, viewer.householdId);
+	const [today, households] = await Promise.all([
+		householdToday(sql, viewer.householdId),
+		sql<{ timezone: string }[]>`
+			select timezone from households where id = ${viewer.householdId}::uuid
+		`
+	]);
+	const timezone = households[0]?.timezone;
+	if (!timezone) throw new Error('household not found');
+
+	// Load the six-week month grid, including its leading and trailing days.
+	// Day strings stay independent of the runtime's local timezone.
+	const firstOfMonth = `${today.slice(0, 7)}-01`;
+	const calendarFrom = addDays(firstOfMonth, -new Date(`${firstOfMonth}T00:00:00Z`).getUTCDay());
+	const calendarRange = { from: calendarFrom, to: addDays(calendarFrom, 41) };
 
 	// `assignee: 'me'` includes unowned household tasks, which belong to
 	// everyone — a shared errand should appear on both people's Today.
-	const board = await agenda(sql, viewer, { today, assignee: 'me' });
-
-	const habits = await listHabits(sql, viewer, { activeOnly: true });
-	const summaries = await habitSummaries(sql, viewer, {
-		from: today,
-		to: today,
-		today,
-		filters: { activeOnly: true }
-	});
+	const [
+		board,
+		habits,
+		summaries,
+		recentJournal,
+		upcomingDates,
+		activeProjects,
+		activeGoals,
+		inboxCount,
+		calendarRows
+	] = await Promise.all([
+		agenda(sql, viewer, { today, assignee: 'me' }),
+		listHabits(sql, viewer, { activeOnly: true }),
+		habitSummaries(sql, viewer, {
+			from: today,
+			to: today,
+			today,
+			filters: { activeOnly: true }
+		}),
+		// Journal previews are always this person's own entries, even when
+		// another household member has chosen to share a journal entry.
+		listDailyLogs(sql, viewer, { ownerUserId: viewer.userId, to: today, limit: 3 }),
+		upcomingImportantDates(sql, viewer, { today, days: 30, limit: 4 }),
+		listProjects(sql, viewer, { status: 'active', order: 'due', limit: 4 }),
+		listGoals(sql, viewer, { status: 'active', order: 'target', limit: 4 }),
+		countTasks(sql, viewer, { status: 'open', projectId: null }),
+		// The month calendar shows readable household work, including shared
+		// tasks assigned to the other member. Fetch one extra to disclose a cap.
+		listTasks(sql, viewer, {
+			status: 'open',
+			dueFrom: calendarRange.from,
+			dueTo: calendarRange.to,
+			order: 'due',
+			limit: 101
+		})
+	]);
 
 	const summaryFor = new Map(summaries.map((s) => [s.habitId, s]));
 
 	return {
 		today,
+		timezone,
+		dailyLog: recentJournal.find((entry) => entry.onDate === today) ?? null,
+		recentJournal,
+		upcomingDates,
+		activeProjects,
+		activeGoals,
+		// Includes scheduled work; this is "tasks without a project", not
+		// a count of tasks with no date or other organisation.
+		inboxCount,
+		calendarRange,
+		calendarTasks: calendarRows.slice(0, 100),
+		calendarTruncated: calendarRows.length > 100,
 		week: board.week,
 		overdue: board.overdue,
 		dueToday: board.dueToday,

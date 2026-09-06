@@ -1,39 +1,35 @@
 /*
  * LifeOS design tokens.
  *
- * Three theme states must all resolve: an explicit light choice, an explicit
- * dark choice, and the default where nothing is stamped and only the OS
- * preference distinguishes them. Every colour is defined on bare :root first
- * and only *redefined* in the two overrides, so no token can end up with its
- * sole definition behind a media query.
+ * The workspace defaults to warm charcoal. An explicit light theme remains
+ * available through data-theme; an explicit dark choice uses the default.
  */
 
 :root {
-	/* Neutrals carry a slight cool bias so they sit with the accent rather
-	   than reading as unconsidered grey. */
-	--c-bg: #fbfbfd;
-	--c-surface: #ffffff;
-	--c-surface-alt: #f3f4f8;
-	--c-border: #e2e4ec;
-	--c-text: #1b1d26;
-	--c-text-muted: #5f6478;
-	--c-accent: #4a5bd4;
-	--c-accent-text: #ffffff;
+	color-scheme: dark;
+	--c-bg: #191918;
+	--c-surface: #20201e;
+	--c-surface-alt: #282825;
+	--c-border: #343431;
+	--c-text: #e6e4df;
+	--c-text-muted: #a5a39d;
+	--c-accent: #c7b995;
+	--c-accent-text: #1c1c1a;
 
 	/* Semantic status, kept distinct from the accent. */
-	--c-ok: #1f7a54;
-	--c-warn: #8a5a00;
-	--c-crit: #a72b30;
+	--c-ok: #91bd99;
+	--c-warn: #d5b37b;
+	--c-crit: #d98f88;
 
 	/* Shell surfaces. The navigation bars sit over scrolling content, so they
 	   need an opaque ground of their own rather than inheriting the page's. */
-	--c-nav-bg: #ffffff;
-	--c-overlay: rgb(20 21 28 / 0.45);
-	--c-skeleton: #e7e9f1;
+	--c-nav-bg: #1e1e1c;
+	--c-overlay: rgb(0 0 0 / 0.6);
+	--c-skeleton: #30302c;
 	/* A tint of the accent, resolved to an opaque colour rather than an alpha
 	   so it stays legible when it overlaps a nav bar or a dialog. */
-	--c-accent-soft: #eceefc;
-	--shadow-lg: 0 2px 6px rgb(16 18 32 / 0.08), 0 16px 32px rgb(16 18 32 / 0.1);
+	--c-accent-soft: #343229;
+	--shadow-lg: 0 2px 6px rgb(0 0 0 / 0.3), 0 16px 32px rgb(0 0 0 / 0.3);
 
 	--font-sans:
 		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
@@ -56,11 +52,11 @@
 	--sp-8: 2rem;
 	--sp-10: 2.5rem;
 
-	--radius: 10px;
+	--radius: 7px;
 	--radius-sm: 6px;
 	--radius-lg: 16px;
 	--radius-pill: 999px;
-	--shadow: 0 1px 2px rgb(16 18 32 / 0.06), 0 4px 12px rgb(16 18 32 / 0.04);
+	--shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 4px 12px rgb(0 0 0 / 0.15);
 
 	--measure: 68ch;
 
@@ -71,7 +67,7 @@
 	   controls further down. */
 	--tap: 44px;
 	--nav-h: 3.75rem;
-	--sidebar-w: 12.5rem;
+	--sidebar-w: 14.5rem;
 	/* The breakpoint at which the bottom bar becomes a sidebar. Kept here as
 	   documentation; media queries cannot read a custom property, so the same
 	   48rem appears literally in the shell components. */
@@ -88,46 +84,25 @@
 	--ease: cubic-bezier(0.2, 0.6, 0.3, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-	:root:not([data-theme='light']) {
-		--c-bg: #14151c;
-		--c-surface: #1c1e27;
-		--c-surface-alt: #23262f;
-		--c-border: #313545;
-		--c-text: #e8e9f0;
-		--c-text-muted: #a0a5ba;
-		--c-accent: #8b98f0;
-		--c-accent-text: #14151c;
-		--c-ok: #5cc699;
-		--c-warn: #e0ac52;
-		--c-crit: #f0868b;
-		--c-nav-bg: #1c1e27;
-		--c-overlay: rgb(0 0 0 / 0.6);
-		--c-skeleton: #2b2f3b;
-		--c-accent-soft: #262a3f;
-		--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
-		--shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 16px 32px rgb(0 0 0 / 0.45);
-	}
-}
-
-:root[data-theme='dark'] {
-	--c-bg: #14151c;
-	--c-surface: #1c1e27;
-	--c-surface-alt: #23262f;
-	--c-border: #313545;
-	--c-text: #e8e9f0;
-	--c-text-muted: #a0a5ba;
-	--c-accent: #8b98f0;
-	--c-accent-text: #14151c;
-	--c-ok: #5cc699;
-	--c-warn: #e0ac52;
-	--c-crit: #f0868b;
-	--c-nav-bg: #1c1e27;
-	--c-overlay: rgb(0 0 0 / 0.6);
-	--c-skeleton: #2b2f3b;
-	--c-accent-soft: #262a3f;
-	--shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
-	--shadow-lg: 0 2px 6px rgb(0 0 0 / 0.5), 0 16px 32px rgb(0 0 0 / 0.45);
+:root[data-theme='light'] {
+	color-scheme: light;
+	--c-bg: #faf9f6;
+	--c-surface: #ffffff;
+	--c-surface-alt: #f0efe9;
+	--c-border: #deddd5;
+	--c-text: #292925;
+	--c-text-muted: #6d6b62;
+	--c-accent: #75613b;
+	--c-accent-text: #ffffff;
+	--c-ok: #3d7250;
+	--c-warn: #856025;
+	--c-crit: #a3463f;
+	--c-nav-bg: #f3f2ed;
+	--c-overlay: rgb(25 25 20 / 0.4);
+	--c-skeleton: #e7e5db;
+	--c-accent-soft: #eee8d9;
+	--shadow: 0 1px 2px rgb(25 25 20 / 0.06), 0 4px 12px rgb(25 25 20 / 0.04);
+	--shadow-lg: 0 2px 6px rgb(25 25 20 / 0.08), 0 16px 32px rgb(25 25 20 / 0.1);
 }
 
 *,

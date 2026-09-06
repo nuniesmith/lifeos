@@ -1,198 +1,226 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import Icon from './Icon.svelte';
-	import { APP_DESTINATIONS, adminDestinationsFor, appPath, isCurrent } from './nav';
+	import { adminDestinationsFor, appPath, isCurrent } from './nav';
+	import { WORKSPACE_GROUPS } from './workspace-nav';
 
 	interface Props {
-		/** The signed-in user, from the (app) layout's server load. */
 		user: { displayName: string; role: string } | null | undefined;
-		/** The current path, so the open section can be marked. */
 		pathname: string;
 		onQuickAdd: () => void;
 	}
 
 	let { user, pathname, onQuickAdd }: Props = $props();
-
 	const adminLinks = $derived(adminDestinationsFor(user?.role));
 </script>
 
-<!--
-	The wide-viewport navigation. Hidden below 48rem, where BottomNav takes
-	over: two components rather than one that changes shape, because a sidebar
-	and a bottom bar want genuinely different markup order — but both read the
-	same destination list, so they cannot drift apart.
--->
 <nav class="side" aria-label="Sections">
-	<a class="brand" href={resolve('/')}>LifeOS</a>
-
+	<a class="brand" href={resolve('/')}>Life OS<span>Personal workspace</span></a>
 	<button type="button" class="quick" onclick={onQuickAdd}>
-		<Icon name="plus" size={18} />
+		<Icon name="plus" size={17} />
 		Quick add
 	</button>
+	<a
+		class="home destination"
+		class:current={isCurrent(pathname, '/')}
+		href={resolve('/')}
+		aria-current={isCurrent(pathname, '/') ? 'page' : undefined}
+	>
+		<Icon name="today" size={17} />
+		Home
+		<span class="today-label">Today</span>
+	</a>
 
-	<ul>
-		{#each APP_DESTINATIONS as d (d.href)}
-			{@const current = isCurrent(pathname, d.href)}
-			<li>
-				<a
-					href={resolve(appPath(d.href))}
-					aria-current={current ? 'page' : undefined}
-					class:current
-				>
-					<Icon name={d.icon} size={18} />
-					{d.label}
-				</a>
-			</li>
-		{/each}
-	</ul>
+	{#each WORKSPACE_GROUPS as group (group.id)}
+		<section aria-labelledby={`nav-${group.id}`}>
+			<h2 id={`nav-${group.id}`} style:color={group.color}>
+				<span class="group-dot" aria-hidden="true"></span>{group.label}
+			</h2>
+			<ul>
+				{#each group.items as item (item.label)}
+					<li>
+						{#if item.href}
+							{@const current = isCurrent(pathname, item.href)}
+							<a
+								class="destination"
+								class:current
+								href={resolve(appPath(item.href))}
+								aria-current={current ? 'page' : undefined}
+							>
+								<Icon name={item.icon} size={16} />
+								{item.label}
+							</a>
+						{:else}
+							<span class="destination upcoming">
+								<Icon name={item.icon} size={16} />
+								{item.label}<small>Upcoming</small>
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/each}
 
 	{#if adminLinks.length > 0}
-		<p class="group">Admin</p>
-		<ul>
-			{#each adminLinks as d (d.href)}
-				{@const current = isCurrent(pathname, d.href)}
-				<li>
-					<a
-						href={resolve(appPath(d.href))}
-						aria-current={current ? 'page' : undefined}
-						class:current
-					>
-						<Icon name={d.icon} size={18} />
-						{d.label}
-					</a>
-				</li>
-			{/each}
-		</ul>
+		<section aria-labelledby="nav-admin">
+			<h2 id="nav-admin">ADMIN</h2>
+			<ul>
+				{#each adminLinks as item (item.href)}
+					<li>
+						<a
+							class="destination"
+							class:current={isCurrent(pathname, item.href)}
+							href={resolve(appPath(item.href))}
+							aria-current={isCurrent(pathname, item.href) ? 'page' : undefined}
+						>
+							<Icon name={item.icon} size={16} />
+							{item.label}
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</section>
 	{/if}
 
 	<div class="account">
 		<a class="who" href={resolve('/account/credentials')}>{user?.displayName ?? 'Account'}</a>
 		<form method="POST" action="/logout">
-			<button type="submit">
-				<Icon name="signOut" size={16} />
-				Sign out
-			</button>
+			<button type="submit"><Icon name="signOut" size={16} />Sign out</button>
 		</form>
 	</div>
 </nav>
 
 <style>
 	.side {
-		display: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		padding: 1rem 0.75rem;
 	}
-
-	@media (min-width: 48rem) {
-		.side {
-			display: flex;
-			flex-direction: column;
-			gap: var(--sp-2);
-			/* Follows the page rather than scrolling away, and never taller
-			   than the viewport. */
-			position: sticky;
-			top: var(--sp-4);
-			max-height: calc(100dvh - var(--sp-8));
-			overflow-y: auto;
-		}
-	}
-
 	.brand {
-		font-size: var(--fs-lg);
-		font-weight: 700;
+		padding: 0.25rem 0.5rem 1rem;
 		color: var(--c-text);
+		font-size: 1rem;
+		font-weight: 650;
 		text-decoration: none;
-		padding: var(--sp-1) var(--sp-2);
 	}
-
+	.brand span {
+		display: block;
+		margin-top: 0.15rem;
+		color: var(--c-text-muted);
+		font-size: 0.69rem;
+		font-weight: 400;
+	}
 	.quick {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		gap: var(--sp-2);
-		margin: var(--sp-2) 0;
-		padding: 0 var(--sp-3);
-		border: none;
-		border-radius: var(--radius-sm);
-		background: var(--c-accent);
-		color: var(--c-accent-text);
-		font-size: var(--fs-sm);
-		font-weight: 600;
+		gap: 0.6rem;
+		margin-bottom: 0.35rem;
+		padding: 0 0.6rem;
+		min-height: 35px;
+		border: 1px solid var(--c-border);
+		border-radius: 4px;
+		background: var(--c-surface-alt);
+		color: var(--c-text);
+		font-size: 0.8rem;
 		cursor: pointer;
 	}
-
+	.quick:hover {
+		border-color: var(--c-text-muted);
+	}
 	ul {
+		list-style: none;
 		margin: 0;
 		padding: 0;
-		list-style: none;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
 	}
-
-	li a {
+	.destination {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-3);
-		min-height: var(--tap);
-		padding: 0 var(--sp-3);
-		border-radius: var(--radius-sm);
+		gap: 0.65rem;
+		min-height: 32px;
+		padding: 0.3rem 0.55rem;
+		border-radius: 4px;
 		color: var(--c-text-muted);
-		font-size: var(--fs-sm);
-		font-weight: 550;
+		font-size: 0.79rem;
 		text-decoration: none;
 	}
-	li a:hover {
+	a.destination:hover {
 		background: var(--c-surface-alt);
 		color: var(--c-text);
 	}
-
-	.current {
+	.destination.current {
 		background: var(--c-accent-soft);
-		color: var(--c-accent);
+		color: var(--c-text);
 	}
-
-	.group {
-		margin: var(--sp-4) 0 var(--sp-1);
-		padding: 0 var(--sp-3);
+	h2 {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 1.1rem 0 0.4rem;
+		padding: 0 0.55rem;
+		font-size: 0.61rem;
+		font-weight: 650;
+		letter-spacing: 0.13em;
+	}
+	.group-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: currentColor;
+	}
+	.today-label,
+	small {
+		margin-left: auto;
+		font-size: 0.58rem;
+		letter-spacing: 0.02em;
 		color: var(--c-text-muted);
-		font-size: var(--fs-xs);
-		font-weight: 700;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
 	}
-
+	.upcoming {
+		opacity: 0.68;
+	}
+	small {
+		opacity: 0.7;
+	}
 	.account {
-		margin-top: auto;
-		padding-top: var(--sp-4);
+		margin-top: 1.25rem;
+		padding-top: 0.8rem;
 		border-top: 1px solid var(--c-border);
 	}
-
 	.who {
 		display: block;
-		padding: 0 var(--sp-3);
+		padding: 0.25rem 0.55rem;
 		color: var(--c-text);
-		font-size: var(--fs-sm);
-		font-weight: 600;
+		font-size: 0.8rem;
+		font-weight: 550;
 		text-decoration: none;
 		overflow-wrap: anywhere;
 	}
-	.who:hover {
-		color: var(--c-accent);
-	}
-
 	.account button {
 		display: flex;
 		align-items: center;
-		gap: var(--sp-2);
+		gap: 0.6rem;
 		width: 100%;
-		padding: 0 var(--sp-3);
-		border: none;
+		min-height: 35px;
+		padding: 0 0.55rem;
+		border: 0;
 		background: none;
 		color: var(--c-text-muted);
-		font-size: var(--fs-sm);
-		text-align: left;
+		font-size: 0.75rem;
 		cursor: pointer;
 	}
 	.account button:hover {
 		color: var(--c-text);
+	}
+	@media (max-width: 47.999rem) {
+		.side {
+			max-height: 65dvh;
+			overflow-y: auto;
+		}
+		.destination,
+		.quick,
+		.account button {
+			min-height: 44px;
+		}
 	}
 </style>
