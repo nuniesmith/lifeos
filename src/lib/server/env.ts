@@ -61,6 +61,18 @@ const schema = z
 
 		LIFEOS_TIMEZONE: z.string().default('America/Toronto'),
 		LIFEOS_CURRENCY: z.string().length(3).default('CAD'),
+		// Weather is opt-in because coordinates are sensitive configuration and
+		// cannot be inferred safely from a timezone.
+		LIFEOS_WEATHER_LATITUDE: z.preprocess(
+			(value) => (value === undefined || value === '' ? undefined : Number(value)),
+			z.number().min(-90).max(90).optional()
+		),
+		LIFEOS_WEATHER_LONGITUDE: z.preprocess(
+			(value) => (value === undefined || value === '' ? undefined : Number(value)),
+			z.number().min(-180).max(180).optional()
+		),
+		LIFEOS_WEATHER_LABEL: z.string().min(1).max(120).default('Local forecast'),
+		LIFEOS_WEATHER_UNITS: z.enum(['metric', 'imperial']).default('metric'),
 
 		LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info')
 	})

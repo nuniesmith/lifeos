@@ -32,7 +32,7 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		label: 'PLAN',
 		color: '#a6b49a',
 		items: [
-			{ label: 'Calendar', icon: 'today' },
+			{ label: 'Calendar', icon: 'today', href: '/calendar' },
 			{ label: 'Projects', icon: 'projects', href: '/projects' },
 			{ label: 'Review', icon: 'check', href: '/review' }
 		]

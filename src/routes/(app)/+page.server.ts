@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import {
-	addDays,
 	agenda,
 	countTasks,
+	daysBetween,
 	habitSummaries,
 	listDailyLogs,
 	listGoals,
@@ -17,6 +17,8 @@ import {
 import { householdToday } from '$lib/server/repositories/base';
 import { sql } from '$lib/server/db';
 import { requireViewer } from '$lib/server/viewer';
+import { calendarWindowForMonth } from '$lib/server/calendar';
+import { getWeather } from '$lib/server/weather';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -40,9 +42,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	// Load the six-week month grid, including its leading and trailing days.
 	// Day strings stay independent of the runtime's local timezone.
-	const firstOfMonth = `${today.slice(0, 7)}-01`;
-	const calendarFrom = addDays(firstOfMonth, -new Date(`${firstOfMonth}T00:00:00Z`).getUTCDay());
-	const calendarRange = { from: calendarFrom, to: addDays(calendarFrom, 41) };
+	const calendarRange = calendarWindowForMonth(today.slice(0, 7));
 
 	// `assignee: 'me'` includes unowned household tasks, which belong to
 	// everyone — a shared errand should appear on both people's Today.
@@ -55,7 +55,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 		activeProjects,
 		activeGoals,
 		inboxCount,
-		calendarRows
+		calendarRows,
+		calendarDateRows,
+		weather
 	] = await Promise.all([
 		agenda(sql, viewer, { today, assignee: 'me' }),
 		listHabits(sql, viewer, { activeOnly: true }),
@@ -80,7 +82,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 			dueTo: calendarRange.to,
 			order: 'due',
 			limit: 101
-		})
+		}),
+		upcomingImportantDates(sql, viewer, {
+			today: calendarRange.from,
+			days: daysBetween(calendarRange.from, calendarRange.to),
+			limit: 200
+		}),
+		getWeather(timezone)
 	]);
 
 	const summaryFor = new Map(summaries.map((s) => [s.habitId, s]));
@@ -99,6 +107,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 		calendarRange,
 		calendarTasks: calendarRows.slice(0, 100),
 		calendarTruncated: calendarRows.length > 100,
+		calendarDates: calendarDateRows.map((item) => ({
+			id: item.record.id,
+			name: item.record.title,
+			day: item.nextOn
+		})),
+		weather,
 		week: board.week,
 		overdue: board.overdue,
 		dueToday: board.dueToday,

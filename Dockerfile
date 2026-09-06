@@ -60,6 +60,10 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 # server, at the one step that must not fail half-way.
 COPY --from=build --chown=node:node /app/migrations ./migrations
 COPY --from=build --chown=node:node /app/scripts/migrate.mjs ./scripts/migrate.mjs
+# Operator data mobility runs inside the same dependency/runtime boundary as
+# the app. It is invoked explicitly with `docker compose exec`, never at boot.
+COPY --from=build --chown=node:node /app/scripts/export-data.mjs ./scripts/export-data.mjs
+COPY --from=build --chown=node:node /app/scripts/restore-data.mjs ./scripts/restore-data.mjs
 
 USER node
 EXPOSE 3000

@@ -51,6 +51,7 @@ describe('nav destinations', () => {
 	it('lists every section the shell promises', () => {
 		expect(APP_DESTINATIONS.map((d) => d.label)).toEqual([
 			'Today',
+			'Calendar',
 			'Tasks',
 			'Habits',
 			'Journal',
@@ -108,7 +109,7 @@ describe('isCurrent', () => {
 });
 
 describe('SideNav', () => {
-	it('links implemented sections and marks the rest as upcoming', () => {
+	it('links every workspace section that now has a page', () => {
 		const { body } = render(SideNav, {
 			props: { user: member, pathname: '/', onQuickAdd: () => {} }
 		});
@@ -119,7 +120,7 @@ describe('SideNav', () => {
 		for (const item of sections.filter((item) => !item.href)) {
 			expect(body).toContain(item.label);
 		}
-		expect(body).toContain('Upcoming');
+		expect(body).not.toContain('Upcoming');
 	});
 
 	it('renders every destination once', () => {

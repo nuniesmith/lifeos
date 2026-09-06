@@ -74,3 +74,11 @@ cp .env.example .env    # fill in POSTGRES_PASSWORD and DATABASE_URL
 ```
 
 Nothing runs yet. Phase 1 sets up the SvelteKit skeleton, Docker, and CI.
+
+## Data mobility
+
+Portable application data can be exported and restored without carrying
+credentials or sessions. See [`docs/data-mobility.md`](docs/data-mobility.md)
+for the dry-run-first commands. The server's `scripts/backup.sh` remains the
+separate full PostgreSQL backup used before deploys and for operational
+recovery.

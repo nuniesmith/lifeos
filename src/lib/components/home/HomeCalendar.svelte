@@ -19,30 +19,34 @@
 
 	interface Props {
 		today: string;
+		month?: string;
 		tasks: CalendarTask[];
 		dates?: CalendarDate[];
 	}
 
-	let { today, tasks, dates = [] }: Props = $props();
-	let monthOffset = $state(0);
+	let { today, month = today.slice(0, 7), tasks, dates = [] }: Props = $props();
 	const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 	const pad = (value: number) => String(value).padStart(2, '0');
 	const dateKey = (date: Date) =>
 		`${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 
-	// Calendar arithmetic stays in UTC; `today` already reflects household time.
-	const month = $derived.by(() => {
-		const year = Number(today.slice(0, 4));
-		const monthNumber = Number(today.slice(5, 7));
-		return new Date(Date.UTC(year, monthNumber - 1 + monthOffset, 1));
-	});
+	// Calendar arithmetic stays in UTC; day strings are household wall-clock dates.
+	const monthDate = $derived(new Date(`${month}-01T00:00:00Z`));
 	const monthLabel = $derived(
-		month.toLocaleDateString('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+		monthDate.toLocaleDateString('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 	);
+	const monthKey = (offset: number) => {
+		const date = new Date(
+			Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + offset, 1)
+		);
+		return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
+	};
+	const previousMonth = $derived(monthKey(-1));
+	const nextMonth = $derived(monthKey(1));
 	const weeks = $derived.by(() => {
-		const year = month.getUTCFullYear();
-		const monthNumber = month.getUTCMonth();
-		const precedingDays = (month.getUTCDay() + 6) % 7;
+		const year = monthDate.getUTCFullYear();
+		const monthNumber = monthDate.getUTCMonth();
+		const precedingDays = (monthDate.getUTCDay() + 6) % 7;
 		const daysInMonth = new Date(Date.UTC(year, monthNumber + 1, 0)).getUTCDate();
 		const weekCount = Math.ceil((precedingDays + daysInMonth) / 7);
 
@@ -78,13 +82,13 @@
 			<h2 aria-live="polite">{monthLabel}</h2>
 		</div>
 		<div class="month-controls" aria-label="Calendar navigation">
-			<button class="today-button" type="button" onclick={() => (monthOffset = 0)}>Today</button>
-			<button type="button" aria-label="Previous month" onclick={() => (monthOffset -= 1)}>
+			<a class="today-button" href={resolve(appPath('/calendar'))}>Today</a>
+			<a href={resolve(appPath(`/calendar?month=${previousMonth}`))} aria-label="Previous month">
 				<span class="previous"><Icon name="chevron" size={16} /></span>
-			</button>
-			<button type="button" aria-label="Next month" onclick={() => (monthOffset += 1)}>
+			</a>
+			<a href={resolve(appPath(`/calendar?month=${nextMonth}`))} aria-label="Next month">
 				<Icon name="chevron" size={16} />
-			</button>
+			</a>
 		</div>
 	</header>
 
@@ -134,7 +138,7 @@
 	<footer>
 		<span><i class="legend-dot task-dot"></i> Tasks</span>
 		<span><i class="legend-dot date-dot"></i> Important dates</span>
-		<a href={resolve(appPath('/journal'))}>Open journal <span aria-hidden="true">↗</span></a>
+		<a href={resolve(appPath('/calendar'))}>Open calendar <span aria-hidden="true">↗</span></a>
 	</footer>
 </section>
 
@@ -179,7 +183,7 @@
 		gap: 0.1rem;
 	}
 
-	button {
+	.month-controls > a {
 		display: inline-flex;
 		min-width: 2.75rem;
 		align-items: center;
@@ -189,10 +193,10 @@
 		border-radius: var(--radius-sm);
 		background: transparent;
 		color: var(--c-text-muted);
-		cursor: pointer;
+		text-decoration: none;
 	}
 
-	button:hover {
+	.month-controls > a:hover {
 		background: var(--c-surface-alt);
 		color: var(--c-text);
 	}

@@ -12,14 +12,6 @@
 	const isDone = (status: string) => status === 'done' || status === 'dropped';
 	const openToday = $derived(data.dueToday.filter((task) => !isDone(task.status)).length);
 	const habitsDone = $derived(data.habits.filter((habit) => habit.doneToday).length);
-	const calendarDates = $derived(
-		data.upcomingDates.map((item) => ({
-			id: item.record.id,
-			name: item.record.title,
-			day: item.nextOn
-		}))
-	);
-
 	const quickCaptures: {
 		label: string;
 		icon: IconName;
@@ -328,24 +320,56 @@
 			<p class="section-note brown">The things Future Me would rather not be surprised by.</p>
 			<div class="horizon-grid">
 				<div>
-					<HomeCalendar today={data.today} tasks={data.calendarTasks} dates={calendarDates} />
+					<HomeCalendar
+						today={data.today}
+						month={data.today.slice(0, 7)}
+						tasks={data.calendarTasks}
+						dates={data.calendarDates}
+					/>
 					<p class="calendar-caption">
-						Scheduled household tasks and dates · <a href={resolve(appPath('/tasks?view=week'))}
-							>Open this week's tasks ↗</a
-						>
+						Scheduled household tasks and dates ·
+						<a href={resolve(appPath('/calendar'))}>Open full calendar ↗</a>
 					</p>
 				</div>
 				<div class="horizon-aside">
 					<section class="weather">
 						<h3>Weather</h3>
-						<div class="weather-card">
-							<span class="weather-symbol">☀</span>
-							<div>
-								<strong>A little look outside</strong>
-								<p>A local forecast will live here.</p>
-								<span class="soon-label">Weather connection coming soon</span>
+						{#if data.weather.status === 'ok' && data.weather.current}
+							<div class="weather-card">
+								<span class="weather-symbol" aria-hidden="true">{data.weather.current.icon}</span>
+								<div>
+									<strong>{data.weather.locationLabel}</strong>
+									<p class="weather-reading">
+										{Math.round(data.weather.current.temperature)}° · {data.weather.current.label}
+									</p>
+									<p class="weather-details">
+										Feels like {Math.round(data.weather.current.feelsLike)}° · Wind {Math.round(
+											data.weather.current.windSpeed
+										)}
+										{data.weather.units === 'metric' ? 'km/h' : 'mph'}
+									</p>
+									<span class="soon-label">Live forecast · Open-Meteo</span>
+								</div>
 							</div>
-						</div>
+						{:else if data.weather.status === 'not_configured'}
+							<div class="weather-card weather-setup">
+								<span class="weather-symbol" aria-hidden="true">☼</span>
+								<div>
+									<strong>Set your local forecast</strong>
+									<p>Add weather coordinates to the server environment.</p>
+									<span class="soon-label">LIFEOS_WEATHER_LATITUDE + LONGITUDE</span>
+								</div>
+							</div>
+						{:else}
+							<div class="weather-card weather-setup">
+								<span class="weather-symbol" aria-hidden="true">☁</span>
+								<div>
+									<strong>{data.weather.locationLabel}</strong>
+									<p>The forecast is taking a little longer than usual.</p>
+									<span class="soon-label">Try refreshing in a moment</span>
+								</div>
+							</div>
+						{/if}
 					</section>
 					<section class="important-dates">
 						<h3>Dates to remember</h3>
@@ -992,6 +1016,19 @@
 	.weather-card p {
 		margin: 4px 0 10px;
 		font-size: 0.78rem;
+	}
+	.weather-card .weather-reading {
+		margin-bottom: 3px;
+		font-size: 1.05rem;
+		font-variant-numeric: tabular-nums;
+	}
+	.weather-card .weather-details {
+		margin-bottom: 10px;
+		color: #625c50;
+		font-size: 0.7rem;
+	}
+	.weather-setup {
+		align-items: flex-start;
 	}
 	.soon-label {
 		display: inline-block;

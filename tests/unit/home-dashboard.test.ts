@@ -12,15 +12,17 @@ const mocks = vi.hoisted(() => ({
 	listHabits: vi.fn(),
 	listProjects: vi.fn(),
 	listTasks: vi.fn(),
-	upcomingImportantDates: vi.fn()
+	upcomingImportantDates: vi.fn(),
+	getWeather: vi.fn()
 }));
 
 vi.mock('$lib/server/db', () => ({ sql: mocks.sql }));
 vi.mock('$lib/server/viewer', () => ({ requireViewer: mocks.requireViewer }));
+vi.mock('$lib/server/weather', () => ({ getWeather: mocks.getWeather }));
 vi.mock('$lib/server/repositories/base', () => ({ householdToday: mocks.householdToday }));
 vi.mock('$lib/server/repositories', async () => {
-	const { addDays } = await import('$lib/server/repositories/dates');
-	return { ...mocks, addDays, logHabit: vi.fn(), unlogHabit: vi.fn(), updateTask: vi.fn() };
+	const { daysBetween } = await import('$lib/server/repositories/dates');
+	return { ...mocks, daysBetween, logHabit: vi.fn(), unlogHabit: vi.fn(), updateTask: vi.fn() };
 });
 
 import { load } from '../../src/routes/(app)/+page.server';
@@ -51,6 +53,14 @@ beforeEach(() => {
 		mocks[key].mockResolvedValue([]);
 	}
 	mocks.countTasks.mockResolvedValue(0);
+	mocks.getWeather.mockResolvedValue({
+		configured: false,
+		status: 'not_configured',
+		locationLabel: 'Local forecast',
+		units: 'metric',
+		current: null,
+		updatedAt: null
+	});
 });
 
 describe('home dashboard load', () => {
@@ -85,15 +95,15 @@ describe('home dashboard load', () => {
 		);
 		const data = await load(event);
 		expect(data).toMatchObject({
-			calendarRange: { from: '2026-08-30', to: '2026-10-10' },
+			calendarRange: { from: '2026-08-31', to: '2026-10-11' },
 			calendarTruncated: true
 		});
 		if (!data) throw new Error('dashboard did not load');
 		expect(data.calendarTasks).toHaveLength(100);
 		expect(mocks.listTasks).toHaveBeenCalledWith(mocks.sql, viewer, {
 			status: 'open',
-			dueFrom: '2026-08-30',
-			dueTo: '2026-10-10',
+			dueFrom: '2026-08-31',
+			dueTo: '2026-10-11',
 			order: 'due',
 			limit: 101
 		});
@@ -102,7 +112,7 @@ describe('home dashboard load', () => {
 	it('keeps the month grid correct across a year boundary', async () => {
 		mocks.householdToday.mockResolvedValue('2027-01-01');
 		expect(await load(event)).toMatchObject({
-			calendarRange: { from: '2026-12-27', to: '2027-02-06' },
+			calendarRange: { from: '2026-12-28', to: '2027-02-07' },
 			calendarTruncated: false
 		});
 	});

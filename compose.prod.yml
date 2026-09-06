@@ -42,6 +42,10 @@ services:
       LIFEOS_UPLOAD_DIR: /srv/lifeos/data/uploads
       LIFEOS_TIMEZONE: ${LIFEOS_TIMEZONE:-America/Toronto}
       LIFEOS_CURRENCY: ${LIFEOS_CURRENCY:-CAD}
+      LIFEOS_WEATHER_LATITUDE: ${LIFEOS_WEATHER_LATITUDE:-}
+      LIFEOS_WEATHER_LONGITUDE: ${LIFEOS_WEATHER_LONGITUDE:-}
+      LIFEOS_WEATHER_LABEL: ${LIFEOS_WEATHER_LABEL:-Local forecast}
+      LIFEOS_WEATHER_UNITS: ${LIFEOS_WEATHER_UNITS:-metric}
     volumes:
       - /srv/lifeos/data/uploads:/srv/lifeos/data/uploads
     depends_on:
