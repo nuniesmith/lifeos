@@ -21,8 +21,8 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		label: 'DO',
 		color: '#bcaa8a',
 		items: [
-			{ label: 'Inbox', icon: 'inbox' },
-			{ label: 'Brain dump', icon: 'audit' },
+			{ label: 'Inbox', icon: 'inbox', href: '/inbox' },
+			{ label: 'Brain dump', icon: 'audit', href: '/brain-dump' },
 			{ label: 'Tasks', icon: 'tasks', href: '/tasks' },
 			{ label: 'Habits', icon: 'habits', href: '/habits' }
 		]
@@ -34,7 +34,7 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		items: [
 			{ label: 'Calendar', icon: 'today' },
 			{ label: 'Projects', icon: 'projects', href: '/projects' },
-			{ label: 'Review', icon: 'check' }
+			{ label: 'Review', icon: 'check', href: '/review' }
 		]
 	},
 	{
@@ -43,11 +43,11 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		color: '#c29e99',
 		items: [
 			{ label: 'Areas', icon: 'areas', href: '/areas' },
-			{ label: 'Health', icon: 'habits' },
-			{ label: 'Food', icon: 'today' },
-			{ label: 'Finance', icon: 'audit' },
-			{ label: 'Reading', icon: 'journal' },
-			{ label: 'Entertainment', icon: 'today' }
+			{ label: 'Health', icon: 'habits', href: '/health' },
+			{ label: 'Food', icon: 'today', href: '/food' },
+			{ label: 'Finance', icon: 'audit', href: '/finance' },
+			{ label: 'Reading', icon: 'journal', href: '/reading' },
+			{ label: 'Entertainment', icon: 'today', href: '/entertainment' }
 		]
 	},
 	{
@@ -57,8 +57,8 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		items: [
 			{ label: 'Journal', icon: 'journal', href: '/journal' },
 			{ label: 'Goals', icon: 'goals', href: '/goals' },
-			{ label: 'Review', icon: 'check' },
-			{ label: 'Perspectives', icon: 'today' }
+			{ label: 'Yearly review', icon: 'check', href: '/yearly-review' },
+			{ label: 'Perspectives', icon: 'today', href: '/perspectives' }
 		]
 	},
 	{
@@ -66,11 +66,11 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 		label: 'KNOWLEDGE',
 		color: '#92b4ba',
 		items: [
-			{ label: 'Hub', icon: 'areas' },
-			{ label: 'Library', icon: 'journal' },
-			{ label: 'Topics', icon: 'projects' },
-			{ label: 'People', icon: 'people' },
-			{ label: 'Wishlist', icon: 'goals' }
+			{ label: 'Hub', icon: 'areas', href: '/knowledge' },
+			{ label: 'Library', icon: 'journal', href: '/library' },
+			{ label: 'Topics', icon: 'projects', href: '/topics' },
+			{ label: 'People', icon: 'people', href: '/people' },
+			{ label: 'Wishlist', icon: 'goals', href: '/wishlist' }
 		]
 	},
 	{

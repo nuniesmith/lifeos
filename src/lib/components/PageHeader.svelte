@@ -45,7 +45,9 @@
 
 <style>
 	.page-header {
-		margin-bottom: var(--sp-6);
+		margin-bottom: var(--sp-7);
+		padding-bottom: var(--sp-4);
+		border-bottom: 1px solid var(--c-border);
 	}
 
 	.back {
@@ -76,8 +78,9 @@
 
 	h1 {
 		margin: 0;
-		font-size: var(--fs-2xl);
+		font-size: clamp(1.45rem, 2vw, 1.9rem);
 		letter-spacing: -0.01em;
+		font-weight: 680;
 	}
 
 	.actions {
@@ -87,9 +90,13 @@
 	}
 
 	.description {
-		margin: var(--sp-2) 0 0;
+		margin: var(--sp-3) 0 0;
+		padding: 0.38rem 0.55rem;
+		border-radius: var(--radius-sm);
+		background: var(--page-accent-soft, transparent);
 		color: var(--c-text-muted);
-		font-size: var(--fs-lg);
+		font-size: var(--fs-sm);
+		font-style: italic;
 	}
 
 	.meta {

@@ -107,16 +107,18 @@ describe('isCurrent', () => {
 });
 
 describe('SideNav', () => {
-	it('presents planned sections as upcoming text instead of dead links', () => {
+	it('links implemented sections and marks the rest as upcoming', () => {
 		const { body } = render(SideNav, {
 			props: { user: member, pathname: '/', onQuickAdd: () => {} }
 		});
 		const sections = WORKSPACE_GROUPS.flatMap((group) => group.items);
+		for (const item of sections.filter((item) => item.href)) {
+			expect(body).toContain(`href="${item.href}"`);
+		}
 		for (const item of sections.filter((item) => !item.href)) {
 			expect(body).toContain(item.label);
 		}
 		expect(body).toContain('Upcoming');
-		expect(body).not.toMatch(/<a[^>]*href="\/(calendar|inbox|finance|library)"/);
 	});
 
 	it('renders every destination once', () => {

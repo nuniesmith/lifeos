@@ -54,7 +54,7 @@
 		background: var(--c-surface);
 		border: 1px solid var(--c-border);
 		border-radius: var(--radius);
-		box-shadow: var(--shadow);
+		box-shadow: none;
 		/* Contains the rounded corners of a flush list body. */
 		overflow: hidden;
 	}

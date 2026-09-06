@@ -4,9 +4,11 @@
 	import { page } from '$app/state';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import PageCover from '$lib/components/PageCover.svelte';
 	import QuickAdd from '$lib/components/QuickAdd.svelte';
 	import SideNav from '$lib/components/SideNav.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import { pageThemeFor } from '$lib/components/page-themes';
 	import { WORKSPACE_GROUPS } from '$lib/components/workspace-nav';
 
 	let { data, children } = $props();
@@ -15,6 +17,7 @@
 	let sidebarPreference = $state<boolean>();
 	let wideViewport = $state(false);
 	const isHome = $derived(page.url.pathname === resolve('/'));
+	const pageTheme = $derived(pageThemeFor(page.url.pathname));
 	const sidebarOpen = $derived(sidebarPreference ?? (wideViewport && !isHome));
 	const currentSection = $derived(
 		WORKSPACE_GROUPS.flatMap((group) => group.items).find(
@@ -83,8 +86,17 @@
 		<aside id="workspace-sidebar" class="sidebar-panel" hidden={!sidebarOpen}>
 			<SideNav user={data.user} pathname={page.url.pathname} onQuickAdd={quickCapture} />
 		</aside>
-		<div class="pane" class:home-pane={isHome}>
-			{@render children()}
+		<div
+			class="pane"
+			class:home-pane={isHome}
+			class:themed-pane={Boolean(pageTheme)}
+			style:--page-accent={pageTheme?.accent}
+			style:--page-accent-soft={pageTheme?.accentSoft}
+		>
+			{#if pageTheme}<PageCover theme={pageTheme} />{/if}
+			<div class="page-content" class:themed-content={Boolean(pageTheme)}>
+				{@render children()}
+			</div>
 		</div>
 	</div>
 </div>
@@ -177,6 +189,15 @@
 		margin: 0 auto;
 		padding: 2.5rem 1.5rem;
 	}
+	.themed-pane {
+		max-width: 90rem;
+	}
+	.page-content {
+		min-width: 0;
+	}
+	.themed-pane > :global(.page-cover) {
+		margin: -2.5rem -1.5rem 2.5rem;
+	}
 	.home-pane {
 		max-width: none;
 		margin: 0;
@@ -216,6 +237,9 @@
 		.pane {
 			width: 100%;
 			padding: 3rem 2.5rem;
+		}
+		.themed-pane > :global(.page-cover) {
+			margin: -3rem -2.5rem 3rem;
 		}
 		.home-pane {
 			padding: 0;

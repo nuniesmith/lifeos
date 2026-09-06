@@ -43,11 +43,11 @@
 			label: 'Action',
 			symbol: '⚡',
 			links: [
-				{ label: 'Quick drop | Inbox', symbol: '📥', href: '/tasks' },
-				{ label: 'Brain dump', symbol: '💭' },
+				{ label: 'Quick drop | Inbox', symbol: '📥', href: '/inbox' },
+				{ label: 'Brain dump', symbol: '💭', href: '/brain-dump' },
 				{ label: 'To do / Action', symbol: '☑️', href: '/tasks' },
 				{ label: 'My projects', symbol: '🗂️', href: '/projects' },
-				{ label: 'For review', symbol: '📋' }
+				{ label: 'For review', symbol: '📋', href: '/review' }
 			]
 		},
 		{
@@ -55,9 +55,9 @@
 			symbol: '🧭',
 			links: [
 				{ label: 'Goals & milestones', symbol: '🎯', href: '/goals' },
-				{ label: 'Yearly review & planning', symbol: '⏱️' },
+				{ label: 'Yearly review & planning', symbol: '⏱️', href: '/yearly-review' },
 				{ label: 'Habits & routines', symbol: '🔁', href: '/habits' },
-				{ label: 'Perspectives', symbol: '🔭' },
+				{ label: 'Perspectives', symbol: '🔭', href: '/perspectives' },
 				{ label: 'Life areas', symbol: '🌈', href: '/areas' }
 			]
 		},
@@ -66,22 +66,22 @@
 			symbol: '🌿',
 			links: [
 				{ label: 'Journal', symbol: '📓', href: '/journal' },
-				{ label: 'Health & fitness', symbol: '❤️' },
-				{ label: 'Food HQ', symbol: '🍒' },
-				{ label: 'Financial hub', symbol: '💸' },
-				{ label: 'Entertainment', symbol: '📺' },
-				{ label: 'Reading tracker', symbol: '📖' }
+				{ label: 'Health & fitness', symbol: '❤️', href: '/health' },
+				{ label: 'Food HQ', symbol: '🍒', href: '/food' },
+				{ label: 'Financial hub', symbol: '💸', href: '/finance' },
+				{ label: 'Entertainment', symbol: '📺', href: '/entertainment' },
+				{ label: 'Reading tracker', symbol: '📖', href: '/reading' }
 			]
 		},
 		{
 			label: 'Knowledge',
 			symbol: '📚',
 			links: [
-				{ label: 'Knowledge hub', symbol: '✨' },
-				{ label: 'Library', symbol: '📚' },
-				{ label: 'Topics & resources', symbol: '🏷️', href: '/areas/tags' },
-				{ label: 'People & places', symbol: '👥' },
-				{ label: 'Wishlist', symbol: '🛍️' }
+				{ label: 'Knowledge hub', symbol: '✨', href: '/knowledge' },
+				{ label: 'Library', symbol: '📚', href: '/library' },
+				{ label: 'Topics & resources', symbol: '🏷️', href: '/topics' },
+				{ label: 'People & places', symbol: '👥', href: '/people' },
+				{ label: 'Wishlist', symbol: '🛍️', href: '/wishlist' }
 			]
 		}
 	];
