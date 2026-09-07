@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { Badge, Button, Card, EmptyState, List, ListRow, PageHeader } from '$lib/components';
+	import {
+		Badge,
+		Button,
+		Card,
+		CoverThumb,
+		EmptyState,
+		List,
+		ListRow,
+		PageHeader
+	} from '$lib/components';
 
 	let { data, form } = $props();
 
@@ -41,6 +50,9 @@
 				<List label="Currently watching">
 					{#each data.watching as item (item.id)}
 						<ListRow title={item.name} meta={meta(item)}>
+							{#snippet lead()}
+								<CoverThumb cover={item.cover} />
+							{/snippet}
 							{#snippet trail()}
 								<form method="POST" action="?/setStatus" use:enhance>
 									<input type="hidden" name="id" value={item.id} />
@@ -71,6 +83,9 @@
 				<List label="Up next">
 					{#each data.queued as item (item.id)}
 						<ListRow title={item.name} meta={meta(item)}>
+							{#snippet lead()}
+								<CoverThumb cover={item.cover} />
+							{/snippet}
 							{#snippet trail()}
 								<form method="POST" action="?/setStatus" use:enhance>
 									<input type="hidden" name="id" value={item.id} />
@@ -92,6 +107,9 @@
 				<List label="Seen">
 					{#each data.watched as item (item.id)}
 						<ListRow title={item.name} meta={meta(item)} muted>
+							{#snippet lead()}
+								<CoverThumb cover={item.cover} />
+							{/snippet}
 							{#snippet trail()}
 								{#if item.rating}
 									<!-- The rating is a count, so the stars are presentation

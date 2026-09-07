@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
 import {
 	MEDIA_STATUSES,
+	coversForPages,
 	listMedia,
 	setMediaStatus,
 	type MediaStatus
@@ -21,7 +22,24 @@ export const load: PageServerLoad = async ({ locals }) => {
 		listMedia(sql, viewer, { status: 'want_to_watch', limit: 100 }),
 		listMedia(sql, viewer, { status: ['watched', 'paused', 'dropped'], limit: 50 })
 	]);
-	return { watching, queued, watched };
+
+	// One query for every cover on the page, across all three lists.
+	const covers = await coversForPages(sql, viewer, [
+		...watching.map((item) => item.notionPageId),
+		...queued.map((item) => item.notionPageId),
+		...watched.map((item) => item.notionPageId)
+	]);
+	const withCover = (items: typeof watching) =>
+		items.map((item) => ({
+			...item,
+			cover: (item.notionPageId && covers.get(item.notionPageId)) || null
+		}));
+
+	return {
+		watching: withCover(watching),
+		queued: withCover(queued),
+		watched: withCover(watched)
+	};
 };
 
 export const actions: Actions = {

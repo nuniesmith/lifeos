@@ -20,8 +20,20 @@
  *
  * Covers attach to the `source_records` row, the same place body images go,
  * with role 'cover' to tell them apart.
+ *
+ * Each cover also gets a THUMBNAIL, stored as its own attachment with role
+ * 'cover_thumb'. This is not an optimisation, it is the difference between the
+ * feature working and not: the covers in this workspace have a median size of
+ * 1.2 MB and run to 11 MB, and the pages that show them draw 48-pixel list rows
+ * and a 6rem tile band. Serving the originals made /entertainment ship 21 MB to
+ * render seven thumbnails, which over Tailscale to a phone is no feature at all.
+ *
+ * Resizing happens HERE, once, on whatever machine holds the export — never on
+ * the Raspberry Pi, which has 894 MB of RAM and should only ever hand over
+ * bytes that already exist.
  */
 import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import postgres from 'postgres';
@@ -57,6 +69,15 @@ const OFF = '\x1b[0m';
 /** The 32-hex Notion id, unanchored matches excluded. */
 const NOTION_ID = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
 const COVER = /<img class="page-cover-image" src="([^"]+)"/;
+
+/**
+ * Longest side of a generated thumbnail.
+ *
+ * 320 covers every place a cover is currently drawn — a 48-pixel list row and a
+ * 6rem tile band — at twice the size, so it still looks right on a high-density
+ * phone screen without carrying a megabyte to do it.
+ */
+const THUMB_PX = 320;
 
 async function* htmlFiles(dir) {
 	for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -171,6 +192,10 @@ const main = async () => {
 	let stored = 0;
 	let linked = 0;
 	let already = 0;
+	let thumbsMade = 0;
+	let thumbFailed = 0;
+	let thumbBytesTotal = 0;
+	let originalBytesTotal = 0;
 
 	await sql
 		.begin(async (tx) => {
@@ -212,6 +237,62 @@ const main = async () => {
 				if (link.length > 0) linked++;
 				else already++;
 
+				// ─── the thumbnail the pages actually show ────────────────────
+				let thumbBytes;
+				try {
+					thumbBytes = await sharp(item.bytes)
+						.rotate() // honour EXIF orientation before resizing
+						.resize(THUMB_PX, THUMB_PX, { fit: 'inside', withoutEnlargement: true })
+						.webp({ quality: 72 })
+						.toBuffer();
+				} catch {
+					// A cover that cannot be decoded is still stored and linked;
+					// it simply goes without a thumbnail, and coversForPages
+					// falls back to the original.
+					thumbFailed++;
+					continue;
+				}
+
+				const thumbSha = createHash('sha256').update(thumbBytes).digest();
+				const thumbKey = storageKeyFor(thumbSha, 'webp');
+				const thumbInserted = await tx`
+				insert into attachments (household_id, sha256, byte_size, content_type,
+				                         width, height, original_name, storage_key)
+				values (${household.id}, ${thumbSha}, ${thumbBytes.length}, 'image/webp',
+				        ${Math.min(dimensions?.width ?? THUMB_PX, THUMB_PX)},
+				        ${Math.min(dimensions?.height ?? THUMB_PX, THUMB_PX)},
+				        ${item.name}, ${thumbKey})
+				on conflict (household_id, sha256) do nothing
+				returning id
+			`;
+				if (thumbInserted.length > 0) thumbsMade++;
+
+				const thumbId =
+					thumbInserted[0]?.id ??
+					(
+						await tx`
+					select id from attachments
+					where household_id = ${household.id} and sha256 = ${thumbSha}
+				`
+					)[0]?.id;
+				if (thumbId) {
+					await tx`
+					insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
+					values (${thumbId}, 'source_record', ${item.record.id}, 'cover_thumb', 0)
+					on conflict do nothing
+				`;
+					thumbBytesTotal += thumbBytes.length;
+					originalBytesTotal += item.bytes.length;
+				}
+
+				if (commit && thumbInserted.length > 0) {
+					const target = join(uploadDir, thumbKey);
+					await mkdir(dirname(target), { recursive: true });
+					await writeFile(target, thumbBytes, { flag: 'wx' }).catch((err) => {
+						if (err.code !== 'EEXIST') throw err;
+					});
+				}
+
 				if (commit && inserted.length > 0) {
 					const destination = join(uploadDir, storageKey);
 					await mkdir(dirname(destination), { recursive: true });
@@ -237,6 +318,14 @@ const main = async () => {
 		`\n  ${GREEN}${stored}${OFF} new image(s), ${GREEN}${linked}${OFF} cover link(s)` +
 			(already ? `, ${already} already linked` : '')
 	);
+	if (thumbsMade || thumbBytesTotal) {
+		const mb = (n) => `${(n / 1_048_576).toFixed(1)} MB`;
+		console.log(
+			`  ${GREEN}${thumbsMade}${OFF} thumbnail(s): ${mb(originalBytesTotal)} of covers ` +
+				`renders as ${mb(thumbBytesTotal)}` +
+				(thumbFailed ? `; ${thumbFailed} could not be resized` : '')
+		);
+	}
 	if (!commit) console.log('  Nothing was written. Re-run with --commit to keep it.\n');
 	else console.log('');
 	await sql.end();

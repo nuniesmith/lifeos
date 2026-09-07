@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
 import {
+	coversForPages,
 	foodSummary,
 	householdToday,
 	isDay,
@@ -82,6 +83,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			`
 		: [];
 
+	// Covers for the recipe list, in one query rather than one per card.
+	const covers = await coversForPages(
+		sql,
+		viewer,
+		recipes.map((recipe) => recipe.notionPageId)
+	);
+	const recipesWithCovers = recipes.map((recipe) => ({
+		...recipe,
+		cover: (recipe.notionPageId && covers.get(recipe.notionPageId)) || null
+	}));
+
 	const planned = new Map(plan.map((day) => [day.onDate, day]));
 	const days = Array.from({ length: PLAN_DAYS }, (_, i) => {
 		const date = addDays(from, i);
@@ -103,7 +115,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		shopping,
 		aisles,
 		statusCounts,
-		recipes,
+		recipes: recipesWithCovers,
 		prep,
 		summary
 	};

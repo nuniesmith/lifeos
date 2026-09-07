@@ -9,6 +9,9 @@ import type { Viewer } from '../auth/authz';
  * recipe — carry the same `notion_page_id` as their source row, which is the
  * join back to their pictures.
  *
+ * Returns both the page's cover and the images in its body — everything that
+ * arrived on that Notion page — with the cover first.
+ *
  * Household-scoped in SQL rather than filtered afterwards, like every other
  * read here: the identifier arrives from a page's own data, but the predicate
  * has to be present for the same reason it is present everywhere else.
@@ -45,7 +48,11 @@ export async function imagesForPage(
 		  and ir.household_id = ${viewer.householdId}::uuid
 		  and a.archived_at is null
 		  and a.content_type like 'image/%'
-		order by l.position, a.created_at
+		-- The page's cover first, then the pictures in the body in the order they
+		-- appeared. Covers arrive from a different export than everything else
+		-- (see scripts/import-covers.mjs) and so were being interleaved by
+		-- created_at, which put a day's cover in the middle of its photographs.
+		order by (l.role = 'cover') desc, l.position, a.created_at
 	`;
 
 	return rows.map((row) => ({
@@ -87,7 +94,8 @@ export async function coversForPages(
 		select r.notion_page_id::text as page_id, a.id, a.width, a.height, a.original_name
 		from attachments a
 		join attachment_links l
-		  on l.attachment_id = a.id and l.entity_type = 'source_record' and l.role = 'cover'
+		  on l.attachment_id = a.id and l.entity_type = 'source_record'
+		 and l.role in ('cover', 'cover_thumb')
 		join source_records r on r.id = l.entity_id
 		join import_runs ir on ir.id = r.import_run_id
 		where r.notion_page_id = any(${ids}::uuid[])
@@ -95,17 +103,21 @@ export async function coversForPages(
 		  and ir.household_id = ${viewer.householdId}::uuid
 		  and a.archived_at is null
 		  and a.content_type like 'image/%'
+		-- The thumbnail first, so the loop below keeps it and the full-size
+		-- cover is only used where no thumbnail was made.
+		order by (l.role = 'cover_thumb') desc
 	`;
 
-	return new Map(
-		rows.map((row) => [
-			row.page_id,
-			{
-				id: row.id,
-				width: row.width,
-				height: row.height,
-				originalName: row.original_name
-			}
-		])
-	);
+	// First row per page wins, and the ordering above makes that the thumbnail.
+	const covers = new Map<string, RecordImage>();
+	for (const row of rows) {
+		if (covers.has(row.page_id)) continue;
+		covers.set(row.page_id, {
+			id: row.id,
+			width: row.width,
+			height: row.height,
+			originalName: row.original_name
+		});
+	}
+	return covers;
 }

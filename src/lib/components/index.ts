@@ -5,6 +5,7 @@
  * component can be renamed or split without touching every route that uses it.
  */
 
+export { default as CoverThumb } from './CoverThumb.svelte';
 export { default as Badge } from './Badge.svelte';
 export { default as BottomNav } from './BottomNav.svelte';
 export { default as Button } from './Button.svelte';

@@ -1,7 +1,16 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { Badge, Button, Card, EmptyState, List, ListRow, PageHeader } from '$lib/components';
+	import {
+		Badge,
+		Button,
+		Card,
+		CoverThumb,
+		EmptyState,
+		List,
+		ListRow,
+		PageHeader
+	} from '$lib/components';
 	import { appPath } from '$lib/components/nav';
 
 	let { data, form } = $props();
@@ -235,6 +244,9 @@
 										.filter(Boolean)
 										.join(' · ')}
 								>
+									{#snippet lead()}
+										<CoverThumb cover={recipe.cover} />
+									{/snippet}
 									{#snippet trail()}
 										{#if recipe.isFavourite}<Badge tone="accent">Favourite</Badge>{/if}
 									{/snippet}
