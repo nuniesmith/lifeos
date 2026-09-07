@@ -154,6 +154,9 @@ jobs:
         run: |
           # An explicit marker in the commit message forces it, so the
           # rehearsal can be exercised without pretending to change a script.
+          # A message that merely DISCUSSES the marker trips it too — writing
+          # about [rehearse] runs one. That costs a few minutes and is not
+          # worth a cleverer test that could fail to fire when it matters.
           if [[ "$HEAD_MESSAGE" == *"[rehearse]"* ]]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -174,7 +177,10 @@ jobs:
             exit 0
           fi
 
-          if grep -qE '^(scripts/(deploy|backup|rehearse-deploy)\.sh|compose\.prod\.yml|Dockerfile)$' \
+          # The workflow file is in the list because this job's own definition
+          # is part of the surface under test: changing how the rehearsal runs
+          # deserves a run of the rehearsal.
+          if grep -qE '^(scripts/(deploy|backup|rehearse-deploy)\.sh|compose\.prod\.yml|Dockerfile|\.github/workflows/ci\.yml)$' \
               <<<"$changed"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
