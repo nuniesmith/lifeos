@@ -3,6 +3,7 @@ import {
 	addDays,
 	createDailyLog,
 	getDailyLogForDate,
+	imagesForPage,
 	householdToday,
 	isDay,
 	listDailyLogs,
@@ -57,6 +58,13 @@ export interface JournalData {
 	today: string;
 	date: string;
 	entry: JournalEntry | null;
+	/**
+	 * Pictures that came in on this day's Notion page.
+	 *
+	 * The import has always stored these; nothing displayed them. Eight of the
+	 * twenty-five imported days have one.
+	 */
+	images: { id: string; width: number | null; height: number | null; alt: string }[];
 	previous: string;
 	/** Null on today: a journal is written after the day, not before it. */
 	next: string | null;
@@ -104,9 +112,21 @@ export async function loadJournal(
 		})
 	]);
 
+	// Sequenced after the entry rather than beside it: the images hang off the
+	// entry's own page id, so there is nothing to ask for until it is known.
+	const images = await imagesForPage(sql, viewer, entry?.notionPageId ?? null);
+
 	return {
 		today,
 		date,
+		images: images.map((image) => ({
+			id: image.id,
+			width: image.width,
+			height: image.height,
+			// The original filename is the only description the export carries.
+			// Empty rather than invented: a wrong alt is worse than none.
+			alt: image.originalName ? image.originalName.replace(/\.[a-z0-9]+$/i, '') : ''
+		})),
 		entry: entry
 			? {
 					id: entry.id,

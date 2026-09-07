@@ -181,6 +181,25 @@
 		</form>
 	</Card>
 
+	{#if data.images.length > 0}
+		<Card title="From this day" subtitle="Imported with the page">
+			<ul class="images">
+				{#each data.images as image (image.id)}
+					<li>
+						<img
+							src={resolve(appPath(`/api/media/${image.id}`))}
+							alt={image.alt}
+							width={image.width ?? undefined}
+							height={image.height ?? undefined}
+							loading="lazy"
+							decoding="async"
+						/>
+					</li>
+				{/each}
+			</ul>
+		</Card>
+	{/if}
+
 	<Card title="Go to a day">
 		<form method="POST" action="?/go" class="jump" use:enhance>
 			<Input label="Date" name="date" type="date" value={data.date} max={data.today} required />
@@ -214,6 +233,26 @@
 </div>
 
 <style>
+	/*
+	 * Notion page images, at whatever size they arrived. Intrinsic width and
+	 * height are set on the element from the stored dimensions so the page does
+	 * not jump as they load; the rule below keeps them inside the card.
+	 */
+	.images {
+		display: grid;
+		gap: 0.75rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.images img {
+		display: block;
+		width: 100%;
+		height: auto;
+		border-radius: 0.5rem;
+	}
+
 	.notice {
 		padding: var(--sp-2) var(--sp-3);
 		border-radius: var(--radius-sm);

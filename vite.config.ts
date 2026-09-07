@@ -15,7 +15,15 @@ export default defineConfig({
 		// timestamp bug that shifts a value by the local offset is invisible on
 		// a UTC machine — which every CI runner is — and the "(UTC)" marker in
 		// the Notion export is exactly that kind of bug.
-		env: { TZ: 'America/Toronto' },
+		env: {
+			TZ: 'America/Toronto',
+			// The server env module parses process.env once, when it is first
+			// imported, and ES imports are hoisted — so a test that sets this at
+			// the top of its own file is already too late and silently exercises
+			// the default. Set here, before any module loads, so the media route
+			// resolves the directory the tests actually write into.
+			LIFEOS_UPLOAD_DIR: 'var/test-uploads'
+		},
 		projects: [
 			{
 				extends: true,
