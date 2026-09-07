@@ -50,7 +50,13 @@ die()  { printf '\033[31m✘\033[0m %s\n' "$*" >&2; exit 1; }
 # Resolve the symlink before replacing the file, so checkout/.env continues
 # to point to the persistent environment on subsequent deployments.
 ENV_FILE="$(readlink -f .env)"
-COMPOSE=(docker compose -f compose.prod.yml --env-file "$ENV_FILE")
+# Overridable so the deploy can be rehearsed against a throwaway stack, the
+# way backup.sh already allows. Production sets neither and gets exactly what
+# it got before. A deploy script that cannot be run anywhere but production is
+# a deploy script that is only ever tested in production.
+COMPOSE_FILES=(-f "${LIFEOS_COMPOSE_FILE:-compose.prod.yml}")
+[[ -n "${LIFEOS_COMPOSE_OVERRIDE:-}" ]] && COMPOSE_FILES+=(-f "$LIFEOS_COMPOSE_OVERRIDE")
+COMPOSE=(docker compose "${COMPOSE_FILES[@]}" --env-file "$ENV_FILE")
 
 set_image() {
     LIFEOS_IMAGE="$1"
