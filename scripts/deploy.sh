@@ -58,7 +58,13 @@ say "Deploying $LIFEOS_IMAGE"
 
 # ─── pull first, so a bad reference fails before anything stops ────────────
 say "Pulling image"
-docker pull "$LIFEOS_IMAGE" >/dev/null || die "could not pull $LIFEOS_IMAGE"
+# Progress is NOT discarded, and that is deliberate. Silencing it made this the
+# longest silent stretch of the deploy — minutes with nothing on the wire while
+# an arm64 image comes down to the Pi — and the SSH session was being dropped
+# underneath it, surfacing as ssh's own exit 255 with no error of ours to
+# explain it. Without a TTY docker prints one plain line per layer rather than
+# the redrawing progress bars, so this is both a keepalive and a useful log.
+docker pull "$LIFEOS_IMAGE" || die "could not pull $LIFEOS_IMAGE"
 ok "image present"
 
 # ─── database up, and backed up before any migration ───────────────────────
