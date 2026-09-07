@@ -58,6 +58,11 @@ mkdir -p "$BACKUP_DIR"
 # backup runs first.
 db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
 
+# Announced BEFORE the call, not after. Every `docker compose exec` below is
+# tens of seconds on the Pi, and a step that only reports once it finishes is
+# indistinguishable from a hung one — which is how the deploy kept losing its
+# SSH session inside this script while it looked like nothing was happening.
+say "Checking the database is reachable"
 attempt=0
 while (( attempt < 150 )); do
     db_ready && break
@@ -79,9 +84,11 @@ free_kb=$(df --output=avail -k "$BACKUP_DIR" | tail -1)
 # the table does not exist yet. Recording is therefore optional: a backup that
 # refuses to run because it cannot log itself is worse than an unlogged
 # backup, and that ordering blocked a real deploy.
+say "Checking backup bookkeeping"
 HAS_RUNS_TABLE=$(psql_q "select to_regclass('public.backup_runs') is not null" | tr -d '[:space:]')
 RUN_ID=""
 if [[ "$HAS_RUNS_TABLE" == "t" ]]; then
+    say "Opening a backup record"
     RUN_ID=$(psql_q "insert into backup_runs (kind) values ('$KIND') returning id" | tr -d '[:space:]')
 fi
 [[ -n "$RUN_ID" ]] || say "backup_runs is not available yet; taking the backup without recording it"
@@ -128,10 +135,12 @@ fi
 # Then the real check: pg_restore must be able to parse the whole table of
 # contents. It has to be a seekable file — piping the archive to /dev/stdin
 # or to `-` both fail on a custom-format archive, so it is copied in first.
+say "Staging the archive for verification"
 VERIFY_PATH="/tmp/lifeos-verify-$$.dump"
 if ! "${COMPOSE[@]}" cp "$TARGET.partial" "db:$VERIFY_PATH" >/dev/null 2>&1; then
     fail_run "could not stage the archive for verification"
 fi
+say "Reading the archive back with pg_restore"
 if ! "${COMPOSE[@]}" exec -T db pg_restore --list "$VERIFY_PATH" >/dev/null 2>&1; then
     "${COMPOSE[@]}" exec -T db rm -f "$VERIFY_PATH" >/dev/null 2>&1 || true
     fail_run "pg_restore could not read the archive"
@@ -145,6 +154,7 @@ BYTES=$(stat -c %s "$TARGET")
 SHA=$(sha256sum "$TARGET" | cut -d' ' -f1)
 
 # Row counts per table, recorded so a restore can be checked against them.
+say "Counting rows for the restore check"
 COUNTS=$(psql_q "
     select coalesce(jsonb_object_agg(relname, n), '{}'::jsonb)::text from (
         select c.relname, (
@@ -158,6 +168,7 @@ COUNTS=$(psql_q "
     ) t" | tr -d '\n')
 
 if [[ -n "$RUN_ID" ]]; then
+    say "Recording the result"
     psql_q "update backup_runs set status='success', finished_at=now(),
             file_path='$TARGET', byte_size=$BYTES,
             sha256=decode('$SHA','hex'),

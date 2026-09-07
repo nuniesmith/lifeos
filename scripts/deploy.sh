@@ -178,12 +178,18 @@ ready=$(curl -fsS --max-time 5 http://127.0.0.1:8080/api/health/ready || echo '{
 say "Readiness: $(echo "$ready" | head -c 200)"
 
 # ─── reclaim disk (OPS-015) ────────────────────────────────────────────────
+# Not silenced: this runs AFTER the health gate, so a connection dropped here
+# would fail a deploy that had already succeeded — the worst way to lose one.
 say "Pruning old images"
-docker image prune -f >/dev/null
+docker image prune -f
 keep=3
 mapfile -t old < <(docker images --filter=reference='ghcr.io/*/lifeos' --format '{{.ID}} {{.CreatedAt}}' \
     | sort -k2 -r | tail -n +$((keep + 1)) | cut -d' ' -f1)
-for id in "${old[@]:-}"; do [[ -n "$id" ]] && docker rmi "$id" >/dev/null 2>&1 || true; done
+for id in "${old[@]:-}"; do
+    [[ -n "$id" ]] || continue
+    say "Removing image $id"
+    docker rmi "$id" >/dev/null 2>&1 || true
+done
 ok "kept the $keep most recent images"
 
 mkdir -p "$RELEASES"
