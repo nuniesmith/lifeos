@@ -1,10 +1,31 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { Badge, Button, Card, EmptyState, List, ListRow, PageHeader } from '$lib/components';
+	import { appPath } from '$lib/components/nav';
 
 	let { data, form } = $props();
 
 	type Day = (typeof data.days)[number];
+
+	/**
+	 * "Aug 31 – Sep 6", so a week away from today still says where it is.
+	 *
+	 * Built by arithmetic on the timestamp rather than by mutating a Date: the
+	 * lint rule against mutable Date instances in components is right, and a
+	 * seven-day offset does not need one.
+	 */
+	const DAY_MS = 86_400_000;
+	const weekLabel = (from: string) => {
+		const startMs = Date.parse(`${from}T00:00:00Z`);
+		const fmt = (ms: number) =>
+			new Date(ms).toLocaleDateString(undefined, {
+				day: 'numeric',
+				month: 'short',
+				timeZone: 'UTC'
+			});
+		return `${fmt(startMs)} – ${fmt(startMs + 6 * DAY_MS)}`;
+	};
 	type Slot = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
 	const SLOTS: Slot[] = ['breakfast', 'lunch', 'dinner', 'snack'];
@@ -64,7 +85,30 @@
 
 <div class="stack">
 	<section aria-labelledby="plan-heading">
-		<h2 id="plan-heading" class="section-title">The week ahead</h2>
+		<div class="plan-head">
+			<h2 id="plan-heading" class="section-title">
+				{data.isThisWeek ? 'This week' : weekLabel(data.from)}
+			</h2>
+			<nav class="weeks" aria-label="Move the meal plan">
+				<a class="step" href={resolve(appPath(`/food?from=${data.previous}`))} rel="prev">
+					<span aria-hidden="true">‹</span> Earlier
+				</a>
+				{#if !data.isThisWeek}
+					<a class="step" href={resolve(appPath('/food'))}>This week</a>
+				{/if}
+				<a class="step" href={resolve(appPath(`/food?from=${data.next}`))} rel="next">
+					Later <span aria-hidden="true">›</span>
+				</a>
+			</nav>
+		</div>
+		{#if data.nearestPlan}
+			<p class="notice">
+				Nothing planned this week.
+				<a href={resolve(appPath(`/food?from=${data.nearestPlan}`))}>
+					Go to the week of {weekLabel(data.nearestPlan)}
+				</a>
+			</p>
+		{/if}
 		<div class="week">
 			{#each data.days as { date, day } (date)}
 				<article class="day" class:today={date === data.today}>
@@ -215,6 +259,28 @@
 </div>
 
 <style>
+	.plan-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+	}
+
+	.weeks {
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.weeks .step {
+		font-size: 0.875rem;
+		text-decoration: none;
+	}
+
+	.weeks .step:hover {
+		text-decoration: underline;
+	}
+
 	.stack {
 		display: flex;
 		flex-direction: column;
