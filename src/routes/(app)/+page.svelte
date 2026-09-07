@@ -143,6 +143,9 @@
 					<a class="status-line overdue" href={resolve(appPath('/tasks?view=overdue'))}
 						>△ {data.overdue.length} overdue task{data.overdue.length === 1 ? '' : 's'}</a
 					>
+					<a class="status-line amber" href={resolve(appPath('/inbox'))}
+						>◇ {data.waitingCount} waiting in the inbox</a
+					>
 					<a class="status-line amber" href={resolve(appPath('/tasks'))}
 						>◇ {data.inboxCount} tasks without a project</a
 					>

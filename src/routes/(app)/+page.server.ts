@@ -55,6 +55,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		activeProjects,
 		activeGoals,
 		inboxCount,
+		waitingCount,
 		calendarRows,
 		calendarDateRows,
 		weather
@@ -74,6 +75,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 		listProjects(sql, viewer, { status: 'active', order: 'due', limit: 4 }),
 		listGoals(sql, viewer, { status: 'active', order: 'target', limit: 4 }),
 		countTasks(sql, viewer, { status: 'open', projectId: null }),
+		// Genuinely untriaged, as opposed to merely unfiled: a task sitting at
+		// status 'inbox' has not been decided about yet. See migration 0008.
+		countTasks(sql, viewer, { status: 'inbox' }),
 		// The month calendar shows readable household work, including shared
 		// tasks assigned to the other member. Fetch one extra to disclose a cap.
 		listTasks(sql, viewer, {
@@ -104,6 +108,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		// Includes scheduled work; this is "tasks without a project", not
 		// a count of tasks with no date or other organisation.
 		inboxCount,
+		waitingCount,
 		calendarRange,
 		calendarTasks: calendarRows.slice(0, 100),
 		calendarTruncated: calendarRows.length > 100,
