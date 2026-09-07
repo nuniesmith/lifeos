@@ -52,7 +52,7 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(6);
+		expect(summary.rows).toBe(7);
 		expect(summary.databases).toBe(2);
 
 		// The transaction was rolled back, so nothing survives.
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			6
+			7
 		);
 	});
 
@@ -122,6 +122,20 @@ describe('committed import', () => {
 		expect(task.do_on).not.toBeNull();
 		expect(task.is_important).toBe(true);
 		expect(task.status).toBe('todo');
+	});
+
+	it('maps Notion\u2019s own inbox status rather than collapsing it to todo', async () => {
+		await run(false);
+		// 'In inbox' is the largest single status group in the real export — 14
+		// of 32 tasks. It was absent from the import's status table, so every
+		// one of them landed on the 'todo' fallback and the inbox imported
+		// empty while the run reported success.
+		const task = one(
+			await sql<{ status: string }[]>`
+				select status from tasks where title = 'Sort this out later'
+			`
+		);
+		expect(task.status).toBe('inbox');
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

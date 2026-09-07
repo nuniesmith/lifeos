@@ -85,6 +85,10 @@ function mapStatus(value: string | null, table: Record<string, string>, fallback
 }
 
 const TASK_STATUS: Record<string, string> = {
+	'in inbox': 'inbox',
+	inbox: 'inbox',
+	// The largest group in the export. Without this it lands on the 'todo'
+	// fallback and the inbox imports empty.
 	'to do': 'todo',
 	'not started': 'todo',
 	'in progress': 'in_progress',

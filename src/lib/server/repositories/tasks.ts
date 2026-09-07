@@ -51,7 +51,14 @@ import {
  * question instead.
  */
 
-export const TASK_STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'dropped'] as const;
+export const TASK_STATUSES = [
+	'inbox',
+	'todo',
+	'in_progress',
+	'blocked',
+	'done',
+	'dropped'
+] as const;
 export const TASK_KINDS = ['task', 'milestone'] as const;
 export const TASK_ENERGY = ['low', 'medium', 'high'] as const;
 
@@ -60,7 +67,7 @@ export type TaskKind = (typeof TASK_KINDS)[number];
 export type TaskEnergy = (typeof TASK_ENERGY)[number];
 
 /** Statuses that still need doing. Matches the import's derived replacements. */
-export const OPEN_STATUSES: readonly TaskStatus[] = ['todo', 'in_progress', 'blocked'];
+export const OPEN_STATUSES: readonly TaskStatus[] = ['inbox', 'todo', 'in_progress', 'blocked'];
 
 export interface TaskRecord extends RecordBase {
 	title: string;
