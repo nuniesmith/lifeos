@@ -55,3 +55,57 @@ export async function imagesForPage(
 		originalName: row.original_name
 	}));
 }
+
+/**
+ * Cover images for a set of records, in one query.
+ *
+ * A list page needs a cover per row, and asking per row is the classic N+1 —
+ * /food would issue seventeen queries to draw seventeen recipe cards. The page
+ * hands over the ids it is about to render and gets a map back.
+ *
+ * Covers come from the HTML export via `scripts/import-covers.mjs`; the
+ * Markdown & CSV export the importer reads does not carry them. A record
+ * without one is simply absent from the map.
+ */
+export async function coversForPages(
+	sql: Sql,
+	viewer: Viewer,
+	notionPageIds: (string | null)[]
+): Promise<Map<string, RecordImage>> {
+	const ids = [...new Set(notionPageIds.filter((id): id is string => Boolean(id)))];
+	if (ids.length === 0) return new Map();
+
+	const rows = await sql<
+		{
+			page_id: string;
+			id: string;
+			width: number | null;
+			height: number | null;
+			original_name: string | null;
+		}[]
+	>`
+		select r.notion_page_id::text as page_id, a.id, a.width, a.height, a.original_name
+		from attachments a
+		join attachment_links l
+		  on l.attachment_id = a.id and l.entity_type = 'source_record' and l.role = 'cover'
+		join source_records r on r.id = l.entity_id
+		join import_runs ir on ir.id = r.import_run_id
+		where r.notion_page_id = any(${ids}::uuid[])
+		  and a.household_id = ${viewer.householdId}::uuid
+		  and ir.household_id = ${viewer.householdId}::uuid
+		  and a.archived_at is null
+		  and a.content_type like 'image/%'
+	`;
+
+	return new Map(
+		rows.map((row) => [
+			row.page_id,
+			{
+				id: row.id,
+				width: row.width,
+				height: row.height,
+				originalName: row.original_name
+			}
+		])
+	);
+}

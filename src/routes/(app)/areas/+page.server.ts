@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import {
 	createArea,
 	householdToday,
+	coversForPages,
 	listAreas,
 	listProjects,
 	openTaskCountsByArea
@@ -53,12 +54,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		areas.map((area) => listProjects(sql, viewer, { areaId: area.id, openOnly: true, limit: 200 }))
 	);
 
+	// One query for every cover on the page, keyed by the record's page id.
+	const covers = await coversForPages(
+		sql,
+		viewer,
+		areas.map((area) => area.notionPageId)
+	);
+
 	const byId = countsById(counts);
 	const rows = areas.map((area, index) => ({
 		id: area.id,
 		name: area.name,
 		description: area.description,
 		icon: area.icon,
+		cover: (area.notionPageId && covers.get(area.notionPageId)) || null,
 		archived: area.archivedAt !== null,
 		tasks: progressOf(byId.get(area.id)),
 		openProjects: projectLists[index]?.length ?? 0,

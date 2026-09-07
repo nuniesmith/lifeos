@@ -72,6 +72,17 @@
 	<ul class="grid">
 		{#each data.areas as area (area.id)}
 			<li class="tile" class:muted={area.archived}>
+				{#if area.cover}
+					<img
+						class="cover"
+						src={resolve(appPath(`/api/media/${area.cover.id}`))}
+						alt=""
+						width={area.cover.width ?? undefined}
+						height={area.cover.height ?? undefined}
+						loading="lazy"
+						decoding="async"
+					/>
+				{/if}
 				<div class="head">
 					{#if area.icon}<span class="icon" aria-hidden="true">{area.icon}</span>{/if}
 					<h2>
@@ -206,6 +217,20 @@
 		gap: var(--sp-2);
 		min-width: 0;
 	}
+	/*
+	 * The Notion page cover, cropped to a band across the top of the tile.
+	 * Decorative — the area's name is right beneath it — so the alt is empty
+	 * rather than a filename read aloud.
+	 */
+	.cover {
+		display: block;
+		width: 100%;
+		height: 6rem;
+		object-fit: cover;
+		border-radius: 0.5rem;
+		margin-bottom: 0.75rem;
+	}
+
 	.icon {
 		font-size: var(--fs-lg);
 		line-height: 1;

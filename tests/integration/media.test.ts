@@ -4,6 +4,8 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { one } from '$lib/server/db/scalar';
+import { coversForPages } from '$lib/server/repositories';
+import { viewerOf } from '$lib/server/auth/authz';
 import type { AuthUser } from '$lib/server/auth/service';
 
 /**
@@ -95,6 +97,19 @@ afterAll(async () => {
 	await sql.end({ timeout: 5 });
 	await rm(uploadDir, { recursive: true, force: true });
 });
+
+const viewerFor = () =>
+	viewerOf(
+		{
+			id: userId,
+			username: 'admin',
+			displayName: 'Admin',
+			role: 'admin',
+			mustChangeCredentials: false,
+			isBootstrap: true
+		},
+		householdId
+	);
 
 const viewerUser = (): AuthUser => ({
 	id: userId,
@@ -195,3 +210,77 @@ describe('serving an attachment', () => {
 });
 
 afterAll(() => vi.restoreAllMocks());
+
+/**
+ * Cover images, which arrive from a different Notion export than the data.
+ *
+ * The scoping here is longer than it looks: a cover reaches a page through
+ * attachment -> attachment_links -> source_records -> import_runs, and only the
+ * first and last of those carry a household. A join that checks neither would
+ * work perfectly on a single-household machine and leak on the day there are
+ * two.
+ *
+ * Mutation testing says something worth writing down: removing EITHER scope
+ * alone leaves the case green, because the other still holds. Only removing
+ * both fails it. That is redundancy on purpose, not a hole in the test — but it
+ * does mean a single mutation cannot show you which line is doing the work
+ * here, and neither line should be deleted on the evidence of a green run.
+ */
+describe('covers for a set of records', () => {
+	/** A source record belonging to a household, with a cover attached. */
+	async function recordWithCover(household: string, pageId: string, key: string) {
+		const run = one(
+			await sql<{ id: string }[]>`
+				insert into import_runs (household_id, status, dry_run, importer_version)
+				values (${household}::uuid, 'succeeded', false, 'test')
+				returning id
+			`
+		);
+		const source = one(
+			await sql<{ id: string }[]>`
+				insert into import_sources (import_run_id, relative_path, kind, sha256, byte_size)
+				values (${run.id}::uuid, ${key}, 'csv_all', decode(md5(${key}), 'hex'), 1)
+				returning id
+			`
+		);
+		const record = one(
+			await sql<{ id: string }[]>`
+				insert into source_records (import_run_id, source_id, notion_page_id, database_name,
+				                            title, ordinal, raw)
+				values (${run.id}::uuid, ${source.id}::uuid, ${pageId}::uuid, 'Areas Database',
+				        'An area', 0, '{}'::text::jsonb)
+				returning id
+			`
+		);
+		const attachment = await storedAttachment(household, key);
+		await sql`
+			insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
+			values (${attachment}::uuid, 'source_record', ${record.id}::uuid, 'cover', 0)
+		`;
+		return attachment;
+	}
+
+	it('returns the cover keyed by the page id it was asked for', async () => {
+		const pageId = '11111111-1111-4111-8111-111111111111';
+		const attachment = await recordWithCover(householdId, pageId, 'c1/c1/c1.png');
+
+		const covers = await coversForPages(sql, viewerFor(), [pageId]);
+		expect(covers.get(pageId)?.id).toBe(attachment);
+	});
+
+	it('never returns another household’s cover', async () => {
+		const other = one(
+			await sql<{ id: string }[]>`insert into households (name) values ('Elsewhere') returning id`
+		);
+		const pageId = '22222222-2222-4222-8222-222222222222';
+		await recordWithCover(other.id, pageId, 'c2/c2/c2.png');
+
+		// The same page id, asked for by the wrong household.
+		expect(await coversForPages(sql, viewerFor(), [pageId])).toEqual(new Map());
+	});
+
+	it('asks nothing and returns nothing for an empty list', async () => {
+		expect(await coversForPages(sql, viewerFor(), [])).toEqual(new Map());
+		expect(await coversForPages(sql, viewerFor(), [null, null])).toEqual(new Map());
+	});
+});
