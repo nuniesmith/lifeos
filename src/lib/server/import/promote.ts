@@ -396,6 +396,14 @@ async function applyRelation(
 			await sql`update wishlist_items set for_person_id = ${to.id} where id = ${from.id}`;
 			return 'wishlist.person';
 
+		case 'life_assessments->areas':
+			await sql`update life_assessments set area_id = ${to.id} where id = ${from.id}`;
+			return 'assessment.area';
+
+		case 'significant_events->areas':
+			await sql`update significant_events set area_id = ${to.id} where id = ${from.id}`;
+			return 'event.area';
+
 		case 'projects->areas':
 			await sql`
 				insert into project_areas (project_id, area_id)
@@ -1150,6 +1158,54 @@ const upsertBills = mapper('bills', async (sql, row, o) => {
 	return r?.id ?? null;
 });
 
+// ─── reflection (migration 0015) ───────────────────────────────────────────
+
+const upsertAssessments = mapper('life_assessments', async (sql, row, o) => {
+	const rating = int(row, 'Rate 1-10');
+	// A wheel entry without a score is not an assessment of anything.
+	if (rating === null || rating < 1 || rating > 10) return null;
+
+	const [r] = await sql<{ id: string }[]>`
+		insert into life_assessments (household_id, owner_user_id, visibility, focus, rating,
+		                              period, year, is_priority, notes,
+		                              notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, ${o.ownerUserId}, 'private', ${row.title ?? 'Untitled'},
+		        ${rating}, ${text(row, 'When?')},
+		        ${yearOf(row, 'Year', 'Created time')},
+		        ${bool(row, 'Proritize?')}, ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive?') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			focus = excluded.focus, rating = excluded.rating, period = excluded.period,
+			year = excluded.year, is_priority = excluded.is_priority,
+			notes = excluded.notes, source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertEvents = mapper('significant_events', async (sql, row, o) => {
+	// "Event Date" is the day it happened; "Date" is a relation to the day's
+	// own log, which the relation pass handles separately.
+	const on = date(row, 'Event Date');
+	if (!on) return null;
+
+	const [r] = await sql<{ id: string }[]>`
+		insert into significant_events (household_id, owner_user_id, title, on_date,
+		                                is_favourite, notes,
+		                                notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'}, ${on},
+		        ${bool(row, 'Favourite')}, ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			title = excluded.title, on_date = excluded.on_date,
+			is_favourite = excluded.is_favourite, notes = excluded.notes,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
 	'Areas Database': upsertAreas,
@@ -1181,7 +1237,9 @@ const MAPPERS: Record<string, Mapper> = {
 	'Pet Database': upsertPets,
 	'Wishlist Database': upsertWishlist,
 	'Movies & TV Database': upsertMedia,
-	'Bills & Subscriptions Database': upsertBills
+	'Bills & Subscriptions Database': upsertBills,
+	'Wheel of Life Database': upsertAssessments,
+	'Highlights & Significant Events Database': upsertEvents
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);

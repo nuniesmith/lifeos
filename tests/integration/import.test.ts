@@ -52,8 +52,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(27);
-		expect(summary.databases).toBe(13);
+		expect(summary.rows).toBe(30);
+		expect(summary.databases).toBe(15);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			27
+			30
 		);
 	});
 
@@ -420,6 +420,32 @@ describe('committed import', () => {
 		);
 		expect(person.groups).toEqual(['Family', 'Friends']);
 		expect(person.kind).toBe('person');
+	});
+
+	it('refuses a wheel entry with no score, and keeps the one that has it', async () => {
+		await run(false);
+		const rows = await sql<{ focus: string; rating: number; area: string | null }[]>`
+			select w.focus, w.rating, a.name as area
+			from life_assessments w left join areas a on a.id = w.area_id
+		`;
+		// A wheel entry without a rating is not an assessment of anything, so it
+		// is skipped rather than stored as a zero.
+		expect(rows).toEqual([{ focus: 'Physical health', rating: 6, area: 'Health' }]);
+	});
+
+	it('places a significant event on the day it happened', async () => {
+		await run(false);
+		const row = one(
+			await sql<{ title: string; on_date: string; area: string | null }[]>`
+				select e.title, e.on_date::text as on_date, a.name as area
+				from significant_events e left join areas a on a.id = e.area_id
+			`
+		);
+		expect(row).toEqual({
+			title: 'Moved to London',
+			on_date: '2026-05-19',
+			area: 'Environment: House & Home'
+		});
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

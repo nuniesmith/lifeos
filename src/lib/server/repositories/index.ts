@@ -49,6 +49,7 @@ export * from './habits';
 export * from './important-dates';
 export * from './library';
 export * from './projects';
+export * from './reflection';
 export * from './review';
 export * from './search';
 export * from './tags';
