@@ -37,12 +37,29 @@ describe('readiness against a live database', () => {
 		expect(db?.status).toBe('ok');
 	});
 
-	it('reports migrations as failing before any migration has run', async () => {
-		// Phase 2 introduces migrations. Until then this must fail rather than
-		// pass silently, or the deploy gate would accept an unmigrated database.
+	it('reports the custom migration runner as applied', async () => {
+		// CI runs scripts/migrate.mjs before integration tests. The health check
+		// must inspect that runner's schema_migrations table rather than the
+		// unrelated default table name used by Drizzle Kit.
 		const result = await readiness();
 		const migrations = result.checks.find((c) => c.name === 'migrations');
-		expect(migrations?.status).toBe('fail');
-		expect(result.status).toBe('fail');
+		expect(migrations?.status).toBe('ok');
+	});
+
+	it('reports a fresh successful backup as healthy', async () => {
+		const [backup] = await sql<{ id: string }[]>`
+			insert into backup_runs (status, kind, finished_at)
+			values ('success', 'manual', now())
+			returning id
+		`;
+
+		try {
+			const result = await readiness();
+			const check = result.checks.find((c) => c.name === 'backup');
+			expect(check?.status).toBe('ok');
+			expect(check?.detail).toBe('0h old');
+		} finally {
+			if (backup) await sql`delete from backup_runs where id = ${backup.id}`;
+		}
 	});
 });

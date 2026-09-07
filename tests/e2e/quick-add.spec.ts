@@ -44,7 +44,9 @@ test.beforeAll(async () => {
 			on conflict (username) where username is not null do update set
 				password_hash = excluded.password_hash,
 				must_change_credentials = false,
-				disabled_at = null
+				disabled_at = null,
+				failed_login_count = 0,
+				locked_until = null
 			returning id
 		`;
 		await sql`

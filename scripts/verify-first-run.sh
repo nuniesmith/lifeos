@@ -42,6 +42,12 @@ done
 curl -fsS "http://127.0.0.1:${PORT}/api/health/live" >/dev/null || fail "server never became live"
 pass "server is live"
 
+# Readiness catches schema drift that liveness deliberately ignores. A fresh
+# install has no backup yet, so it may be degraded, but it must not be a 503.
+curl -fsS "http://127.0.0.1:${PORT}/api/health/ready" >/dev/null \
+    || fail "server did not become ready after migrations"
+pass "migrations are ready"
+
 # Bootstrap runs at startup; touch the app once so the first request has
 # certainly awaited it.
 curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/" || fail "home page did not respond"

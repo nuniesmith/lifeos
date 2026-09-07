@@ -25,7 +25,7 @@ async function checkMigrations(): Promise<Check> {
 		const rows = await sql<{ count: number }[]>`
 			select count(*)::int as count
 			from information_schema.tables
-			where table_schema = 'public' and table_name = '__drizzle_migrations'
+			where table_schema = 'public' and table_name = 'schema_migrations'
 		`;
 		if (!rows[0]?.count) {
 			return { name: 'migrations', status: 'fail', detail: 'migration table missing' };
@@ -60,20 +60,33 @@ async function checkStorage(): Promise<Check> {
 
 async function checkBackupFreshness(): Promise<Check> {
 	try {
-		const rows = await sql<{ finished_at: Date | null }[]>`
+		const rows = await sql<{ finished_at: Date | string | null }[]>`
 			select finished_at from backup_runs
 			where status = 'success' order by finished_at desc limit 1
 		`;
 		const last = rows[0]?.finished_at;
 		if (!last) return { name: 'backup', status: 'degraded', detail: 'no successful backup' };
-		const age = Date.now() - last.getTime();
+		// The bundled server's shared database client can return timestamptz as
+		// an ISO string even though a bare postgres.js client returns a Date.
+		// Accept both representations.
+		const timestamp = last instanceof Date ? last.getTime() : Date.parse(last);
+		if (!Number.isFinite(timestamp)) {
+			return { name: 'backup', status: 'fail', detail: 'invalid backup timestamp' };
+		}
+		const age = Math.max(0, Date.now() - timestamp);
 		const hours = `${Math.round(age / 3_600_000)}h old`;
 		return age > BACKUP_MAX_AGE_MS
 			? { name: 'backup', status: 'fail', detail: hours }
 			: { name: 'backup', status: 'ok', detail: hours };
-	} catch {
-		// The table does not exist until Phase 6. Absence is not a failure yet.
-		return { name: 'backup', status: 'degraded', detail: 'not yet implemented' };
+	} catch (err) {
+		const error = err as Error & { code?: string };
+		// Older installations legitimately predate backup bookkeeping. Keep
+		// those degraded until migrations run, but do not hide permissions,
+		// connectivity, or malformed-data failures behind the same message.
+		if (error.code === '42P01') {
+			return { name: 'backup', status: 'degraded', detail: 'not yet implemented' };
+		}
+		return { name: 'backup', status: 'fail', detail: error.message };
 	}
 }
 

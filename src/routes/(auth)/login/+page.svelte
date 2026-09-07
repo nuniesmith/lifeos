@@ -27,13 +27,7 @@
 	}}
 >
 	<label for="username">Username</label>
-	<input
-		id="username"
-		name="username"
-		autocomplete="username"
-		required
-		value={form?.username ?? ''}
-	/>
+	<input id="username" name="username" autocomplete="username" required value={form?.username} />
 
 	<label for="password">Password</label>
 	<input id="password" name="password" type="password" autocomplete="current-password" required />
