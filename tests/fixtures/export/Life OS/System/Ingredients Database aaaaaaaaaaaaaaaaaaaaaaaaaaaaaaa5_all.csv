@@ -1,0 +1,4 @@
+Ingredient,Aisle,Status,Staple?,Quantity
+Cheddar,Dairy,✅ In Stock,Yes,2 blocks
+Broccoli,Produce,🛒 Shopping List,No,
+Buttermilk,Dairy,⚡️ Use up!,No,

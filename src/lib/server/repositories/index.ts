@@ -41,6 +41,7 @@ export {
 export * from './archive';
 export * from './areas';
 export * from './daily-logs';
+export * from './food';
 export * from './goals';
 export * from './health';
 export * from './habits';

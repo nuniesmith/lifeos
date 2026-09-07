@@ -305,6 +305,40 @@ async function applyRelation(
 			`;
 			return 'daily_log.health';
 
+		case 'recipes->ingredients':
+			await sql`
+				insert into recipe_ingredients (recipe_id, ingredient_id)
+				values (${from.id}, ${to.id}) on conflict do nothing
+			`;
+			return 'recipe.ingredient';
+
+		case 'meal_plans->recipes': {
+			// Which meal it is lives in the PROPERTY name — Breakfast, Lunch,
+			// Dinner, Snacks — not in the recipe. The source also has display
+			// columns spelled "Breakfast:" and "DInner:", so the match is on a
+			// lowercased substring rather than equality.
+			const p = property.toLowerCase();
+			const slot = p.includes('breakfast')
+				? 'breakfast'
+				: p.includes('lunch')
+					? 'lunch'
+					: p.includes('dinner')
+						? 'dinner'
+						: p.includes('snack')
+							? 'snack'
+							: null;
+			if (!slot) return null;
+			await sql`
+				insert into meal_plan_recipes (meal_plan_id, recipe_id, slot)
+				values (${from.id}, ${to.id}, ${slot}) on conflict do nothing
+			`;
+			return 'meal_plan.recipe';
+		}
+
+		case 'prep_tasks->recipes':
+			await sql`update prep_tasks set recipe_id = ${to.id} where id = ${from.id}`;
+			return 'prep_task.recipe';
+
 		case 'projects->areas':
 			await sql`
 				insert into project_areas (project_id, area_id)
@@ -633,6 +667,178 @@ function vocabularyMapper(kind: string, attributeColumns: readonly string[] = []
 	});
 }
 
+// ─── food (migration 0012) ─────────────────────────────────────────────────
+
+/**
+ * Matches a select value by the words in it, ignoring decoration.
+ *
+ * The Ingredients status options are spelled "✅ In Stock", "🛒 Shopping List",
+ * "⚡️ Use up!" and "❌ Don\u2019t Need". An exact lookup misses every one of
+ * them, and `mapStatus` would quietly return its fallback — so all 68
+ * ingredients would have imported as "in stock" including the shopping list.
+ */
+function matchOption<T extends string>(
+	value: string | null,
+	table: readonly (readonly [string, T])[],
+	fallback: T | null
+): T | null {
+	if (!value) return fallback;
+	// Strip everything that is not a letter or a space, so emoji and
+	// punctuation cannot prevent a match.
+	const text = value
+		.toLowerCase()
+		.replace(/[^a-z ]+/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	for (const [needle, result] of table) if (text.includes(needle)) return result;
+	return fallback;
+}
+
+const INGREDIENT_STATUS = [
+	['shopping', 'shopping_list'],
+	['use up', 'use_up'],
+	['don t need', 'not_needed'],
+	['dont need', 'not_needed'],
+	['in stock', 'in_stock']
+] as const;
+
+const PREP_WHEN = [
+	['batch', 'batch_prep'],
+	['night before', 'night_before'],
+	['before cooking', 'before_cooking']
+] as const;
+
+/** "Breakfast, Snacks" is how the source spells a multi-select. */
+const multi = (row: StagedRow, column: string): string[] => {
+	const raw = text(row, column);
+	if (!raw) return [];
+	return raw
+		.split(',')
+		.map((v) => v.trim())
+		.filter(Boolean);
+};
+
+const upsertIngredients = mapper('ingredients', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into ingredients (household_id, owner_user_id, name, aisle, category, status,
+		                         is_staple, store, quantity, preferred_brand, notes,
+		                         notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${text(row, 'Aisle')}, ${text(row, 'Category')},
+		        ${matchOption(text(row, 'Status'), INGREDIENT_STATUS, 'in_stock')},
+		        ${bool(row, 'Staple?')}, ${text(row, 'Store')}, ${text(row, 'Quantity')},
+		        ${text(row, 'Preferred Brand')}, ${withBody(row, 'Notes')},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			name = excluded.name,
+			aisle = excluded.aisle,
+			category = excluded.category,
+			status = excluded.status,
+			is_staple = excluded.is_staple,
+			store = excluded.store,
+			quantity = excluded.quantity,
+			preferred_brand = excluded.preferred_brand,
+			notes = excluded.notes,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertRecipes = mapper('recipes', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into recipes (household_id, owner_user_id, name, notes, url, servings,
+		                     prep_minutes, cook_minutes, additional_minutes,
+		                     kcal_per_serving, protein_g, carbs_g, fibre_g, sugar_g,
+		                     total_fat_g, sodium_mg, courses, seasons, cuisine, occasion,
+		                     effort, source_type, status, is_favourite, last_made_on,
+		                     notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${withBody(row, 'Notes')}, ${text(row, 'URL')},
+		        ${int(row, '# of Servings')},
+		        ${int(row, 'Prep Time')}, ${int(row, 'Cook Time')},
+		        ${int(row, 'Additional Time')},
+		        ${numeric(row, 'kcal/serving')}, ${numeric(row, 'Protein')},
+		        ${numeric(row, 'Carbs')}, ${numeric(row, 'Fibre')}, ${numeric(row, 'Sugar')},
+		        ${numeric(row, 'Total Fat')}, ${numeric(row, 'Sodium')},
+		        ${multi(row, 'Course')}::text[], ${multi(row, 'Season')}::text[],
+		        ${text(row, 'Cuisine')}, ${text(row, 'Occasion')},
+		        ${text(row, 'Effort/Energy')}, ${text(row, 'Source Type')},
+		        ${text(row, 'Status')}, ${bool(row, 'Favourite')},
+		        ${date(row, 'Date Last Made')},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive?') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			name = excluded.name,
+			notes = excluded.notes,
+			url = excluded.url,
+			servings = excluded.servings,
+			prep_minutes = excluded.prep_minutes,
+			cook_minutes = excluded.cook_minutes,
+			additional_minutes = excluded.additional_minutes,
+			kcal_per_serving = excluded.kcal_per_serving,
+			protein_g = excluded.protein_g,
+			carbs_g = excluded.carbs_g,
+			fibre_g = excluded.fibre_g,
+			sugar_g = excluded.sugar_g,
+			total_fat_g = excluded.total_fat_g,
+			sodium_mg = excluded.sodium_mg,
+			courses = excluded.courses,
+			seasons = excluded.seasons,
+			cuisine = excluded.cuisine,
+			occasion = excluded.occasion,
+			effort = excluded.effort,
+			source_type = excluded.source_type,
+			status = excluded.status,
+			is_favourite = excluded.is_favourite,
+			last_made_on = excluded.last_made_on,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertMealPlans = mapper('meal_plans', async (sql, row, o) => {
+	const on = date(row, 'Date');
+	// The date is the identity; a menu with no date cannot be placed.
+	if (!on) return null;
+
+	const [r] = await sql<{ id: string }[]>`
+		insert into meal_plans (household_id, owner_user_id, on_date, name, notes,
+		                        notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${on}, ${row.title ?? null}, ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			on_date = excluded.on_date,
+			name = excluded.name,
+			notes = excluded.notes,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertPrepTasks = mapper('prep_tasks', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into prep_tasks (household_id, owner_user_id, name, is_done, when_to_do,
+		                        notes, notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${bool(row, 'Done')},
+		        ${matchOption(text(row, 'When?'), PREP_WHEN, null)},
+		        ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			name = excluded.name,
+			is_done = excluded.is_done,
+			when_to_do = excluded.when_to_do,
+			notes = excluded.notes,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
 	'Areas Database': upsertAreas,
@@ -654,7 +860,11 @@ const MAPPERS: Record<string, Mapper> = {
 		'What Helps?'
 	]),
 	'Activity Database': vocabularyMapper('activity'),
-	'Exercise Database': vocabularyMapper('exercise')
+	'Exercise Database': vocabularyMapper('exercise'),
+	'Ingredients Database': upsertIngredients,
+	'Recipes Database': upsertRecipes,
+	'Meal Plan Database': upsertMealPlans,
+	'Prep Tasks Database': upsertPrepTasks
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);

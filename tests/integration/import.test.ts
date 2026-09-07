@@ -52,8 +52,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(11);
-		expect(summary.databases).toBe(4);
+		expect(summary.rows).toBe(17);
+		expect(summary.databases).toBe(7);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			11
+			17
 		);
 	});
 
@@ -213,6 +213,83 @@ describe('committed import', () => {
 			order by v.name
 		`;
 		expect(logged.map((r) => r.name)).toEqual(['Headache', 'Nausea']);
+	});
+
+	it('reads an ingredient status spelled with an emoji', async () => {
+		await run(false);
+		const rows = await sql<{ name: string; status: string }[]>`
+			select name, status from ingredients order by name
+		`;
+		// The options are "✅ In Stock", "🛒 Shopping List", "⚡️ Use up!". An
+		// exact lookup misses all three and falls back to in_stock, which would
+		// have quietly emptied the shopping list.
+		expect(rows).toEqual([
+			{ name: 'Broccoli', status: 'shopping_list' },
+			{ name: 'Buttermilk', status: 'use_up' },
+			{ name: 'Cheddar', status: 'in_stock' }
+		]);
+	});
+
+	it('splits a multi-select course into an array', async () => {
+		await run(false);
+		const soup = one(
+			await sql<{ courses: string[]; seasons: string[] }[]>`
+				select courses, seasons from recipes where name = 'Broccoli Cheese Soup'
+			`
+		);
+		expect(soup.courses).toEqual(['Lunch', 'Dinner']);
+		expect(soup.seasons).toEqual(['Fall', 'Winter']);
+	});
+
+	it('keeps a decimal macro, and derives no total it was not given', async () => {
+		await run(false);
+		const soup = one(
+			await sql<{ protein_g: unknown; prep_minutes: number; cook_minutes: number }[]>`
+				select protein_g, prep_minutes, cook_minutes from recipes
+				where name = 'Broccoli Cheese Soup'
+			`
+		);
+		expect(Number(soup.protein_g)).toBe(16.5);
+		expect(soup.prep_minutes).toBe(10);
+		expect(soup.cook_minutes).toBe(25);
+	});
+
+	it('joins a recipe to the ingredients it calls for', async () => {
+		await run(false);
+		const rows = await sql<{ name: string }[]>`
+			select i.name from recipe_ingredients ri
+			join ingredients i on i.id = ri.ingredient_id
+			join recipes r on r.id = ri.recipe_id
+			where r.name = 'Broccoli Cheese Soup'
+			order by i.name
+		`;
+		expect(rows.map((r) => r.name)).toEqual(['Broccoli', 'Cheddar']);
+	});
+
+	it('takes the meal slot from the property name, not the recipe', async () => {
+		await run(false);
+		const rows = await sql<{ slot: string; name: string }[]>`
+			select m.slot, r.name from meal_plan_recipes m
+			join recipes r on r.id = m.recipe_id
+			order by m.slot
+		`;
+		// The same recipe could be breakfast one day and dinner the next; only
+		// the column it was filed under says which.
+		expect(rows).toEqual([
+			{ slot: 'breakfast', name: 'Fluffy Buttermilk Pancakes' },
+			{ slot: 'dinner', name: 'Broccoli Cheese Soup' }
+		]);
+	});
+
+	it('places a menu on its date', async () => {
+		await run(false);
+		const menu = one(
+			await sql<{ on_date: string; name: string }[]>`
+				select on_date::text as on_date, name from meal_plans
+			`
+		);
+		expect(menu.on_date).toBe('2026-08-24');
+		expect(menu.name).toBe('Monday\u2019s Menu');
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {
