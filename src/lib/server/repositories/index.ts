@@ -44,6 +44,7 @@ export * from './goals';
 export * from './habits';
 export * from './important-dates';
 export * from './projects';
+export * from './review';
 export * from './search';
 export * from './tags';
 export * from './tasks';

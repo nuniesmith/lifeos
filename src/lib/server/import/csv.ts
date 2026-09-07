@@ -239,3 +239,77 @@ export function parseSourceBoolean(value: string): boolean | null {
 	if (v === 'no' || v === 'false' || v === 'unchecked') return false;
 	return null;
 }
+
+/**
+ * A Notion review cadence, which is sometimes a number and sometimes a word.
+ *
+ * Goals and projects store "Set Review Frequency" / "Review Frequency in Days"
+ * as an integer, but areas use a select whose options are words — Month,
+ * Quarter, 6 Months, Year. `parseInt('Month')` is NaN, so reading all three as
+ * integers silently dropped the cadence from every one of the fifteen areas in
+ * the export and left the review page with nothing to compute from.
+ *
+ * The day counts approximate calendar arithmetic: Notion adds a month, so an
+ * area reviewed 1 August next falls due 1 September where 30 days lands on
+ * 31 August. See migration 0009 for why a day of drift is acceptable here.
+ */
+const CADENCE_DAYS: Record<string, number> = {
+	day: 1,
+	daily: 1,
+	week: 7,
+	weekly: 7,
+	fortnight: 14,
+	'2 weeks': 14,
+	month: 30,
+	monthly: 30,
+	'3 months': 91,
+	quarter: 91,
+	quarterly: 91,
+	'6 months': 182,
+	'half year': 182,
+	year: 365,
+	yearly: 365,
+	annually: 365
+};
+
+export function parseReviewCadence(value: string): number | null {
+	const raw = value.trim();
+	if (!raw) return null;
+
+	// A bare number wins, so "30" keeps meaning thirty days.
+	if (/^\d+\s*(days?)?$/i.test(raw)) {
+		const n = Number.parseInt(raw, 10);
+		if (Number.isFinite(n) && n > 0) return n;
+	}
+
+	return CADENCE_DAYS[raw.toLowerCase()] ?? null;
+}
+
+/**
+ * A Notion date-range property, such as `Jul 30 \u2192 Aug 12`.
+ *
+ * The year is omitted whenever the range sits in the current year, which makes
+ * each half unparseable alone — `Date.parse('Jul 30')` lands in 2001. The
+ * caller supplies the year from the row's own `Year` relation, falling back to
+ * its created timestamp. A range that already names its years is left alone.
+ */
+export function parseSourceRange(
+	value: string | null,
+	fallbackYear: number | null
+): { start: string | null; end: string | null } {
+	if (!value) return { start: null, end: null };
+	const [rawStart, rawEnd] = value.split(/\s*(?:\u2192|->|\u2013|\u2014)\s*/, 2);
+
+	const one = (part: string | undefined): string | null => {
+		if (!part?.trim()) return null;
+		if (/\d{4}/.test(part)) return parseSourceDate(part)?.date ?? null;
+
+		// No year in the text and none to supply: refuse. Handing the bare
+		// fragment to Date.parse looks like it works and quietly returns 2001,
+		// which is worse than admitting the date is unknown.
+		if (!fallbackYear) return null;
+		return parseSourceDate(`${part.trim()}, ${fallbackYear}`)?.date ?? null;
+	};
+
+	return { start: one(rawStart), end: one(rawEnd) };
+}

@@ -6,7 +6,12 @@ import type { Sql, TransactionSql } from 'postgres';
  * this driver even though the query interface is identical.
  */
 type Queryable = Sql | TransactionSql;
-import { parseSourceBoolean, parseSourceDate } from './csv.ts';
+import {
+	parseReviewCadence,
+	parseSourceBoolean,
+	parseSourceDate,
+	parseSourceRange
+} from './csv.ts';
 
 /**
  * Promotion of staged rows into domain tables (IMP-007, IMP-010).
@@ -78,6 +83,18 @@ const int = (row: StagedRow, column: string): number | null => {
 	return Number.isFinite(n) ? n : null;
 };
 
+/** Row-reading wrappers over the pure parsers in ./csv. */
+const reviewEveryDays = (row: StagedRow, column: string): number | null =>
+	parseReviewCadence(row.raw[column] ?? '');
+
+/** The leading year of a relation value such as `2026 (Time%20Databases/...)`. */
+function yearOf(row: StagedRow, column: string, fallbackColumn: string): number | null {
+	const direct = /\b(19|20)\d{2}\b/.exec(row.raw[column] ?? '');
+	if (direct) return Number(direct[0]);
+	const created = parseSourceDate(row.raw[fallbackColumn] ?? '')?.date;
+	return created ? Number(created.slice(0, 4)) : null;
+}
+
 /** Notion status values vary per database; each mapper supplies its own table. */
 function mapStatus(value: string | null, table: Record<string, string>, fallback: string): string {
 	if (!value) return fallback;
@@ -117,6 +134,12 @@ const PROJECT_STATUS: Record<string, string> = {
 };
 
 const GOAL_STATUS: Record<string, string> = {
+	// Chosen for later, not started. Without these two the "On the Horizon"
+	// board collapses into the active goals and a review asks for progress on
+	// something deliberately not begun.
+	someday: 'someday',
+	planned: 'planned',
+	'not started': 'planned',
 	active: 'active',
 	'in progress': 'active',
 	achieved: 'achieved',
@@ -308,7 +331,8 @@ const upsertAreas = mapper('areas', async (sql, row, o) => {
 		                   last_reviewed_on, notion_page_id, source_record_id,
 		                   created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
-		        ${withBody(row, null)}, ${int(row, 'Review Every')}, ${date(row, 'Last Reviewed')},
+		        ${withBody(row, null)}, ${reviewEveryDays(row, 'Review Every')},
+		        ${date(row, 'Last Reviewed')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
 		on conflict (notion_page_id) do update set
@@ -325,12 +349,14 @@ const upsertAreas = mapper('areas', async (sql, row, o) => {
 const upsertGoals = mapper('goals', async (sql, row, o) => {
 	const [r] = await sql<{ id: string }[]>`
 		insert into goals (household_id, owner_user_id, title, description, status,
-		                   target_date, achieved_on, notion_page_id, source_record_id,
+		                   target_date, achieved_on, review_every_days, last_reviewed_on,
+		                   notion_page_id, source_record_id,
 		                   created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
 		        ${withBody(row, 'Short Summary')},
 		        ${mapStatus(text(row, 'Status'), GOAL_STATUS, 'active')},
 		        ${date(row, 'Deadline')}, ${date(row, 'Achieved on')},
+		        ${reviewEveryDays(row, 'Set Review Frequency')}, ${date(row, 'Last Review')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
 		on conflict (notion_page_id) do update set
@@ -339,6 +365,8 @@ const upsertGoals = mapper('goals', async (sql, row, o) => {
 			status = excluded.status,
 			target_date = excluded.target_date,
 			achieved_on = excluded.achieved_on,
+			review_every_days = excluded.review_every_days,
+			last_reviewed_on = excluded.last_reviewed_on,
 			source_record_id = excluded.source_record_id
 		returning id
 	`;
@@ -346,14 +374,23 @@ const upsertGoals = mapper('goals', async (sql, row, o) => {
 });
 
 const upsertProjects = mapper('projects', async (sql, row, o) => {
+	// `Review Due` is a Yes/No formula, not a date. Reading it as one left
+	// `due_on` null for every project in the export, while the schedule that
+	// does exist — the `Timeline` range — was dropped on the floor.
+	const timeline = parseSourceRange(text(row, 'Timeline'), yearOf(row, 'Year', 'Created time'));
+
 	const [r] = await sql<{ id: string }[]>`
 		insert into projects (household_id, owner_user_id, name, description, status,
-		                      due_on, notion_page_id, source_record_id, created_by,
+		                      start_on, due_on, review_every_days, last_reviewed_on,
+		                      notion_page_id, source_record_id, created_by,
 		                      is_template, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
 		        ${withBody(row, 'Notes')},
 		        ${mapStatus(text(row, 'Status'), PROJECT_STATUS, 'active')},
-		        ${date(row, 'Review Due')}, ${row.notion_page_id}, ${row.id},
+		        ${timeline.start}, ${timeline.end},
+		        ${reviewEveryDays(row, 'Review Frequency in Days')},
+		        ${date(row, 'Last Review')},
+		        ${row.notion_page_id}, ${row.id},
 		        ${o.createdBy},
 		        ${/template/i.test(row.title ?? '')},
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
@@ -361,6 +398,10 @@ const upsertProjects = mapper('projects', async (sql, row, o) => {
 			name = excluded.name,
 			description = excluded.description,
 			status = excluded.status,
+			start_on = excluded.start_on,
+			due_on = excluded.due_on,
+			review_every_days = excluded.review_every_days,
+			last_reviewed_on = excluded.last_reviewed_on,
 			source_record_id = excluded.source_record_id
 		returning id
 	`;

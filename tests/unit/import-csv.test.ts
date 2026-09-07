@@ -5,8 +5,10 @@ import {
 	parseCsv,
 	parseCsvTable,
 	parseRelationCell,
+	parseReviewCadence,
 	parseSourceBoolean,
 	parseSourceDate,
+	parseSourceRange,
 	stripBom
 } from '$lib/server/import/csv';
 
@@ -161,5 +163,73 @@ describe('paths containing parentheses', () => {
 
 	it('stops rather than guessing on an unbalanced parenthesis', () => {
 		expect(parseRelationCell('A (X/unclosed%20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.csv')).toEqual([]);
+	});
+});
+
+describe('review cadence', () => {
+	it('reads the word cadences the Areas database actually uses', () => {
+		// Every one of the fifteen areas in the export stores a word here, and
+		// the importer read the column with parseInt. NaN became null, so the
+		// cadence was silently dropped from all of them.
+		expect(parseReviewCadence('Month')).toBe(30);
+		expect(parseReviewCadence('Quarter')).toBe(91);
+		expect(parseReviewCadence('6 Months')).toBe(182);
+		expect(parseReviewCadence('Year')).toBe(365);
+	});
+
+	it('still reads the integers goals and projects store', () => {
+		// 'Set Review Frequency' and 'Review Frequency in Days' are numbers:
+		// 7, 14, 30 and 90 all appear in the export.
+		expect(parseReviewCadence('7')).toBe(7);
+		expect(parseReviewCadence('14')).toBe(14);
+		expect(parseReviewCadence('30')).toBe(30);
+		expect(parseReviewCadence('90')).toBe(90);
+		expect(parseReviewCadence('30 days')).toBe(30);
+	});
+
+	it('is case-insensitive and ignores surrounding space', () => {
+		expect(parseReviewCadence('  quarterly ')).toBe(91);
+	});
+
+	it('returns null rather than guessing', () => {
+		expect(parseReviewCadence('')).toBeNull();
+		expect(parseReviewCadence('sometimes')).toBeNull();
+		// A zero-day cadence would make everything permanently overdue.
+		expect(parseReviewCadence('0')).toBeNull();
+	});
+});
+
+describe('date ranges', () => {
+	it('parses a Timeline whose year Notion omitted', () => {
+		// 'Jul 30 → Aug 12' is a real value. Each half alone is unparseable —
+		// Date.parse('Jul 30') lands in 2001 — so the year comes from the row.
+		expect(parseSourceRange('Jul 30 \u2192 Aug 12', 2026)).toEqual({
+			start: '2026-07-30',
+			end: '2026-08-12'
+		});
+	});
+
+	it('spans a year boundary without inventing one', () => {
+		expect(parseSourceRange('Sep 24 \u2192 Oct 31', 2026)).toEqual({
+			start: '2026-09-24',
+			end: '2026-10-31'
+		});
+	});
+
+	it('leaves a range that names its own years alone', () => {
+		expect(parseSourceRange('January 3, 2025 \u2192 March 9, 2025', 2026)).toEqual({
+			start: '2025-01-03',
+			end: '2025-03-09'
+		});
+	});
+
+	it('handles a single date and an empty cell', () => {
+		expect(parseSourceRange('Aug 1', 2026)).toEqual({ start: '2026-08-01', end: null });
+		expect(parseSourceRange('', 2026)).toEqual({ start: null, end: null });
+		expect(parseSourceRange(null, 2026)).toEqual({ start: null, end: null });
+	});
+
+	it('gives up rather than guess when there is no year to fall back on', () => {
+		expect(parseSourceRange('Jul 30 \u2192 Aug 12', null).start).toBeNull();
 	});
 });

@@ -34,16 +34,24 @@ export const PROJECT_STATUS_TONES: Record<ProjectStatus, Tone> = {
 };
 
 export const GOAL_STATUS_LABELS: Record<GoalStatus, string> = {
+	// Declared in the order a goal moves through them, because `optionsOf`
+	// turns this object straight into the select.
+	someday: 'Someday',
+	planned: 'Planned',
 	active: 'Active',
-	achieved: 'Achieved',
 	paused: 'Paused',
+	achieved: 'Achieved',
 	dropped: 'Dropped'
 };
 
 export const GOAL_STATUS_TONES: Record<GoalStatus, Tone> = {
+	// Neither of the not-yet-started states is a warning: choosing to do
+	// something later is a decision, not a problem.
+	someday: 'neutral',
+	planned: 'neutral',
 	active: 'accent',
-	achieved: 'ok',
 	paused: 'warn',
+	achieved: 'ok',
 	dropped: 'neutral'
 };
 

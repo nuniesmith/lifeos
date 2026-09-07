@@ -12,6 +12,7 @@ import {
 	resolveOwnership,
 	toBool,
 	toDayOrNull,
+	toIntOrNull,
 	toText,
 	toTextOrNull,
 	writableBy,
@@ -27,6 +28,7 @@ import {
 import {
 	optionalBool,
 	optionalDay,
+	optionalInt,
 	optionalOneOf,
 	optionalText,
 	patched,
@@ -52,6 +54,9 @@ export interface ProjectRecord extends RecordBase {
 	dueOn: string | null;
 	completedOn: string | null;
 	isTemplate: boolean;
+	/** Days between reviews; null means this project is not on a review cycle. */
+	reviewEveryDays: number | null;
+	lastReviewedOn: string | null;
 }
 
 interface ProjectRow extends BaseRow {
@@ -62,6 +67,8 @@ interface ProjectRow extends BaseRow {
 	due_on: string | null;
 	completed_on: string | null;
 	is_template: unknown;
+	review_every_days: unknown;
+	last_reviewed_on: string | null;
 }
 
 const TABLE = 'projects';
@@ -70,7 +77,7 @@ const columns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	name, description, status,
 	start_on::text as start_on, due_on::text as due_on, completed_on::text as completed_on,
-	is_template`;
+	is_template, review_every_days, last_reviewed_on::text as last_reviewed_on`;
 
 function mapProject(row: ProjectRow): ProjectRecord {
 	return {
@@ -81,7 +88,9 @@ function mapProject(row: ProjectRow): ProjectRecord {
 		startOn: toDayOrNull(row.start_on),
 		dueOn: toDayOrNull(row.due_on),
 		completedOn: toDayOrNull(row.completed_on),
-		isTemplate: toBool(row.is_template)
+		isTemplate: toBool(row.is_template),
+		reviewEveryDays: toIntOrNull(row.review_every_days),
+		lastReviewedOn: toDayOrNull(row.last_reviewed_on)
 	};
 }
 
@@ -182,6 +191,8 @@ export interface ProjectInput extends OwnershipInput {
 	dueOn?: unknown;
 	completedOn?: unknown;
 	isTemplate?: unknown;
+	reviewEveryDays?: unknown;
+	lastReviewedOn?: unknown;
 }
 
 export function createProject(
@@ -199,7 +210,8 @@ export function createProject(
 		const rows = await sql<ProjectRow[]>`
 			insert into projects (
 				household_id, owner_user_id, visibility, name, description, status,
-				start_on, due_on, completed_on, is_template, created_by, updated_by
+				start_on, due_on, completed_on, is_template, review_every_days,
+				last_reviewed_on, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${optionalText(input.description, 'description')}, ${status},
@@ -207,6 +219,8 @@ export function createProject(
 				${optionalDay(input.dueOn, 'due date')}::date,
 				${optionalDay(input.completedOn, 'completed date')}::date,
 				${optionalBool(input.isTemplate, 'template') ?? false}::boolean,
+				${optionalInt(input.reviewEveryDays, 'review every', { min: 1 })}::int,
+				${optionalDay(input.lastReviewedOn, 'last reviewed')}::date,
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			)
 			returning ${columns(sql)}
@@ -249,6 +263,12 @@ export function updateProject(
 				'isTemplate',
 				current.isTemplate,
 				(v) => optionalBool(v, 'template') ?? false
+			),
+			reviewEveryDays: patched(patch, 'reviewEveryDays', current.reviewEveryDays, (v) =>
+				optionalInt(v, 'review every', { min: 1 })
+			),
+			lastReviewedOn: patched(patch, 'lastReviewedOn', current.lastReviewedOn, (v) =>
+				optionalDay(v, 'last reviewed')
 			)
 		};
 		const ownership = resolveOwnership(viewer, patch, {
@@ -276,6 +296,8 @@ export function updateProject(
 						then coalesce(${next.completedOn}::date, projects.completed_on, current_date)
 					else ${next.completedOn}::date end,
 				is_template = ${next.isTemplate}::boolean,
+				review_every_days = ${next.reviewEveryDays}::int,
+				last_reviewed_on = ${next.lastReviewedOn}::date,
 				owner_user_id = ${ownership.ownerUserId}::uuid,
 				visibility = ${ownership.visibility},
 				updated_by = ${viewer.userId}::uuid`,

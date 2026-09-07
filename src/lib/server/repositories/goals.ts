@@ -11,6 +11,7 @@ import {
 	readableScope,
 	resolveOwnership,
 	toDayOrNull,
+	toIntOrNull,
 	toNumberOrNull,
 	toText,
 	toTextOrNull,
@@ -27,6 +28,7 @@ import {
 import {
 	optionalDay,
 	optionalFraction,
+	optionalInt,
 	optionalOneOf,
 	optionalText,
 	patched,
@@ -42,7 +44,14 @@ import {
  * countable underneath them yet.
  */
 
-export const GOAL_STATUSES = ['active', 'achieved', 'paused', 'dropped'] as const;
+export const GOAL_STATUSES = [
+	'someday',
+	'planned',
+	'active',
+	'paused',
+	'achieved',
+	'dropped'
+] as const;
 export type GoalStatus = (typeof GOAL_STATUSES)[number];
 
 export interface GoalRecord extends RecordBase {
@@ -52,6 +61,9 @@ export interface GoalRecord extends RecordBase {
 	targetDate: string | null;
 	achievedOn: string | null;
 	manualProgress: number | null;
+	/** Days between reviews; null means this goal is not on a review cycle. */
+	reviewEveryDays: number | null;
+	lastReviewedOn: string | null;
 }
 
 interface GoalRow extends BaseRow {
@@ -61,6 +73,8 @@ interface GoalRow extends BaseRow {
 	target_date: string | null;
 	achieved_on: string | null;
 	manual_progress: unknown;
+	review_every_days: unknown;
+	last_reviewed_on: string | null;
 }
 
 const TABLE = 'goals';
@@ -68,7 +82,8 @@ const TABLE = 'goals';
 const columns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	title, description, status,
-	target_date::text as target_date, achieved_on::text as achieved_on, manual_progress`;
+	target_date::text as target_date, achieved_on::text as achieved_on, manual_progress,
+	review_every_days, last_reviewed_on::text as last_reviewed_on`;
 
 function mapGoal(row: GoalRow): GoalRecord {
 	return {
@@ -79,7 +94,9 @@ function mapGoal(row: GoalRow): GoalRecord {
 		targetDate: toDayOrNull(row.target_date),
 		achievedOn: toDayOrNull(row.achieved_on),
 		// numeric arrives as a string so the driver cannot round it.
-		manualProgress: toNumberOrNull(row.manual_progress)
+		manualProgress: toNumberOrNull(row.manual_progress),
+		reviewEveryDays: toIntOrNull(row.review_every_days),
+		lastReviewedOn: toDayOrNull(row.last_reviewed_on)
 	};
 }
 
@@ -165,6 +182,8 @@ export interface GoalInput extends OwnershipInput {
 	targetDate?: unknown;
 	achievedOn?: unknown;
 	manualProgress?: unknown;
+	reviewEveryDays?: unknown;
+	lastReviewedOn?: unknown;
 }
 
 export function createGoal(
@@ -182,13 +201,16 @@ export function createGoal(
 		const rows = await sql<GoalRow[]>`
 			insert into goals (
 				household_id, owner_user_id, visibility, title, description, status,
-				target_date, achieved_on, manual_progress, created_by, updated_by
+				target_date, achieved_on, manual_progress, review_every_days,
+				last_reviewed_on, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${title},
 				${optionalText(input.description, 'description')}, ${status},
 				${optionalDay(input.targetDate, 'target date')}::date,
 				${optionalDay(input.achievedOn, 'achieved on')}::date,
 				${optionalFraction(input.manualProgress, 'progress')}::numeric,
+				${optionalInt(input.reviewEveryDays, 'review every', { min: 1 })}::int,
+				${optionalDay(input.lastReviewedOn, 'last reviewed')}::date,
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			)
 			returning ${columns(sql)}
@@ -229,6 +251,12 @@ export function updateGoal(
 			),
 			manualProgress: patched(patch, 'manualProgress', current.manualProgress, (v) =>
 				optionalFraction(v, 'progress')
+			),
+			reviewEveryDays: patched(patch, 'reviewEveryDays', current.reviewEveryDays, (v) =>
+				optionalInt(v, 'review every', { min: 1 })
+			),
+			lastReviewedOn: patched(patch, 'lastReviewedOn', current.lastReviewedOn, (v) =>
+				optionalDay(v, 'last reviewed')
 			)
 		};
 		const ownership = resolveOwnership(viewer, patch, {
@@ -253,6 +281,8 @@ export function updateGoal(
 						then coalesce(${next.achievedOn}::date, goals.achieved_on, current_date)
 					else ${next.achievedOn}::date end,
 				manual_progress = ${next.manualProgress}::numeric,
+				review_every_days = ${next.reviewEveryDays}::int,
+				last_reviewed_on = ${next.lastReviewedOn}::date,
 				owner_user_id = ${ownership.ownerUserId}::uuid,
 				visibility = ${ownership.visibility},
 				updated_by = ${viewer.userId}::uuid`,
