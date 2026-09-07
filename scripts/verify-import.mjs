@@ -23,7 +23,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import postgres from 'postgres';
-import { parseCsv, stripBom } from '../src/lib/server/import/csv.ts';
+import { parseCsv, parseSourceDate, stripBom } from '../src/lib/server/import/csv.ts';
 
 const argv = process.argv.slice(2);
 const valueOf = (name, fallback) => {
@@ -278,6 +278,201 @@ const main = async () => {
 				.filter(([n, v]) => got.get(n) !== v)
 				.map(([n, v]) => `${n}: source ${v}, stored ${got.get(n)}`)
 		);
+	}
+
+	// ─── Health vocabulary: seven Notion databases collapse into two tables ──
+	//
+	// The riskiest mapping in the import, and until now the least checked. Each
+	// source database becomes a `kind`, and every row in it must survive as a
+	// term of that kind — a database silently mapping to nothing looks exactly
+	// like a database that was empty.
+	{
+		const KINDS = {
+			'Symptoms Database': 'symptom',
+			'Vitamins Database': 'vitamin',
+			'Energy Level Database': 'energy',
+			'Mood Feelings Database': 'mood',
+			'Exercise Database': 'exercise',
+			'Activity Database': 'activity'
+		};
+		const stored = new Map();
+		for (const row of await sql`select kind, lower(trim(name)) as name from health_vocabulary`) {
+			if (!stored.has(row.kind)) stored.set(row.kind, new Set());
+			stored.get(row.kind).add(row.name);
+		}
+
+		let checked = 0;
+		const wrong = [];
+		for (const [table, kind] of Object.entries(KINDS)) {
+			const rows = await rowsOf(files.get(table));
+			// The title column is the first one, whatever it is called: Notion
+			// names it after the database, so it differs per table.
+			const titleKey = Object.keys(rows[0] ?? {})[0];
+			const names = rows
+				.map((row) => (row[titleKey] ?? '').trim())
+				.filter((name) => name.length > 0);
+			const have = stored.get(kind) ?? new Set();
+			for (const name of names) {
+				checked++;
+				if (!have.has(name.toLowerCase())) wrong.push(`${kind}: "${name}" is not stored`);
+			}
+		}
+		report('Health vocabulary (7 databases -> 2 tables)', checked, wrong);
+	}
+
+	// ─── Daily log readings: numbers that must survive as numbers ───────────
+	{
+		const rows = await rowsOf(files.get('Daily Log Database'));
+		// `Physical Symptoms ` carries a trailing space in the export's header,
+		// and so does `Time Spent Reading `. Reading by the obvious name returns
+		// undefined for every row and reports a clean zero.
+		const READINGS = {
+			'Blood Glucose': 'blood_glucose',
+			'Systolic BP': 'systolic_bp',
+			'Diastolic BP': 'diastolic_bp',
+			'Heart Rate': 'heart_rate',
+			'Sleep Score': 'sleep_score',
+			Water: 'water',
+			Caffeine: 'caffeine'
+		};
+		const stored = new Map(
+			(
+				await sql`select on_date::text as d, ${sql.unsafe(Object.values(READINGS).join(', '))} from daily_logs`
+			).map((r) => [r.d, r])
+		);
+		let checked = 0;
+		const wrong = [];
+		for (const row of rows) {
+			const date = (row.Date ?? '').trim();
+			const parsed = date ? parseSourceDate(date) : null;
+			if (!parsed) continue;
+			const target = stored.get(parsed.date);
+			if (!target) continue;
+			for (const [column, field] of Object.entries(READINGS)) {
+				const raw = (row[column] ?? '').trim();
+				if (!raw || !/^-?\d+(\.\d+)?$/.test(raw)) continue;
+				checked++;
+				const want = Number(raw);
+				const got = target[field] === null ? null : Number(target[field]);
+				if (got === null || Math.abs(got - want) > 0.005) {
+					wrong.push(`${parsed.date} ${column}: source ${want}, stored ${got}`);
+				}
+			}
+		}
+		report('Daily log readings (numbers stay numbers)', checked, wrong);
+	}
+
+	// ─── Daily log -> health terms ─────────────────────────────────────────
+	{
+		const rows = await rowsOf(files.get('Daily Log Database'));
+		const header = Object.keys(rows[0] ?? {});
+		// Matched loosely on purpose, because of the trailing spaces above.
+		const columnFor = (label) =>
+			header.find((key) => key.trim().toLowerCase() === label.toLowerCase());
+		const RELATIONS = [
+			'Physical Symptoms',
+			'Vitamins',
+			'Energy',
+			'Mood/Feelings',
+			'Activity',
+			'Workout'
+		];
+
+		const stored = new Map();
+		for (const row of await sql`
+			select d.on_date::text as d, count(*)::int as n
+			from daily_log_health h join daily_logs d on d.id = h.daily_log_id
+			group by d.on_date
+		`) {
+			stored.set(row.d, row.n);
+		}
+
+		let checked = 0;
+		const wrong = [];
+		for (const row of rows) {
+			const date = (row.Date ?? '').trim();
+			const parsed = date ? parseSourceDate(date) : null;
+			if (!parsed) continue;
+			let want = 0;
+			for (const label of RELATIONS) {
+				const key = columnFor(label);
+				if (!key) continue;
+				want += ((row[key] ?? '').match(/\(/g) ?? []).length;
+			}
+			if (want === 0) continue;
+			checked++;
+			const got = stored.get(parsed.date) ?? 0;
+			if (got !== want) wrong.push(`${parsed.date}: source ${want} term(s), stored ${got}`);
+		}
+		report('Daily log -> health terms', checked, wrong);
+	}
+
+	// ─── Wheel of Life ratings ─────────────────────────────────────────────
+	{
+		const rows = await rowsOf(files.get('Wheel of Life Database'));
+		// The rating column is `Rate 1-10`, not "Rating"; the identity is
+		// `Focus`, not the first column by convention. Both were guessed wrong
+		// first, which is why they are named literally here.
+		const want = new Map();
+		for (const row of rows) {
+			const focus = (row.Focus ?? '').trim();
+			const raw = (row['Rate 1-10'] ?? '').trim();
+			const value = stars(raw) || (/^\d+$/.test(raw) ? Number(raw) : 0);
+			if (focus && value) want.set(focus, value);
+		}
+		const got = new Map(
+			(await sql`select focus, rating from life_assessments`).map((r) => [r.focus, r.rating])
+		);
+		report(
+			'Wheel of Life ratings',
+			want.size,
+			[...want]
+				.filter(([n, v]) => got.get(n) !== v)
+				.map(([n, v]) => `${n}: source ${v}, stored ${got.get(n)}`)
+		);
+	}
+
+	// ─── Row counts for the packs with no distinctive value to probe ───────
+	//
+	// Weaker than a value check and labelled as such, but it still catches a
+	// whole database mapping to nothing, which is the failure that matters.
+	{
+		// Each entry lists EVERY source database that feeds the target. `people`
+		// is fed by two — People & Places and the Pet Database, because a vet's
+		// patient is a member of the household too — and checking it against one
+		// of them reported a correct import as wrong.
+		const COUNTS = [
+			[
+				['People & Places Databases', 'Pet Database'],
+				sql`select count(*)::int as n from people`,
+				'people'
+			],
+			[['Wishlist Database'], sql`select count(*)::int as n from wishlist_items`, 'wishlist items'],
+			[['Meal Plan Database'], sql`select count(*)::int as n from meal_plans`, 'meal plans'],
+			[['Prep Tasks Database'], sql`select count(*)::int as n from prep_tasks`, 'prep tasks'],
+			[['Ingredients Database'], sql`select count(*)::int as n from ingredients`, 'ingredients'],
+			[['Habit Tracker Database'], sql`select count(*)::int as n from habits`, 'habits'],
+			[
+				['Highlights & Significant Events Database'],
+				sql`select count(*)::int as n from significant_events`,
+				'significant events'
+			]
+		];
+		let checked = 0;
+		const wrong = [];
+		for (const [tables, query, label] of COUNTS) {
+			let named = 0;
+			for (const table of tables) {
+				const rows = await rowsOf(files.get(table));
+				const titleKey = Object.keys(rows[0] ?? {})[0];
+				named += rows.filter((row) => (row[titleKey] ?? '').trim().length > 0).length;
+			}
+			if (named === 0) continue;
+			checked++;
+			const [{ n }] = await query;
+			if (n !== named) wrong.push(`${label}: source ${named} named row(s), stored ${n}`);
+		}
+		report('Whole-database row counts', checked, wrong);
 	}
 
 	console.log(
