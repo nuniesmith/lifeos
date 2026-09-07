@@ -61,7 +61,20 @@ export interface ImportSummary {
 	pageFiles: number;
 	/** Rows with no title; a page file cannot exist for these. */
 	untitledRows: number;
-	issues: { severity: string; code: string; message: string }[];
+	issues: {
+		severity: string;
+		code: string;
+		message: string;
+		/**
+		 * The records the message is about.
+		 *
+		 * An issue that counts without naming cannot be acted on: "11 relation
+		 * references did not resolve" tells you a problem exists and gives you
+		 * no way to find it. The `detail` column existed for this and was never
+		 * written, so every issue in the table read `{}`.
+		 */
+		detail?: Record<string, unknown>;
+	}[];
 	/** Present when promotion ran. */
 	promoted?: PromoteSummary;
 	/** Formula and rollup replacements checked against the source (IMP-008). */
@@ -82,8 +95,12 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 	const inv = await inventory(options.root);
 
 	const issues: ImportSummary['issues'] = [];
-	const note = (severity: 'info' | 'warning' | 'error', code: string, message: string) =>
-		issues.push({ severity, code, message });
+	const note = (
+		severity: 'info' | 'warning' | 'error',
+		code: string,
+		message: string,
+		detail?: Record<string, unknown>
+	) => issues.push({ severity, code, message, detail });
 
 	if (inv.duplicatePaths.length) {
 		note(
@@ -394,6 +411,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 			let linkCount = 0;
 			let unresolved = 0;
 			const unresolvedTargets = new Set<string>();
+			const unresolvedDetail = new Map<string, { title: string; properties: Set<string> }>();
 			// Page ids present anywhere in the export, used to distinguish
 			// "points at a page we have" from "points at something missing".
 			const pageFileIds = new Set(
@@ -407,7 +425,19 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					const targetRecordId = recordIdByNotionId.get(ref.notionId) ?? null;
 					if (!targetRecordId) {
 						unresolved++;
-						unresolvedTargets.add(notionIdToUuid(ref.notionId));
+						const targetId = notionIdToUuid(ref.notionId);
+						unresolvedTargets.add(targetId);
+						// Kept so the issue can name what failed. The label Notion
+						// wrote beside the reference is the only human-readable
+						// clue to which page was meant, and the property says which
+						// link was lost — a task's project is worth chasing, a
+						// dashboard's widget is not.
+						const seen = unresolvedDetail.get(targetId) ?? {
+							title: ref.title,
+							properties: new Set<string>()
+						};
+						seen.properties.add(pending.property);
+						unresolvedDetail.set(targetId, seen);
 					}
 
 					await tx`
@@ -462,14 +492,28 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					`${unresolved} relation reference(s) across ${unresolvedTargets.size} ` +
 						`distinct target(s) did not resolve to a canonical row; ` +
 						`${knownPages} of those targets exist as page files, so they are ` +
-						`pages no row could claim (untitled or duplicate titles)`
+						`pages no row could claim (untitled or duplicate titles)`,
+					{
+						targets: [...unresolvedDetail.entries()]
+							.map(([id, seen]) => ({
+								notionPageId: id,
+								title: seen.title,
+								// Whether the page exists in the export separates "we
+								// have the page but no row claimed it" from "the
+								// reference points outside the export entirely".
+								pageFilePresent: pageFileIds.has(id),
+								referencedBy: [...seen.properties].sort()
+							}))
+							.sort((a, b) => a.title.localeCompare(b.title))
+					}
 				);
 			}
 
 			for (const issue of issues) {
 				await tx`
-					insert into import_issues (import_run_id, severity, code, message)
-					values (${run.id}, ${issue.severity}, ${issue.code}, ${issue.message})
+					insert into import_issues (import_run_id, severity, code, message, detail)
+					values (${run.id}, ${issue.severity}, ${issue.code}, ${issue.message},
+					        ${JSON.stringify(issue.detail ?? {})}::text::jsonb)
 				`;
 			}
 
