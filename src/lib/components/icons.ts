@@ -73,7 +73,9 @@ export const ICONS = {
 	signOut: [
 		'M15 8.25V6a1.75 1.75 0 0 0-1.75-1.75h-6.5A1.75 1.75 0 0 0 5 6v12a1.75 1.75 0 0 0 1.75 1.75h6.5A1.75 1.75 0 0 0 15 18v-2.25',
 		'M11 12h9M17 9l3 3-3 3'
-	]
+	],
+	/* A magnifier: the circle as two arcs, per the note above. */
+	search: ['M5 10.75a5.75 5.75 0 1 0 11.5 0 5.75 5.75 0 1 0-11.5 0', 'M14.9 14.9l4.35 4.35']
 } as const satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICONS;

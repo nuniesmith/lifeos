@@ -30,6 +30,17 @@
 		Home
 		<span class="today-label">Today</span>
 	</a>
+	<!-- Search sits with Home rather than inside a group: it reaches across
+	     every group, so filing it under one of them would be a lie. -->
+	<a
+		class="destination"
+		class:current={isCurrent(pathname, '/search')}
+		href={resolve(appPath('/search'))}
+		aria-current={isCurrent(pathname, '/search') ? 'page' : undefined}
+	>
+		<Icon name="search" size={17} />
+		Search
+	</a>
 
 	{#each WORKSPACE_GROUPS as group (group.id)}
 		<section aria-labelledby={`nav-${group.id}`}>

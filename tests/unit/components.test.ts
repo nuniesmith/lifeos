@@ -51,6 +51,7 @@ describe('nav destinations', () => {
 	it('lists every section the shell promises', () => {
 		expect(APP_DESTINATIONS.map((d) => d.label)).toEqual([
 			'Today',
+			'Search',
 			'Calendar',
 			'Tasks',
 			'Habits',

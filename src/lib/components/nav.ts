@@ -67,6 +67,7 @@ export interface Destination {
 
 export const APP_DESTINATIONS: readonly Destination[] = [
 	{ href: '/', label: 'Today', icon: 'today', onBar: true },
+	{ href: '/search', label: 'Search', icon: 'search' },
 	{ href: '/calendar', label: 'Calendar', icon: 'today' },
 	{ href: '/tasks', label: 'Tasks', icon: 'tasks', onBar: true },
 	{ href: '/habits', label: 'Habits', icon: 'habits', onBar: true },
