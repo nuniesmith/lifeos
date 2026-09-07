@@ -15,6 +15,29 @@ STATE_DIR="${LIFEOS_STATE_DIR:-/srv/lifeos}"
 RELEASES="$STATE_DIR/releases"
 
 say()  { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
+# Polls until a condition holds, printing a dot each time round.
+#
+# The dots are the point. Every silent stretch in this script has cost a
+# deploy: the SSH session is dropped from under a command that prints nothing
+# for a minute or two, and it surfaces as ssh's own exit 255 with no error of
+# ours to explain it. A waiter that says nothing is indistinguishable from a
+# hung one to anything between here and the runner.
+#
+#   wait_for <attempts> <seconds-between> <command...>
+wait_for() {
+    local attempts=$1 pause=$2; shift 2
+    local i
+    for (( i = 0; i < attempts; i++ )); do
+        if "$@"; then
+            [[ $i -gt 0 ]] && printf '\n'
+            return 0
+        fi
+        printf '.'
+        sleep "$pause"
+    done
+    printf '\n'
+    return 1
+}
 ok()   { printf '\033[32m✔\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m✘\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -70,11 +93,8 @@ ok "image present"
 # ─── database up, and backed up before any migration ───────────────────────
 say "Ensuring the database is running"
 LIFEOS_IMAGE="$LIFEOS_IMAGE" "${COMPOSE[@]}" up -d db
-for _ in $(seq 1 60); do
-    "${COMPOSE[@]}" exec -T db pg_isready -q && break
-    sleep 2
-done
-"${COMPOSE[@]}" exec -T db pg_isready -q || die "database did not become ready"
+db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
+wait_for 60 2 db_ready || die "database did not become ready"
 ok "database ready"
 
 if [[ -x scripts/backup.sh ]]; then
@@ -128,14 +148,9 @@ set_image "$LIFEOS_IMAGE"
 
 # ─── hard health gate ──────────────────────────────────────────────────────
 say "Waiting for health"
+app_live() { curl -fsS --max-time 3 http://127.0.0.1:8080/api/health/live >/dev/null 2>&1; }
 healthy=false
-for _ in $(seq 1 45); do
-    if curl -fsS --max-time 3 http://127.0.0.1:8080/api/health/live >/dev/null 2>&1; then
-        healthy=true
-        break
-    fi
-    sleep 2
-done
+wait_for 45 2 app_live && healthy=true
 
 if [[ "$healthy" != true ]]; then
     printf '\033[31m✘\033[0m %s\n' "new image failed its health check"

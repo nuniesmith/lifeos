@@ -60,6 +60,9 @@ db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
 
 for _ in $(seq 1 60); do
     db_ready && break
+    # A dot per attempt: a silent wait over SSH is what gets the session
+    # dropped, and this script is called from inside the deploy.
+    printf '.'
     sleep 2
 done
 db_ready || die "database is not ready"
