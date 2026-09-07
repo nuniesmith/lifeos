@@ -46,7 +46,23 @@ set -a; . "$ENV_FILE"; set +a
 mkdir -p "$BACKUP_DIR"
 
 # ─── preflight ─────────────────────────────────────────────────────────────
-"${COMPOSE[@]}" exec -T db pg_isready -q || die "database is not ready"
+#
+# Waits rather than asking once, matching the loop deploy.sh already uses
+# before it calls this. A single probe failed a deploy on the Raspberry Pi
+# minutes after deploy.sh had itself confirmed the database was up: on a slow
+# host `docker compose exec` is not instantaneous, and "not ready this
+# millisecond" is not the same as "not coming".
+#
+# Still bounded, and it still fails: a database that is genuinely down must
+# stop the deploy before anything migrates, which is the whole reason the
+# backup runs first.
+db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
+
+for _ in $(seq 1 60); do
+    db_ready && break
+    sleep 2
+done
+db_ready || die "database is not ready"
 
 free_kb=$(df --output=avail -k "$BACKUP_DIR" | tail -1)
 (( free_kb > 512 * 1024 )) || die "less than 512 MB free in $BACKUP_DIR"
