@@ -97,7 +97,9 @@ test('every wired page loads in the built app', async ({ page }) => {
 		['/entertainment', 'Entertainment'],
 		['/finance', 'Financial Hub'],
 		['/perspectives', 'Perspectives'],
-		['/yearly-review', 'Reflect & Reset']
+		['/yearly-review', 'Reflect & Reset'],
+		['/store', 'Etsy Store'],
+		['/content', 'Content Creation']
 	];
 
 	for (const [path, heading] of pages) {
