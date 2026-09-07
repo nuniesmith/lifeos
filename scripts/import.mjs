@@ -23,7 +23,12 @@ const flag = (name, fallback) => {
 	return i === -1 ? fallback : argv[i + 1];
 };
 
-const root = flag('--root', 'data');
+// LIFEOS_IMPORT_DIR is what the deployment calls the place exports are dropped,
+// and the application already creates it on boot. Until now nothing read it —
+// this default was the hardcoded relative 'data', so on a server the variable
+// named for this job directed nothing and the CLI looked in a path relative to
+// wherever it happened to be run from.
+const root = flag('--root', process.env.LIFEOS_IMPORT_DIR || 'data');
 const dryRun = !argv.includes('--commit');
 
 const GREEN = '\x1b[32m';

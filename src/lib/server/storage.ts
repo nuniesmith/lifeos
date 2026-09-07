@@ -21,9 +21,17 @@ import { logger } from './logger';
  * genuine state rather than the container restarting in a loop.
  */
 export async function ensureStorage(): Promise<void> {
-	// The backup directory is included because the backup script writes there
-	// as root before the app has ever touched it; the import directory because
-	// an operator dropping an export in should not have to create it first.
+	// The import directory is included so an operator dropping an export in does
+	// not have to create it first; `scripts/import.mjs` reads it as the default
+	// root.
+	//
+	// The backup directory is NOT where backups land, despite what this comment
+	// used to claim. `scripts/backup.sh` runs on the host and writes to
+	// $LIFEOS_STATE_DIR/backups, and the readiness check reads the `backup_runs`
+	// table rather than any directory — so nothing consumes this path. It is
+	// created because the variable is declared and an operator who sets it
+	// expects the directory to exist; if it is ever wired to something, the
+	// wiring is the change, not this line.
 	const directories = [env.LIFEOS_UPLOAD_DIR, env.LIFEOS_IMPORT_DIR, env.LIFEOS_BACKUP_DIR];
 
 	await Promise.all(
