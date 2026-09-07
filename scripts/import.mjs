@@ -92,6 +92,40 @@ try {
 		if (s.promoted.skippedWithoutPageId) {
 			console.log(`    (${s.promoted.skippedWithoutPageId} row(s) skipped: no page id)`);
 		}
+
+		const refused = s.promoted.refusedByMapper ?? [];
+		if (refused.length > 0) {
+			const rows = refused.reduce((n, d) => n + d.rows, 0);
+			console.log(`    (${rows} row(s) refused by their mapper: incomplete for their table)`);
+			for (const d of refused.sort((a, b) => b.rows - a.rows)) {
+				console.log(`       ${String(d.rows).padStart(3)}  ${d.database}`);
+			}
+		}
+
+		const notImported = s.promoted.notImported ?? [];
+		if (notImported.length > 0) {
+			const rows = notImported.reduce((n, d) => n + d.rows, 0);
+			console.log('');
+			console.log(`  Not imported on purpose (${rows} row(s)):`);
+			for (const d of notImported.sort((a, b) => b.rows - a.rows)) {
+				console.log(`    ${String(d.rows).padStart(3)}  ${d.database}`);
+				console.log(`         ${d.reason}`);
+			}
+		}
+
+		// A database nobody has ruled on is the one thing here that needs a
+		// person: it is either a new feature pack or a silent omission, and the
+		// report must not let it pass unremarked.
+		const unrecognised = s.promoted.unrecognised ?? [];
+		if (unrecognised.length > 0) {
+			console.log('');
+			console.log(`  ${RED}NOT RECOGNISED${OFF} — no mapper and no recorded reason:`);
+			for (const d of unrecognised.sort((a, b) => b.rows - a.rows)) {
+				console.log(`    ${String(d.rows).padStart(3)}  ${d.database}`);
+			}
+			console.log('    Decide whether each is data to import or furniture to');
+			console.log('    list in NOT_IMPORTED, then re-run.');
+		}
 		console.log('');
 	}
 

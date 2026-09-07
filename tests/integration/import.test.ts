@@ -6,6 +6,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { count as countOf, one } from '$lib/server/db/scalar';
 import { runImport } from '$lib/server/import/run';
+import type { PromoteSummary } from '$lib/server/import/promote';
 
 /**
  * Runs the importer against a sanitised miniature export (DISC-009) that
@@ -39,6 +40,18 @@ afterAll(async () => {
 	await sql.end({ timeout: 5 });
 });
 
+/**
+ * The promotion summary, or a clear failure.
+ *
+ * `promoted` is optional on the run summary because a run can stop before it
+ * promotes anything. A test that reads it wants to say so rather than thread
+ * an optional through every assertion.
+ */
+function promotionOf(summary: { promoted?: PromoteSummary }): PromoteSummary {
+	if (!summary.promoted) throw new Error('the run reported no promotion summary');
+	return summary.promoted;
+}
+
 const run = (dryRun: boolean) =>
 	runImport(sql, {
 		root: FIXTURE,
@@ -52,8 +65,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(30);
-		expect(summary.databases).toBe(15);
+		expect(summary.rows).toBe(31);
+		expect(summary.databases).toBe(16);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +80,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			30
+			31
 		);
 	});
 
@@ -446,6 +459,37 @@ describe('committed import', () => {
 			on_date: '2026-05-19',
 			area: 'Environment: House & Home'
 		});
+	});
+
+	it('accounts for every canonical row: promoted, refused, or ruled out', async () => {
+		const summary = await run(false);
+		const p = promotionOf(summary);
+		const promoted = Object.values(p.counts).reduce((a, b) => a + b, 0);
+		const notImported = p.notImported.reduce((n, d) => n + d.rows, 0);
+		const refused = p.refusedByMapper.reduce((n, d) => n + d.rows, 0);
+
+		// The invariant that makes a silent drop impossible. Against the real
+		// export this balances at 448 = 390 + 51 + 7; here it balances on the
+		// fixture. A row that goes missing has to show up as a gap.
+		expect(promoted + notImported + refused + p.skippedWithoutPageId).toBe(summary.rows);
+
+		// The refusal is the wheel entry with no score — deliberate, and now
+		// visible rather than silently absent.
+		expect(p.refusedByMapper).toEqual([{ database: 'Wheel of Life Database', rows: 1 }]);
+	});
+
+	it('names the databases it deliberately does not import', async () => {
+		const summary = await run(false);
+		expect(promotionOf(summary).notImported).toEqual([
+			{
+				database: 'Master Dashboards',
+				rows: 1,
+				reason: 'Notion page furniture — dashboards, navigation bars and widgets'
+			}
+		]);
+		// And nothing is unaccounted for: a database with no mapper and no
+		// recorded reason is the one case that needs a person to look.
+		expect(promotionOf(summary).unrecognised).toEqual([]);
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

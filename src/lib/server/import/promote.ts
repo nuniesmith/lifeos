@@ -42,6 +42,17 @@ export interface PromoteSummary {
 	counts: Record<string, number>;
 	relations: Record<string, number>;
 	skippedWithoutPageId: number;
+	/**
+	 * Rows a mapper looked at and declined — a wheel entry with no score, a
+	 * menu with no date. Deliberate, but it was invisible until the accounting
+	 * invariant refused to balance, which is precisely the shape of a silent
+	 * data loss.
+	 */
+	refusedByMapper: { database: string; rows: number }[];
+	/** Databases deliberately not imported, with why and how many rows. */
+	notImported: { database: string; rows: number; reason: string }[];
+	/** Databases with no mapper and no recorded reason — the ones to look at. */
+	unrecognised: { database: string; rows: number }[];
 }
 
 interface StagedRow {
@@ -217,9 +228,20 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 	};
 
 	// ─── pass one: rows become records ─────────────────────────────────────
+	const notImported: { database: string; rows: number; reason: string }[] = [];
+	const unrecognised: { database: string; rows: number }[] = [];
+	const refused: Record<string, number> = {};
+
 	for (const [database, staged] of byDatabase) {
 		const mapper = MAPPERS[database];
-		if (!mapper) continue; // feature-pack databases arrive in a later phase
+		if (!mapper) {
+			const reason = NOT_IMPORTED[database];
+			if (reason) notImported.push({ database, rows: staged.length, reason });
+			// No mapper and no reason: something new in the export, and the
+			// report has to say so rather than dropping it quietly.
+			else unrecognised.push({ database, rows: staged.length });
+			continue;
+		}
 
 		for (const row of staged) {
 			if (!row.notion_page_id) {
@@ -229,7 +251,10 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 			// Archived rows keep their content but arrive archived, so nothing
 			// from the source is lost and nothing stale shows up in a live view.
 			const id = await mapper(sql, row, options);
-			if (!id) continue;
+			if (!id) {
+				refused[database] = (refused[database] ?? 0) + 1;
+				continue;
+			}
 			target.set(row.notion_page_id, { table: mapper.table, id });
 			bump(mapper.table);
 		}
@@ -259,7 +284,14 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 		if (applied) bumpRelation(applied);
 	}
 
-	return { counts, relations, skippedWithoutPageId };
+	return {
+		counts,
+		relations,
+		skippedWithoutPageId,
+		refusedByMapper: Object.entries(refused).map(([database, rows]) => ({ database, rows })),
+		notImported,
+		unrecognised
+	};
 }
 
 /**
@@ -1210,6 +1242,37 @@ const upsertEvents = mapper('significant_events', async (sql, row, o) => {
 	`;
 	return r?.id ?? null;
 });
+
+/**
+ * Databases that are deliberately NOT imported, and why.
+ *
+ * Every one of these was opened and read before being listed. They fall into
+ * three kinds and none of them is a household record:
+ *
+ *  - Notion's own page furniture: dashboards, navigation, a "what shall we
+ *    watch tonight" picker. The application replaces these with real pages.
+ *  - Rollup singletons and time buckets whose every column is a formula over
+ *    data this database already holds. Importing them would store a second
+ *    copy of an answer that goes stale; the pages compute them instead.
+ *  - Empty placeholder rows — a Notion table someone created and never filled.
+ *
+ * Listing them here rather than letting them fall through the `if (!mapper)`
+ * is the point: a silent skip is indistinguishable from an oversight, and the
+ * report can now say "51 rows, on purpose" instead of saying nothing.
+ */
+const NOT_IMPORTED: Record<string, string> = {
+	'Master Dashboards': 'Notion page furniture — dashboards, navigation bars and widgets',
+	'System Status Database': 'a dashboard singleton of rollups over goals, tasks and projects',
+	'Money at a Glance Database': 'a dashboard singleton of rollups over goals',
+	'Media Picker Database': 'a "tonight\u2019s pick" widget, not a record',
+	'Months Database': 'time buckets whose columns are all rollups; the yearly review computes them',
+	'Years Database': 'as above — derived, not recorded',
+	'Income Database': 'one empty row carrying only a formula display; no income records exist',
+	'Savings Log Database': 'one empty placeholder row',
+	'Payment Log Database': 'one empty placeholder row',
+	'Series Database': 'one empty placeholder row',
+	'Medical Visit Log Database': 'one empty placeholder row — no visit has been recorded yet'
+};
 
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
