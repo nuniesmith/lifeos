@@ -1,3 +1,5 @@
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
@@ -5,8 +7,10 @@ import { createMember } from '$lib/server/auth/admin';
 import { viewerOf } from '$lib/server/auth/authz';
 import { one } from '$lib/server/db/scalar';
 import {
+	SEARCH_KINDS,
 	createArea,
 	createDailyLog,
+	createLibraryItem,
 	createGoal,
 	createProject,
 	createTask,
@@ -83,6 +87,70 @@ const ok = <T extends { ok: boolean }>(result: T, what: string) => {
 };
 
 const titles = (hits: { title: string }[]) => hits.map((h) => h.title);
+
+/**
+ * The application's real routes, as matchers.
+ *
+ * Read from disk rather than listed by hand: a hand-written list is a second
+ * copy of the route tree and drifts from it silently, which is the exact
+ * failure this guards against.
+ */
+function routeMatchers(): RegExp[] {
+	const root = 'src/routes/(app)';
+	const out: RegExp[] = [];
+	const walk = (dir: string, prefix: string) => {
+		for (const entry of readdirSync(dir)) {
+			const full = join(dir, entry);
+			if (!statSync(full).isDirectory()) continue;
+			// Route groups like (app) do not appear in the URL.
+			const segment = entry.startsWith('(') && entry.endsWith(')') ? '' : `/${entry}`;
+			const path = prefix + segment;
+			try {
+				statSync(join(full, '+page.svelte'));
+				// [id] and [date] match one non-slash segment.
+				out.push(new RegExp(`^${path.replace(/\[[^\]]+\]/g, '[^/]+')}$`));
+			} catch {
+				// A directory without a page is just a container.
+			}
+			walk(full, path);
+		}
+	};
+	walk(root, '');
+	return out;
+}
+
+describe('every search result links somewhere real', () => {
+	it('generates a path that matches an existing route, for every kind', async () => {
+		// One record of each searchable kind, all sharing a word.
+		const word = 'quokka';
+		ok(await createTask(sql, owner, { title: `${word} task` }), 'task');
+		ok(await createProject(sql, owner, { name: `${word} project` }), 'project');
+		ok(await createGoal(sql, owner, { title: `${word} goal` }), 'goal');
+		ok(await createArea(sql, owner, { name: `${word} area` }), 'area');
+		ok(await createLibraryItem(sql, owner, { title: `${word} book` }), 'library item');
+		ok(await createDailyLog(sql, owner, { onDate: '2026-04-01', note: `${word} day` }), 'log');
+		await sql`
+			insert into important_dates (household_id, owner_user_id, title, on_date, created_by)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, ${word + ' date'},
+			        '2026-04-02', ${owner.userId}::uuid)
+		`;
+
+		const hits = await search(sql, owner, word);
+		const routes = routeMatchers();
+
+		// Every kind is represented, so no branch escapes the check by being
+		// absent from the results.
+		expect(new Set(hits.map((h) => h.kind)).size).toBe(SEARCH_KINDS.length);
+
+		for (const hit of hits) {
+			const matched = routes.some((r) => r.test(hit.path));
+			// The bug this exists for: search linked every library hit to
+			// /library/<id> while that route did not exist, so a result that
+			// looked right went to a 404.
+			expect(matched, `${hit.kind} -> ${hit.path} matches no route`).toBe(true);
+		}
+	});
+});
 
 describe('search', () => {
 	it('finds a task by a word in its title', async () => {
