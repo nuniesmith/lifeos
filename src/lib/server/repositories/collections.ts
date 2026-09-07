@@ -150,22 +150,31 @@ export function createPerson(
 						.filter(Boolean)
 				: [];
 
+		// See migration 0016: the database no longer forbids a repeated name,
+		// because a unique index there aborts a whole import over one label the
+		// source happens to use twice. Someone typing a duplicate is still told.
 		const rows = await sql<PersonRow[]>`
 			insert into ${sql(PEOPLE)} (
 				household_id, owner_user_id, visibility, name, kind, groups, birthday,
 				notes, created_by, updated_by
-			) values (
-				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
+			)
+			select ${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${oneOf(input.kind, PERSON_KINDS, 'kind', 'person')},
 				${groups}::text[],
 				${(input.birthday as string) || null}::date,
 				${optionalText(input.notes, 'notes')},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
+			where not exists (
+				select 1 from ${sql(PEOPLE)} existing
+				where existing.household_id = ${viewer.householdId}::uuid
+				  and lower(trim(existing.name)) = lower(trim(${name}))
+				  and existing.archived_at is null
 			)
 			returning ${peopleColumns(sql)}
 		`;
 		const row = rows[0];
-		if (!row) throw new Error('insert returned no row');
+		if (!row)
+			return { ok: false, reason: 'invalid', message: 'someone by that name already exists' };
 		return { ok: true, record: mapPerson(row) };
 	});
 }

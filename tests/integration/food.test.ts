@@ -137,6 +137,37 @@ describe('the pantry and the shopping list', () => {
 		});
 	});
 
+	it('lets the database hold two ingredients with the same name', async () => {
+		await ingredient('Carrots', { status: 'not_needed' });
+
+		// The real workspace has exactly this: two Notion pages both called
+		// "Carrots", one bare and marked "Don't Need", one categorised and
+		// marked "Use up!". A unique index here does not skip the second row,
+		// it aborts the transaction — so one duplicated label lost all 436
+		// records on the first real import. Names are labels; the page id is
+		// the identity. See migration 0016.
+		await sql`
+			insert into ingredients (household_id, name, status, category)
+			values (${viewer.householdId}::uuid, 'Carrots', 'use_up', 'Fresh Vegetable')
+		`;
+
+		const both = await listIngredients(sql, viewer, { search: 'carrots' });
+		expect(both).toHaveLength(2);
+		expect(both.map((i) => i.status).sort()).toEqual(['not_needed', 'use_up']);
+	});
+
+	it('still refuses a duplicate that a person types', async () => {
+		await ingredient('Cheddar');
+		// The guard moved from the index into the create statement, so someone
+		// typing a name twice is still told — while an import carrying the
+		// source's own history is not blocked.
+		expect(await createIngredient(sql, viewer, { name: 'cheddar' })).toMatchObject({
+			ok: false,
+			reason: 'invalid'
+		});
+		expect(await listIngredients(sql, viewer, { search: 'cheddar' })).toHaveLength(1);
+	});
+
 	it('orders by aisle so the list can be walked', async () => {
 		await ingredient('Cheddar', { aisle: 'Dairy', status: 'shopping_list' });
 		await ingredient('Apples', { aisle: 'Produce', status: 'shopping_list' });

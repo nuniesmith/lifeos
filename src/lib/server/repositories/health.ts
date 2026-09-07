@@ -177,23 +177,31 @@ export function createHealthTerm(
 			visibility: 'household'
 		});
 
+		// See migration 0016 for why this is a condition rather than a unique
+		// index: a duplicated label must not be able to abort an import.
 		const rows = await sql<HealthTermRow[]>`
 			insert into ${sql(TABLE)} (
 				household_id, owner_user_id, visibility, kind, name, notes, attributes,
 				created_by, updated_by
-			) values (
-				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${kind}, ${name},
+			)
+			select ${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${kind}, ${name},
 				${optionalText(input.notes, 'notes')},
 				-- ::text::jsonb, never ::jsonb: under the bundled build the driver
 				-- double-encodes a bare object cast and every attribute lands as a
 				-- JSON string of an object.
 				${JSON.stringify(optionalAttributes(input.attributes))}::text::jsonb,
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
+			where not exists (
+				select 1 from ${sql(TABLE)} existing
+				where existing.household_id = ${viewer.householdId}::uuid
+				  and existing.kind = ${kind}
+				  and lower(trim(existing.name)) = lower(trim(${name}))
+				  and existing.archived_at is null
 			)
 			returning ${columns(sql)}
 		`;
 		const row = rows[0];
-		if (!row) throw new Error('insert returned no row');
+		if (!row) return { ok: false, reason: 'invalid', message: 'that is already on the list' };
 		return { ok: true, record: mapTerm(row) };
 	});
 }

@@ -1169,7 +1169,12 @@ const upsertAssessments = mapper('life_assessments', async (sql, row, o) => {
 		insert into life_assessments (household_id, owner_user_id, visibility, focus, rating,
 		                              period, year, is_priority, notes,
 		                              notion_page_id, source_record_id, created_by, archived_at)
-		values (${o.householdId}, ${o.ownerUserId}, 'private', ${row.title ?? 'Untitled'},
+		-- Private needs an owner or nobody can read it — the same write-only
+		-- hole resolveOwnership refuses in the repository. An import with no
+		-- member to attribute these to writes them as household rather than
+		-- creating rows that are invisible to everyone.
+		values (${o.householdId}, ${o.ownerUserId},
+		        ${o.ownerUserId ? 'private' : 'household'}, ${row.title ?? 'Untitled'},
 		        ${rating}, ${text(row, 'When?')},
 		        ${yearOf(row, 'Year', 'Created time')},
 		        ${bool(row, 'Proritize?')}, ${withBody(row, null)},

@@ -159,12 +159,17 @@ export function createIngredient(
 			visibility: 'household'
 		});
 
+		// Conditional rather than a unique index: the database no longer
+		// forbids two ingredients with the same name, because the source has
+		// them and a constraint there aborts an entire import (migration 0016).
+		// Someone typing a duplicate should still be told, and the NOT EXISTS
+		// keeps that decision inside one statement.
 		const rows = await sql<IngredientRow[]>`
 			insert into ${sql(INGREDIENTS)} (
 				household_id, owner_user_id, visibility, name, aisle, category, status,
 				is_staple, store, quantity, preferred_brand, notes, created_by, updated_by
-			) values (
-				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
+			)
+			select ${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${optionalText(input.aisle, 'aisle')}, ${optionalText(input.category, 'category')},
 				${ingredientStatus(input.status, 'in_stock')},
 				${input.isStaple === true || input.isStaple === 'on'}::boolean,
@@ -172,11 +177,16 @@ export function createIngredient(
 				${optionalText(input.preferredBrand, 'preferred brand')},
 				${optionalText(input.notes, 'notes')},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
+			where not exists (
+				select 1 from ${sql(INGREDIENTS)} existing
+				where existing.household_id = ${viewer.householdId}::uuid
+				  and lower(trim(existing.name)) = lower(trim(${name}))
+				  and existing.archived_at is null
 			)
 			returning ${ingredientColumns(sql)}
 		`;
 		const row = rows[0];
-		if (!row) throw new Error('insert returned no row');
+		if (!row) return { ok: false, reason: 'invalid', message: 'that ingredient already exists' };
 		return { ok: true, record: mapIngredient(row) };
 	});
 }
