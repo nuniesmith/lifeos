@@ -42,6 +42,7 @@ export * from './archive';
 export * from './areas';
 export * from './daily-logs';
 export * from './goals';
+export * from './health';
 export * from './habits';
 export * from './important-dates';
 export * from './projects';

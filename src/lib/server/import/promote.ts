@@ -78,8 +78,26 @@ const date = (row: StagedRow, column: string): string | null =>
 const bool = (row: StagedRow, column: string): boolean =>
 	parseSourceBoolean(row.raw[column] ?? '') === true;
 
+/**
+ * The same, but keeping the difference between No and not recorded.
+ *
+ * `bool` folds an absent value to false, which is right for a checkbox like
+ * Archive and wrong for a reading: a day where nobody wrote down whether they
+ * had caffeine is not a day without caffeine.
+ */
+const boolOrNull = (row: StagedRow, column: string): boolean | null =>
+	parseSourceBoolean(row.raw[column] ?? '');
+
 const int = (row: StagedRow, column: string): number | null => {
 	const n = Number.parseInt(row.raw[column] ?? '', 10);
+	return Number.isFinite(n) ? n : null;
+};
+
+/** Decimal readings such as a blood glucose of 6.2, which `int` would truncate. */
+const numeric = (row: StagedRow, column: string): number | null => {
+	const raw = (row.raw[column] ?? '').trim();
+	if (!raw) return null;
+	const n = Number(raw);
 	return Number.isFinite(n) ? n : null;
 };
 
@@ -276,6 +294,16 @@ async function applyRelation(
 			}
 			return null;
 		}
+
+		case 'daily_logs->health_vocabulary':
+			// Physical Symptoms, Mood/Feelings, Vitamins and Energy all land
+			// here. Which list a term came from is the term's own `kind`, so the
+			// property name does not need inspecting — a day simply logged it.
+			await sql`
+				insert into daily_log_health (daily_log_id, vocabulary_id)
+				values (${from.id}, ${to.id}) on conflict do nothing
+			`;
+			return 'daily_log.health';
 
 		case 'projects->areas':
 			await sql`
@@ -515,29 +543,95 @@ const upsertHabits = mapper('habits', async (sql, row, o) => {
 });
 
 const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
+	// `energy_level` is deliberately not set here. The source's Energy column
+	// is a RELATION to the Energy Level database — 'Balanced (…)' — and it was
+	// being read with parseInt, so it resolved to null on every row. It is a
+	// vocabulary term now and arrives through the relation pass instead.
 	const on = date(row, 'Date');
 	// The daily log's identity is its date; without one there is nothing to key.
 	if (!on || !o.ownerUserId) return null;
 
 	const [r] = await sql<{ id: string }[]>`
-		insert into daily_logs (household_id, owner_user_id, on_date, note, energy_level,
-		                        gratitude, highlight, notion_page_id, source_record_id,
-		                        created_by)
+		insert into daily_logs (household_id, owner_user_id, on_date, note,
+		                        gratitude, highlight, blood_glucose, systolic_bp,
+		                        diastolic_bp, heart_rate, heart_rate_variability,
+		                        sleep_score, water, caffeine, carbonation, intimacy,
+		                        activation, effectiveness, head_space,
+		                        notion_page_id, source_record_id, created_by)
 		values (${o.householdId}, ${o.ownerUserId}, ${on}, ${withBody(row, 'Intention')},
-		        ${int(row, 'Energy')}, ${text(row, 'Gratitude')},
-		        ${text(row, 'Highlight of the Day')}, ${row.notion_page_id}, ${row.id},
-		        ${o.createdBy})
+		        ${text(row, 'Gratitude')},
+		        ${text(row, 'Highlight of the Day')},
+		        ${numeric(row, 'Blood Glucose')}, ${int(row, 'Systolic BP')},
+		        ${int(row, 'Diastolic BP')}, ${int(row, 'Heart Rate')},
+		        ${int(row, 'Heart Rate Variability')}, ${int(row, 'Sleep Score')},
+		        ${int(row, 'Water')}, ${boolOrNull(row, 'Caffeine')},
+		        ${boolOrNull(row, 'Carbonation')}, ${boolOrNull(row, 'Intimacy')},
+		        ${int(row, 'Activation')}, ${int(row, 'Effectiveness')},
+		        ${text(row, 'Head Space')},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
 		on conflict (notion_page_id) do update set
 			on_date = excluded.on_date,
 			note = excluded.note,
-			energy_level = excluded.energy_level,
 			gratitude = excluded.gratitude,
 			highlight = excluded.highlight,
+			blood_glucose = excluded.blood_glucose,
+			systolic_bp = excluded.systolic_bp,
+			diastolic_bp = excluded.diastolic_bp,
+			heart_rate = excluded.heart_rate,
+			heart_rate_variability = excluded.heart_rate_variability,
+			sleep_score = excluded.sleep_score,
+			water = excluded.water,
+			caffeine = excluded.caffeine,
+			carbonation = excluded.carbonation,
+			intimacy = excluded.intimacy,
+			activation = excluded.activation,
+			effectiveness = excluded.effectiveness,
+			head_space = excluded.head_space,
 			source_record_id = excluded.source_record_id
 		returning id
 	`;
 	return r?.id ?? null;
 });
+
+/**
+ * The health and journal vocabularies (migration 0011).
+ *
+ * Six Notion databases — Symptoms, Mood/Feelings, Vitamins, Energy Level,
+ * Activity, Exercise — that are all the same shape: a list of named things
+ * related back to the Daily Log. One factory rather than six near-identical
+ * mappers, so a seventh list costs a line.
+ *
+ * `attributeColumns` are the per-kind extras that do not deserve a column
+ * each: Energy Level carries an approach, a mantra and what to watch for;
+ * Mood carries a type and what helps.
+ */
+function vocabularyMapper(kind: string, attributeColumns: readonly string[] = []): Mapper {
+	return mapper('health_vocabulary', async (sql, row, o) => {
+		const attributes: Record<string, string> = {};
+		for (const column of attributeColumns) {
+			const value = text(row, column);
+			if (value) attributes[column.replace(/[:?]\s*$/, '').trim()] = value;
+		}
+
+		const [r] = await sql<{ id: string }[]>`
+			insert into health_vocabulary (household_id, owner_user_id, visibility, kind, name,
+			                               notes, attributes, notion_page_id, source_record_id,
+			                               created_by, archived_at)
+			values (${o.householdId}, null, 'household', ${kind}, ${row.title ?? 'Untitled'},
+			        ${withBody(row, null)},
+			        ${JSON.stringify(attributes)}::text::jsonb,
+			        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+			        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
+			on conflict (notion_page_id) do update set
+				name = excluded.name,
+				notes = excluded.notes,
+				attributes = excluded.attributes,
+				source_record_id = excluded.source_record_id
+			returning id
+		`;
+		return r?.id ?? null;
+	});
+}
 
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
@@ -548,7 +642,19 @@ const MAPPERS: Record<string, Mapper> = {
 	'Tags & Topics (Resources) Database': upsertTags,
 	'Important Dates Database': upsertImportantDates,
 	'Habit Tracker Database': upsertHabits,
-	'Daily Log Database': upsertDailyLogs
+	'Daily Log Database': upsertDailyLogs,
+	'Symptoms Database': vocabularyMapper('symptom'),
+	'Mood Feelings Database': vocabularyMapper('mood', ['Type', 'What Helps?']),
+	'Vitamins Database': vocabularyMapper('vitamin', ['Running Low']),
+	'Energy Level Database': vocabularyMapper('energy', [
+		'Approach',
+		'Mantra',
+		'Watch For:',
+		'Good Tasks:',
+		'What Helps?'
+	]),
+	'Activity Database': vocabularyMapper('activity'),
+	'Exercise Database': vocabularyMapper('exercise')
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);

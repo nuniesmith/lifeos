@@ -52,8 +52,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(7);
-		expect(summary.databases).toBe(2);
+		expect(summary.rows).toBe(11);
+		expect(summary.databases).toBe(4);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			7
+			11
 		);
 	});
 
@@ -136,6 +136,83 @@ describe('committed import', () => {
 			`
 		);
 		expect(task.status).toBe('inbox');
+	});
+
+	it('promotes the health vocabularies into one table, keyed by kind', async () => {
+		await run(false);
+		const terms = await sql<{ kind: string; name: string }[]>`
+			select kind, name from health_vocabulary order by name
+		`;
+		// Six Notion databases collapse to one vocabulary; which list a term
+		// came from is its kind, not its table.
+		expect(terms).toEqual([
+			{ kind: 'symptom', name: 'Headache' },
+			{ kind: 'symptom', name: 'Nausea' }
+		]);
+	});
+
+	it('carries the daily log readings, including the decimal one', async () => {
+		await run(false);
+		const log = one(
+			await sql<
+				{
+					blood_glucose: unknown;
+					systolic_bp: number | null;
+					heart_rate: number | null;
+					water: number | null;
+					caffeine: boolean | null;
+					intimacy: boolean | null;
+					head_space: string | null;
+				}[]
+			>`
+				select blood_glucose, systolic_bp, heart_rate, water, caffeine, intimacy, head_space
+				from daily_logs where on_date = '2026-08-08'
+			`
+		);
+		// numeric arrives as a string so the driver cannot round it; 6.2 read
+		// with parseInt would have become 6.
+		expect(Number(log.blood_glucose)).toBe(6.2);
+		expect(log.systolic_bp).toBe(137);
+		expect(log.heart_rate).toBe(90);
+		expect(log.water).toBe(32);
+		expect(log.caffeine).toBe(true);
+		// No is a recorded No, not an absent value.
+		expect(log.intimacy).toBe(false);
+		expect(log.head_space).toBe('Engaged');
+	});
+
+	it('leaves a reading null when the source did not record one', async () => {
+		await run(false);
+		const log = one(
+			await sql<{ heart_rate_variability: number | null; activation: number | null }[]>`
+				select heart_rate_variability, activation from daily_logs where on_date = '2026-08-08'
+			`
+		);
+		// Absent must not fold to 0, which would look like a real measurement.
+		expect(log.heart_rate_variability).toBeNull();
+		expect(log.activation).toBeNull();
+	});
+
+	it('keeps "not recorded" distinct from a recorded No', async () => {
+		await run(false);
+		const [busy, quiet] = await sql<{ caffeine: boolean | null; on_date: string }[]>`
+			select caffeine, on_date::text as on_date from daily_logs order by on_date
+		`;
+		// A day nobody wrote anything down on is not a day without caffeine.
+		// Folding an absent checkbox to false invents a measurement.
+		expect(busy?.caffeine).toBe(true);
+		expect(quiet?.caffeine).toBeNull();
+	});
+
+	it('links the symptoms a day logged, from a column whose name has a trailing space', async () => {
+		await run(false);
+		const logged = await sql<{ name: string }[]>`
+			select v.name
+			from daily_log_health h
+			join health_vocabulary v on v.id = h.vocabulary_id
+			order by v.name
+		`;
+		expect(logged.map((r) => r.name)).toEqual(['Headache', 'Nausea']);
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

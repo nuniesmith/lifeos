@@ -86,7 +86,8 @@ test('every wired page loads in the built app', async ({ page }) => {
 		['/archive', 'Archive'],
 		['/topics', 'Topics & Resources'],
 		['/dashboard', 'Master Dashboards'],
-		['/system', 'System']
+		['/system', 'System'],
+		['/health', 'Health & Fitness']
 	];
 
 	for (const [path, heading] of pages) {
@@ -217,4 +218,19 @@ test('a review falls due, and marking it clears the queue', async ({ page }) => 
 
 	await row.getByRole('button', { name: `Mark ${name} reviewed` }).click();
 	await expect(page.locator('li').filter({ hasText: name })).toBeHidden();
+});
+
+test('a health term can be added and starts showing up', async ({ page }) => {
+	await signIn(page);
+	const name = unique('Wobbliness');
+
+	await page.goto('/health?kind=symptom');
+	await page.getByLabel('New symptom').fill(name);
+	await page.getByRole('button', { name: 'Add', exact: true }).click();
+	await expect(page.getByText(name, { exact: true })).toBeVisible();
+
+	// The chip count is derived, so it moving is what proves the write landed
+	// rather than the word merely being echoed back into the form.
+	const chip = page.getByRole('link', { name: /^Symptoms/ });
+	await expect(chip).toContainText(/[1-9]/);
 });
