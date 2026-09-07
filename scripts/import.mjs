@@ -52,6 +52,15 @@ try {
 		householdId: household.id,
 		ownerUserId: owner?.id ?? null,
 		startedBy: owner?.id ?? null,
+		// Without this the importer fell back to a hardcoded relative
+		// `var/uploads` and ignored LIFEOS_UPLOAD_DIR — the one variable that
+		// says where this deployment keeps its media. On the server that
+		// directory is the mounted volume at /srv/lifeos/data/uploads, so an
+		// import run in the container wrote 207 attachment rows and put their
+		// bytes inside the container's own filesystem: every image 404s from
+		// the application, which reads LIFEOS_UPLOAD_DIR, and the files vanish
+		// on the next deploy. The rows looked perfect throughout.
+		uploadDir: process.env.LIFEOS_UPLOAD_DIR || 'var/uploads',
 		dryRun
 	});
 

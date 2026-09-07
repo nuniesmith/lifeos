@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -571,5 +573,59 @@ describe('page bodies and their images', () => {
 		// scan_(1).png: stopping at the first ')' produced a path matching nothing.
 		expect(rows).toHaveLength(1);
 		expect(rows[0]!.role).toBe('body_image');
+	});
+});
+
+/**
+ * The CLI, run the way a person actually runs it.
+ *
+ * Every other test in this file calls `runImport` directly and passes
+ * `uploadDir`, which is precisely why a real bug lived here undetected: the
+ * option was always supplied by the caller in tests, and never supplied by
+ * `scripts/import.mjs`. The importer fell back to a hardcoded relative
+ * `var/uploads` and ignored LIFEOS_UPLOAD_DIR — the one variable that says
+ * where a deployment keeps its media.
+ *
+ * On the server that directory is the mounted volume. An import run in the
+ * container therefore wrote correct attachment rows and put their bytes inside
+ * the container's own filesystem, where the application cannot serve them and
+ * the next deploy discards them. Nothing about the database looked wrong.
+ *
+ * So this drives the entry point as a subprocess with the environment set, and
+ * checks the bytes landed where the configuration said. A test that imports
+ * `src/` cannot catch a mistake made in the script that wires `src/` up.
+ */
+describe('the import CLI', () => {
+	it('writes media to LIFEOS_UPLOAD_DIR, not to a hardcoded path', async () => {
+		const dir = await mkdtemp(join(tmpdir(), 'lifeos-cli-uploads-'));
+		try {
+			const result = spawnSync(
+				process.execPath,
+				['scripts/import.mjs', '--root', FIXTURE, '--commit'],
+				{
+					encoding: 'utf8',
+					env: {
+						...process.env,
+						LIFEOS_UPLOAD_DIR: dir
+					}
+				}
+			);
+			expect(result.status, result.stderr).toBe(0);
+
+			const stored = one(
+				await sql<{ count: number }[]>`select count(*)::int as count from attachments`
+			).count;
+			expect(stored).toBeGreaterThan(0);
+
+			// Every row's bytes must be reachable at the configured location.
+			const rows = await sql<{ storage_key: string }[]>`select storage_key from attachments`;
+			for (const row of rows) {
+				expect(existsSync(join(dir, row.storage_key)), `${row.storage_key} is not in ${dir}`).toBe(
+					true
+				);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });
