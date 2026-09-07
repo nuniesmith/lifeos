@@ -63,6 +63,21 @@ const TABLES = [
 	'daily_logs',
 	'habits',
 	'tags',
+	// Feature packs (migrations 0011-0015). Parents before dependants; the
+	// link tables after both of their sides, so a foreign key never lands
+	// before the row it points at.
+	'health_vocabulary',
+	'ingredients',
+	'recipes',
+	'meal_plans',
+	'library_items',
+	'people',
+	'media_items',
+	'bills',
+	'prep_tasks',
+	'wishlist_items',
+	'life_assessments',
+	'significant_events',
 	'attachments',
 	'task_dependencies',
 	'entity_tags',
@@ -71,6 +86,9 @@ const TABLES = [
 	'project_goals',
 	'goal_areas',
 	'goal_habits',
+	'daily_log_health',
+	'recipe_ingredients',
+	'meal_plan_recipes',
 	'attachment_links'
 ];
 
@@ -88,6 +106,21 @@ const ORDER = [
 	'daily_logs',
 	'habits',
 	'tags',
+	// Feature packs (migrations 0011-0015). Parents before dependants; the
+	// link tables after both of their sides, so a foreign key never lands
+	// before the row it points at.
+	'health_vocabulary',
+	'ingredients',
+	'recipes',
+	'meal_plans',
+	'library_items',
+	'people',
+	'media_items',
+	'bills',
+	'prep_tasks',
+	'wishlist_items',
+	'life_assessments',
+	'significant_events',
 	'attachments',
 	'task_dependencies',
 	'entity_tags',
@@ -96,6 +129,9 @@ const ORDER = [
 	'project_goals',
 	'goal_areas',
 	'goal_habits',
+	'daily_log_health',
+	'recipe_ingredients',
+	'meal_plan_recipes',
 	'attachment_links'
 ];
 

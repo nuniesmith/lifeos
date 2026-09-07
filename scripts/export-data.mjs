@@ -46,6 +46,20 @@ const TABLES = [
 	'daily_logs',
 	'habits',
 	'tags',
+	// Feature packs (migrations 0011-0015). Parents before the tables that
+	// reference them; the link tables come after both of their sides.
+	'health_vocabulary',
+	'ingredients',
+	'recipes',
+	'meal_plans',
+	'library_items',
+	'people',
+	'media_items',
+	'bills',
+	'prep_tasks',
+	'wishlist_items',
+	'life_assessments',
+	'significant_events',
 	'task_dependencies',
 	'entity_tags',
 	'habit_logs',
@@ -53,6 +67,9 @@ const TABLES = [
 	'project_goals',
 	'goal_areas',
 	'goal_habits',
+	'daily_log_health',
+	'recipe_ingredients',
+	'meal_plan_recipes',
 	'attachments',
 	'attachment_links'
 ];
@@ -110,7 +127,7 @@ async function rowsFor(db, table, id) {
 		case 'task_dependencies':
 			return db`select d.* from task_dependencies d join tasks t on t.id = d.blocked_task_id where t.household_id = ${id}::uuid order by d.blocked_task_id, d.blocking_task_id`;
 		case 'entity_tags':
-			return db`select e.* from entity_tags e where (e.entity_type = 'task' and exists (select 1 from tasks t where t.id = e.entity_id and t.household_id = ${id}::uuid)) or (e.entity_type = 'project' and exists (select 1 from projects p where p.id = e.entity_id and p.household_id = ${id}::uuid)) or (e.entity_type = 'goal' and exists (select 1 from goals g where g.id = e.entity_id and g.household_id = ${id}::uuid)) or (e.entity_type = 'area' and exists (select 1 from areas a where a.id = e.entity_id and a.household_id = ${id}::uuid)) or (e.entity_type = 'habit' and exists (select 1 from habits h where h.id = e.entity_id and h.household_id = ${id}::uuid)) or (e.entity_type = 'important_date' and exists (select 1 from important_dates d where d.id = e.entity_id and d.household_id = ${id}::uuid)) order by e.tag_id, e.entity_type, e.entity_id`;
+			return db`select e.* from entity_tags e where (e.entity_type = 'task' and exists (select 1 from tasks t where t.id = e.entity_id and t.household_id = ${id}::uuid)) or (e.entity_type = 'project' and exists (select 1 from projects p where p.id = e.entity_id and p.household_id = ${id}::uuid)) or (e.entity_type = 'goal' and exists (select 1 from goals g where g.id = e.entity_id and g.household_id = ${id}::uuid)) or (e.entity_type = 'area' and exists (select 1 from areas a where a.id = e.entity_id and a.household_id = ${id}::uuid)) or (e.entity_type = 'habit' and exists (select 1 from habits h where h.id = e.entity_id and h.household_id = ${id}::uuid)) or (e.entity_type = 'important_date' and exists (select 1 from important_dates d where d.id = e.entity_id and d.household_id = ${id}::uuid)) or (e.entity_type = 'daily_log' and exists (select 1 from daily_logs dl where dl.id = e.entity_id and dl.household_id = ${id}::uuid)) or (e.entity_type = 'library_item' and exists (select 1 from library_items li where li.id = e.entity_id and li.household_id = ${id}::uuid)) order by e.tag_id, e.entity_type, e.entity_id`;
 		case 'habit_logs':
 			return db`select l.* from habit_logs l join habits h on h.id = l.habit_id where h.household_id = ${id}::uuid order by l.id`;
 		case 'project_areas':
@@ -121,6 +138,26 @@ async function rowsFor(db, table, id) {
 			return db`select r.* from goal_areas r join goals g on g.id = r.goal_id where g.household_id = ${id}::uuid order by r.goal_id, r.area_id`;
 		case 'goal_habits':
 			return db`select r.* from goal_habits r join goals g on g.id = r.goal_id where g.household_id = ${id}::uuid order by r.goal_id, r.habit_id`;
+		case 'health_vocabulary':
+		case 'ingredients':
+		case 'recipes':
+		case 'meal_plans':
+		case 'library_items':
+		case 'people':
+		case 'media_items':
+		case 'bills':
+		case 'prep_tasks':
+		case 'wishlist_items':
+		case 'life_assessments':
+		case 'significant_events':
+			// All carry household_id directly, so one branch serves them.
+			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
+		case 'daily_log_health':
+			return db`select h.* from daily_log_health h join daily_logs l on l.id = h.daily_log_id where l.household_id = ${id}::uuid order by h.daily_log_id, h.vocabulary_id`;
+		case 'recipe_ingredients':
+			return db`select r.* from recipe_ingredients r join recipes x on x.id = r.recipe_id where x.household_id = ${id}::uuid order by r.recipe_id, r.ingredient_id`;
+		case 'meal_plan_recipes':
+			return db`select m.* from meal_plan_recipes m join meal_plans p on p.id = m.meal_plan_id where p.household_id = ${id}::uuid order by m.meal_plan_id, m.recipe_id, m.slot`;
 		case 'attachments':
 			return db`select id, household_id, encode(sha256, 'hex') as sha256, byte_size, content_type, width, height, original_name, storage_key, created_at, created_by, archived_at, purge_after from attachments where household_id = ${id}::uuid order by id`;
 		case 'attachment_links':

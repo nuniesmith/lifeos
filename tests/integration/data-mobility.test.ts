@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -80,6 +80,37 @@ beforeAll(async () => {
 			)
 		`;
 
+		// Feature-pack rows, including both sides of a link table: the lists
+		// agreeing that a table exists is not the same as its rows arriving.
+		const recipes = await source<{ id: string }[]>`
+			insert into recipes (household_id, name, servings, courses)
+			values (${sourceHousehold}::uuid, 'Broccoli soup', 4, '{Lunch,Dinner}')
+			returning id
+		`;
+		const ingredients = await source<{ id: string }[]>`
+			insert into ingredients (household_id, name, status)
+			values (${sourceHousehold}::uuid, 'Broccoli', 'shopping_list')
+			returning id
+		`;
+		await source`
+			insert into recipe_ingredients (recipe_id, ingredient_id, amount)
+			values (${recipes[0]!.id}::uuid, ${ingredients[0]!.id}::uuid, '2 heads')
+		`;
+		const terms = await source<{ id: string }[]>`
+			insert into health_vocabulary (household_id, kind, name)
+			values (${sourceHousehold}::uuid, 'symptom', 'Nausea')
+			returning id
+		`;
+		const logs = await source<{ id: string }[]>`
+			insert into daily_logs (household_id, owner_user_id, on_date)
+			values (${sourceHousehold}::uuid, ${sourceUser}::uuid, '2026-08-08')
+			returning id
+		`;
+		await source`
+			insert into daily_log_health (daily_log_id, vocabulary_id)
+			values (${logs[0]!.id}::uuid, ${terms[0]!.id}::uuid)
+		`;
+
 		const habits = await source<{ id: string }[]>`
 			insert into habits (household_id, owner_user_id, name, created_by, updated_by)
 			values (${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Drink water',
@@ -153,6 +184,85 @@ afterAll(async () => {
 	// are not a 10-second proposition when the suite is busy.
 }, 60_000);
 
+/**
+ * Tables that carry `household_id` but are deliberately NOT exported.
+ *
+ * Everything else that is household-scoped is the household's own data and
+ * has to travel. This list is the reviewed exception, and the test below
+ * fails if a new table appears in neither it nor the export.
+ */
+const NOT_PORTABLE: Record<string, string> = {
+	households: 'the destination household already exists; it is the target, not cargo',
+	household_members: 'membership is rebuilt against the destination users',
+	invites: 'single-use and time-bound; carrying them across would be a security hole',
+	app_settings: 'per-install configuration, not content',
+	change_log: 'an audit of edits to rows that are themselves being copied',
+	backup_runs: 'bookkeeping about this install\u2019s backups',
+	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id'
+};
+
+describe('everything household-scoped is portable', () => {
+	it('exports every table carrying household data, or names why not', async () => {
+		const source = postgres(sourceUrl.toString(), { max: 1, onnotice: () => {} });
+		try {
+			const scoped = await source<{ table_name: string }[]>`
+				select table_name from information_schema.columns
+				where table_schema = 'public' and column_name = 'household_id'
+				order by table_name
+			`;
+
+			const script = await readFile('scripts/export-data.mjs', 'utf8');
+			const list = script.slice(script.indexOf('const TABLES = ['));
+			const exported = new Set(
+				(list.slice(0, list.indexOf('];')).match(/'([a-z_]+)'/g) ?? []).map((t) => t.slice(1, -1))
+			);
+
+			const missing = scoped
+				.map((r) => r.table_name)
+				.filter((t) => !exported.has(t) && !(t in NOT_PORTABLE));
+
+			// The failure this catches: five feature packs were added and the
+			// exporter knew about none of them, so "take your data elsewhere"
+			// would have quietly handed over a third of it.
+			expect(missing, `not exported and not excused: ${missing.join(', ')}`).toEqual([]);
+		} finally {
+			await source.end({ timeout: 5 });
+		}
+	});
+
+	it('restores in an order that never lands a row before its parent', async () => {
+		const script = await readFile('scripts/restore-data.mjs', 'utf8');
+		const listOf = (name: string) => {
+			const from = script.slice(script.indexOf(`const ${name} = [`));
+			return (from.slice(0, from.indexOf('];')).match(/'([a-z_]+)'/g) ?? []).map((t) =>
+				t.slice(1, -1)
+			);
+		};
+		const order = listOf('ORDER');
+
+		// A child inserted before its parent fails on a foreign key, which on a
+		// restore means a partial copy and a confusing error rather than a
+		// clear refusal.
+		const before = (child: string, parent: string) =>
+			expect(order.indexOf(child), `${child} must be restored after ${parent}`).toBeGreaterThan(
+				order.indexOf(parent)
+			);
+
+		before('prep_tasks', 'recipes');
+		before('wishlist_items', 'people');
+		before('life_assessments', 'areas');
+		before('significant_events', 'areas');
+		before('recipe_ingredients', 'ingredients');
+		before('recipe_ingredients', 'recipes');
+		before('meal_plan_recipes', 'meal_plans');
+		before('meal_plan_recipes', 'recipes');
+		before('daily_log_health', 'daily_logs');
+		before('daily_log_health', 'health_vocabulary');
+
+		expect(listOf('TABLES').sort()).toEqual([...order].sort());
+	});
+});
+
 describe('portable data mobility', () => {
 	it('dry-runs and restores parented tasks and habit ownership onto a fresh system', async () => {
 		const exportDir = join(workspace, 'export');
@@ -212,6 +322,26 @@ describe('portable data mobility', () => {
 				'ffffffff-ffff-4fff-8fff-ffffffffffff'
 			);
 			expect(tasks.every((row) => row.owner_user_id === targetUser)).toBe(true);
+
+			// The feature packs travel too, link tables included. Without this
+			// the export could list the tables and still carry none of them.
+			const recipe = await restored<{ name: string; courses: string[] }[]>`
+				select name, courses from recipes
+			`;
+			expect(recipe[0]?.name).toBe('Broccoli soup');
+			expect(recipe[0]?.courses).toEqual(['Lunch', 'Dinner']);
+
+			const pairing = await restored<{ amount: string; ingredient: string }[]>`
+				select ri.amount, i.name as ingredient
+				from recipe_ingredients ri join ingredients i on i.id = ri.ingredient_id
+			`;
+			expect(pairing[0]).toEqual({ amount: '2 heads', ingredient: 'Broccoli' });
+
+			const logged = await restored<{ name: string }[]>`
+				select v.name from daily_log_health h
+				join health_vocabulary v on v.id = h.vocabulary_id
+			`;
+			expect(logged.map((r) => r.name)).toEqual(['Nausea']);
 
 			const logs = await restored`select user_id::text as user_id from habit_logs`;
 			expect(logs).toEqual([{ user_id: targetUser }]);
