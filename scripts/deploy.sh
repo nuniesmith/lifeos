@@ -26,16 +26,20 @@ say()  { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
 #   wait_for <attempts> <seconds-between> <command...>
 wait_for() {
     local attempts=$1 pause=$2; shift 2
-    local i
+    local i elapsed
     for (( i = 0; i < attempts; i++ )); do
-        if "$@"; then
-            [[ $i -gt 0 ]] && printf '\n'
-            return 0
+        "$@" && return 0
+        # A COMPLETE LINE, not a dot. Dots without a newline sit in the output
+        # buffer and never reach the far end: the first version of this printed
+        # sixty of them into a buffer while the session was dropped underneath
+        # it, which looked exactly like the silence it was written to prevent.
+        # Every fifth attempt keeps the log readable without going quiet.
+        if (( i % 5 == 0 )); then
+            elapsed=$(( i * pause ))
+            printf '  … still waiting (%ss)\n' "$elapsed"
         fi
-        printf '.'
         sleep "$pause"
     done
-    printf '\n'
     return 1
 }
 ok()   { printf '\033[32m✔\033[0m %s\n' "$*"; }
@@ -94,7 +98,9 @@ ok "image present"
 say "Ensuring the database is running"
 LIFEOS_IMAGE="$LIFEOS_IMAGE" "${COMPOSE[@]}" up -d db
 db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
-wait_for 60 2 db_ready || die "database did not become ready"
+# 150 attempts at 2s is a five-minute budget. The run that succeeded took
+# 2m23s just for this step, so two minutes was never enough on this host.
+wait_for 150 2 db_ready || die "database did not become ready"
 ok "database ready"
 
 if [[ -x scripts/backup.sh ]]; then
