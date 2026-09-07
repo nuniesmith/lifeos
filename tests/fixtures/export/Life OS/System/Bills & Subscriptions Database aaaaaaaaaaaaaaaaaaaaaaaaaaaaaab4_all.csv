@@ -1,0 +1,4 @@
+Name,Amount,Frequency,Next Due,Category,Autopay?,Status
+Netflix,CA$24.99,Monthly,"September 18, 2026",Entertainment,Yes,Active/Current
+Costco Membership,CA$150.00,Annual,"September 29, 2026",,No,Active/Current
+Readwise,CA$14.99,Monthly,"September 8, 2026",,No,Free Trial

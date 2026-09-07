@@ -91,7 +91,11 @@ test('every wired page loads in the built app', async ({ page }) => {
 		['/food', 'Food HQ'],
 		['/library', 'Library'],
 		['/reading', 'Reading Tracker'],
-		['/knowledge', 'Knowledge Hub']
+		['/knowledge', 'Knowledge Hub'],
+		['/people', 'People & Places'],
+		['/wishlist', 'Wishlist'],
+		['/entertainment', 'Entertainment'],
+		['/finance', 'Financial Hub']
 	];
 
 	for (const [path, heading] of pages) {

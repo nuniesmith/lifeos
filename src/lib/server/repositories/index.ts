@@ -40,6 +40,7 @@ export {
 
 export * from './archive';
 export * from './areas';
+export * from './collections';
 export * from './daily-logs';
 export * from './food';
 export * from './goals';

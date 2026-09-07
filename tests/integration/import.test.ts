@@ -52,8 +52,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(20);
-		expect(summary.databases).toBe(9);
+		expect(summary.rows).toBe(27);
+		expect(summary.databases).toBe(13);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			20
+			27
 		);
 	});
 
@@ -346,6 +346,80 @@ describe('committed import', () => {
 		// Every "Tags & Topics" link in the export was counted and then dropped;
 		// entity_tags came out of a full import empty.
 		expect(rows).toEqual([{ entity_type: 'library_item', name: 'Sleep', title: 'Why We Sleep' }]);
+	});
+
+	it('splits a money amount from the currency written into it', async () => {
+		await run(false);
+		const bills = await sql<{ name: string; amount: unknown; currency: string }[]>`
+			select name, amount, currency from bills order by name
+		`;
+		// "CA$24.99" read as a number is NaN, and kept as a string can never be
+		// totalled. Both halves are needed, apart.
+		expect(bills.map((b) => [b.name, Number(b.amount), b.currency])).toEqual([
+			['Costco Membership', 150, 'CAD'],
+			['Netflix', 24.99, 'CAD'],
+			['Readwise', 14.99, 'CAD']
+		]);
+	});
+
+	it('counts a star rating rather than storing the stars', async () => {
+		await run(false);
+		const rows = await sql<{ name: string; rating: number | null; status: string }[]>`
+			select name, rating, status from media_items order by name
+		`;
+		expect(rows).toEqual([
+			{ name: 'Project Hail Mary', rating: 5, status: 'watched' },
+			// Unrated is null, not zero: nobody gave this nought stars.
+			{ name: 'Survivor', rating: null, status: 'watching' }
+		]);
+	});
+
+	it('maps a status whose source spelling matches nothing exactly', async () => {
+		await run(false);
+		const survivor = one(
+			await sql<{ status: string; total_seasons: number }[]>`
+				select status, total_seasons from media_items where name = 'Survivor'
+			`
+		);
+		// "Currently Watching" and "Active/Current" are not values in any of
+		// these tables; both have to be recognised by their words.
+		expect(survivor.status).toBe('watching');
+		expect(survivor.total_seasons).toBe(50);
+
+		const netflix = one(
+			await sql<{ status: string; frequency: string }[]>`
+				select status, frequency from bills where name = 'Netflix'
+			`
+		);
+		expect(netflix.status).toBe('active');
+		expect(netflix.frequency).toBe('monthly');
+
+		const readwise = one(
+			await sql<{ status: string }[]>`select status from bills where name = 'Readwise'`
+		);
+		expect(readwise.status).toBe('free_trial');
+	});
+
+	it('points a wishlist item at the person it is for', async () => {
+		await run(false);
+		const row = one(
+			await sql<{ item: string; person: string; occasion: string }[]>`
+				select w.name as item, p.name as person, w.occasion
+				from wishlist_items w join people p on p.id = w.for_person_id
+			`
+		);
+		expect(row).toEqual({ item: 'Thermomix', person: 'Jordan Smith', occasion: 'Birthday' });
+	});
+
+	it('reads a person\u2019s groups as a list', async () => {
+		await run(false);
+		const person = one(
+			await sql<{ groups: string[]; kind: string }[]>`
+				select groups, kind from people where name = 'Jordan Smith'
+			`
+		);
+		expect(person.groups).toEqual(['Family', 'Friends']);
+		expect(person.kind).toBe('person');
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

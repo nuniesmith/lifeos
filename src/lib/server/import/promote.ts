@@ -392,6 +392,10 @@ async function applyRelation(
 			await sql`update prep_tasks set recipe_id = ${to.id} where id = ${from.id}`;
 			return 'prep_task.recipe';
 
+		case 'wishlist_items->people':
+			await sql`update wishlist_items set for_person_id = ${to.id} where id = ${from.id}`;
+			return 'wishlist.person';
+
 		case 'projects->areas':
 			await sql`
 				insert into project_areas (project_id, area_id)
@@ -944,6 +948,208 @@ const upsertLibrary = mapper('library_items', async (sql, row, o) => {
 	return r?.id ?? null;
 });
 
+// ─── collections (migration 0014) ──────────────────────────────────────────
+
+/**
+ * A money amount written the way the source writes it: "CA$14.99".
+ *
+ * The currency and the number are separate facts. Reading the whole string as
+ * a number gives NaN, and keeping it as a string means no total can ever be
+ * computed — so both halves are pulled out and stored apart.
+ */
+function money(row: StagedRow, column: string): { amount: number | null; currency: string } {
+	const raw = (row.raw[column] ?? '').trim();
+	if (!raw) return { amount: null, currency: 'CAD' };
+
+	const currency = /^([A-Z]{2,3})\s*\$/.exec(raw)?.[1];
+	const digits = raw.replace(/[^0-9.]/g, '');
+	const amount = digits ? Number(digits) : null;
+
+	return {
+		amount: amount !== null && Number.isFinite(amount) ? amount : null,
+		// "CA$" means Canadian dollars; a bare "$" is the household's own
+		// currency, which for this workspace is the same thing.
+		currency: currency === 'CA' || !currency ? 'CAD' : currency
+	};
+}
+
+/** "★★★★★" is a count, not a label. */
+function stars(row: StagedRow, column: string): number | null {
+	const raw = (row.raw[column] ?? '').trim();
+	if (!raw) return null;
+	const count = (raw.match(/★/g) ?? []).length;
+	return count > 0 ? Math.min(count, 5) : null;
+}
+
+const PERSON_KIND = [
+	['me', 'me'],
+	['place', 'place'],
+	['pet', 'pet'],
+	['person', 'person']
+] as const;
+
+const MEDIA_TYPE = [
+	['tv', 'tv'],
+	['movie', 'movie']
+] as const;
+
+const MEDIA_STATUS = [
+	['currently watching', 'watching'],
+	['watching', 'watching'],
+	['want', 'want_to_watch'],
+	['paused', 'paused'],
+	['dropped', 'dropped'],
+	['watched', 'watched']
+] as const;
+
+const WISHLIST_STATUS = [
+	['wishlist', 'wanted'],
+	['bought', 'bought'],
+	['purchased', 'bought'],
+	['given', 'given'],
+	['declined', 'declined']
+] as const;
+
+const BILL_FREQUENCY = [
+	['week', 'weekly'],
+	['biweek', 'biweekly'],
+	['month', 'monthly'],
+	['quarter', 'quarterly'],
+	['annual', 'annual'],
+	['year', 'annual'],
+	['one', 'one_off']
+] as const;
+
+const BILL_STATUS = [
+	['free trial', 'free_trial'],
+	['trial', 'free_trial'],
+	['paused', 'paused'],
+	['cancel', 'cancelled'],
+	['active', 'active'],
+	['current', 'active']
+] as const;
+
+const upsertPeople = mapper('people', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into people (household_id, owner_user_id, name, kind, groups, notes,
+		                    notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${matchOption(text(row, 'What?'), PERSON_KIND, 'person')},
+		        ${multi(row, 'Groups')}::text[], ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive?') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			name = excluded.name, kind = excluded.kind, groups = excluded.groups,
+			notes = excluded.notes, source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertPets = mapper('people', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into people (household_id, owner_user_id, name, kind, birthday, notes,
+		                    notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'}, 'pet',
+		        ${date(row, 'Birthday')}, ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			name = excluded.name, birthday = excluded.birthday,
+			notes = excluded.notes, source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertWishlist = mapper('wishlist_items', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into wishlist_items (household_id, owner_user_id, name, item_type, status,
+		                            price_range, purpose, shop_source, url, occasion,
+		                            is_favourite, buy_again,
+		                            notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${text(row, 'Type')},
+		        ${matchOption(text(row, 'Status'), WISHLIST_STATUS, 'wanted')},
+		        ${text(row, 'Price Range')}, ${text(row, 'Purpose')},
+		        ${text(row, 'Shop/Source')}, ${text(row, 'URL')}, ${text(row, 'Occasion')},
+		        ${bool(row, 'Favourite')}, ${bool(row, 'Buy Again')},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			name = excluded.name, item_type = excluded.item_type, status = excluded.status,
+			price_range = excluded.price_range, purpose = excluded.purpose,
+			shop_source = excluded.shop_source, url = excluded.url,
+			occasion = excluded.occasion, is_favourite = excluded.is_favourite,
+			buy_again = excluded.buy_again, source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertMedia = mapper('media_items', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into media_items (household_id, owner_user_id, name, media_type, status,
+		                         rating, genre, streaming_service, release_year,
+		                         total_seasons, current_season, current_episode,
+		                         times_watched, why_saved, is_favourite, watch_again,
+		                         started_on, finished_on, last_watched_at,
+		                         notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${matchOption(text(row, 'Type'), MEDIA_TYPE, 'other')},
+		        ${matchOption(text(row, 'Status'), MEDIA_STATUS, 'want_to_watch')},
+		        ${stars(row, '\u2b50\ufe0f Rating')},
+		        ${text(row, 'Genre')}, ${text(row, 'Streaming Service')},
+		        ${int(row, 'Release Year')}, ${int(row, 'Total Seasons')},
+		        ${int(row, 'Current Season')}, ${int(row, 'Current Episode')},
+		        ${int(row, 'Times Watched') ?? 0},
+		        ${text(row, 'Why I Saved This?')},
+		        ${bool(row, 'Favourite')}, ${bool(row, 'Watch Again?')},
+		        ${date(row, 'Date Started')}, ${date(row, 'Date FInished')},
+		        ${timestamp(row, 'Last Watched')}::timestamptz,
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			name = excluded.name, media_type = excluded.media_type, status = excluded.status,
+			rating = excluded.rating, genre = excluded.genre,
+			streaming_service = excluded.streaming_service,
+			release_year = excluded.release_year, total_seasons = excluded.total_seasons,
+			current_season = excluded.current_season, current_episode = excluded.current_episode,
+			times_watched = excluded.times_watched, why_saved = excluded.why_saved,
+			is_favourite = excluded.is_favourite, watch_again = excluded.watch_again,
+			started_on = excluded.started_on, finished_on = excluded.finished_on,
+			last_watched_at = excluded.last_watched_at,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
+const upsertBills = mapper('bills', async (sql, row, o) => {
+	const { amount, currency } = money(row, 'Amount');
+	const [r] = await sql<{ id: string }[]>`
+		insert into bills (household_id, owner_user_id, name, amount, currency, frequency,
+		                   next_due_on, category, account, autopay, status,
+		                   free_trial_ends_on, notes,
+		                   notion_page_id, source_record_id, created_by)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${amount}::numeric, ${currency},
+		        ${matchOption(text(row, 'Frequency'), BILL_FREQUENCY, null)},
+		        ${date(row, 'Next Due')}, ${text(row, 'Category')}, ${text(row, 'Account')},
+		        ${bool(row, 'Autopay?')},
+		        ${matchOption(text(row, 'Status'), BILL_STATUS, 'active')},
+		        ${date(row, 'Free Trial End')}, ${withBody(row, null)},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
+		on conflict (notion_page_id) do update set
+			name = excluded.name, amount = excluded.amount, currency = excluded.currency,
+			frequency = excluded.frequency, next_due_on = excluded.next_due_on,
+			category = excluded.category, account = excluded.account,
+			autopay = excluded.autopay, status = excluded.status,
+			free_trial_ends_on = excluded.free_trial_ends_on, notes = excluded.notes,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
 	'Areas Database': upsertAreas,
@@ -970,7 +1176,12 @@ const MAPPERS: Record<string, Mapper> = {
 	'Recipes Database': upsertRecipes,
 	'Meal Plan Database': upsertMealPlans,
 	'Prep Tasks Database': upsertPrepTasks,
-	Library: upsertLibrary
+	Library: upsertLibrary,
+	'People & Places Databases': upsertPeople,
+	'Pet Database': upsertPets,
+	'Wishlist Database': upsertWishlist,
+	'Movies & TV Database': upsertMedia,
+	'Bills & Subscriptions Database': upsertBills
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);
