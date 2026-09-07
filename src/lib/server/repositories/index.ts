@@ -46,6 +46,7 @@ export * from './goals';
 export * from './health';
 export * from './habits';
 export * from './important-dates';
+export * from './library';
 export * from './projects';
 export * from './review';
 export * from './search';

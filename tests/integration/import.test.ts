@@ -52,8 +52,8 @@ const run = (dryRun: boolean) =>
 describe('dry run', () => {
 	it('reports real numbers but writes nothing', async () => {
 		const summary = await run(true);
-		expect(summary.rows).toBe(17);
-		expect(summary.databases).toBe(7);
+		expect(summary.rows).toBe(20);
+		expect(summary.databases).toBe(9);
 
 		// The transaction was rolled back, so nothing survives.
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from tasks`)).toBe(0);
@@ -67,7 +67,7 @@ describe('committed import', () => {
 	it('stages every canonical row', async () => {
 		await run(false);
 		expect(countOf(await sql<{ count: number }[]>`select count(*)::int from source_records`)).toBe(
-			17
+			20
 		);
 	});
 
@@ -290,6 +290,62 @@ describe('committed import', () => {
 		);
 		expect(menu.on_date).toBe('2026-08-24');
 		expect(menu.name).toBe('Monday\u2019s Menu');
+	});
+
+	it('promotes the library, keeping the time of day on last interaction', async () => {
+		await run(false);
+		const book = one(
+			await sql<
+				{
+					title: string;
+					author: string;
+					entry_type: string;
+					status: string;
+					highlight_count: number;
+					last_interaction_at: Date | string | null;
+				}[]
+			>`
+				select title, author, entry_type, status, highlight_count, last_interaction_at
+				from library_items where title = 'Why We Sleep'
+			`
+		);
+		expect(book.author).toBe('Matthew Walker');
+		expect(book.entry_type).toBe('book');
+		// "On Reading List" is not an exact match for any status value.
+		expect(book.status).toBe('reading_list');
+		expect(book.highlight_count).toBe(15);
+		// A date() read would have discarded the time and broken the ordering
+		// the Knowledge Hub's "rediscover" list depends on.
+		const at = book.last_interaction_at;
+		const ms = at instanceof Date ? at.getTime() : Date.parse(String(at));
+		expect(new Date(ms).toISOString()).toBe('2026-08-11T19:20:00.000Z');
+	});
+
+	it('defaults an entry with nothing filled in rather than refusing it', async () => {
+		await run(false);
+		const note = one(
+			await sql<{ entry_type: string; status: string; highlight_count: number }[]>`
+				select entry_type, status, highlight_count from library_items
+				where title = 'A note to self'
+			`
+		);
+		expect(note.entry_type).toBe('note');
+		expect(note.status).toBe('inbox');
+		// An absent count is none, which for a count is the honest zero.
+		expect(note.highlight_count).toBe(0);
+	});
+
+	it('attaches tags, which no relation handler used to do at all', async () => {
+		await run(false);
+		const rows = await sql<{ entity_type: string; name: string; title: string }[]>`
+			select e.entity_type, t.name, l.title
+			from entity_tags e
+			join tags t on t.id = e.tag_id
+			join library_items l on l.id = e.entity_id
+		`;
+		// Every "Tags & Topics" link in the export was counted and then dropped;
+		// entity_tags came out of a full import empty.
+		expect(rows).toEqual([{ entity_type: 'library_item', name: 'Sleep', title: 'Why We Sleep' }]);
 	});
 
 	it('stores raw source values as a JSON object, not a JSON string', async () => {

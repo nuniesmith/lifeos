@@ -116,18 +116,42 @@ beforeAll(async () => {
 	}
 }, 30_000);
 
+/**
+ * Drops a temporary database, waiting out the lock rather than failing on it.
+ *
+ * `drop database ... with (force)` needs an exclusive lock, and on a server the
+ * rest of the integration suite is working against it can lose that race to a
+ * connection that appears between the terminate and the drop. That showed up as
+ * an intermittent teardown timeout that looked like a product failure and was
+ * not one: the work never changed, only how busy the server was.
+ *
+ * Retrying is right here and would be wrong in application code — this is
+ * cleanup of something this file created, so the only question is whether it
+ * eventually goes, and a database left behind would break the next run.
+ */
+async function dropDatabase(name: string): Promise<void> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < 5; attempt++) {
+		try {
+			await maintenance.unsafe(`drop database if exists "${name}" with (force)`);
+			return;
+		} catch (err) {
+			lastError = err;
+			await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+		}
+	}
+	throw lastError;
+}
+
 afterAll(async () => {
 	for (const name of [sourceName, targetName]) {
-		await maintenance.unsafe(`drop database if exists "${name}" with (force)`);
+		await dropDatabase(name);
 	}
 	await maintenance.end({ timeout: 5 });
 	if (workspace) await rm(workspace, { recursive: true, force: true });
-	// The same 30s the setup gets, and for the same reason: this drops two
-	// databases on a server the rest of the integration suite is hammering in
-	// parallel, and the 10s default is not a statement about how long that
-	// should take. It began timing out when four more integration files were
-	// added — the work here did not change, the contention did.
-}, 30_000);
+	// Generous, and deliberately so: two DDL statements against a shared server
+	// are not a 10-second proposition when the suite is busy.
+}, 60_000);
 
 describe('portable data mobility', () => {
 	it('dry-runs and restores parented tasks and habit ownership onto a fresh system', async () => {

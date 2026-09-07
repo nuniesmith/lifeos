@@ -15,6 +15,7 @@ export { default as ErrorState } from './ErrorState.svelte';
 export { default as Field } from './Field.svelte';
 export { default as Icon } from './Icon.svelte';
 export { default as Input } from './Input.svelte';
+export { default as LibraryList } from './LibraryList.svelte';
 export { default as List } from './List.svelte';
 export { default as ListRow } from './ListRow.svelte';
 export { default as LoadingState } from './LoadingState.svelte';
@@ -28,6 +29,7 @@ export { default as Textarea } from './Textarea.svelte';
 
 export type { FieldContext } from './Field.svelte';
 export type { Option } from './Select.svelte';
+export type { ShelfItem } from './LibraryList.svelte';
 export { ICONS, type IconName } from './icons';
 export {
 	ADMIN_DESTINATIONS,

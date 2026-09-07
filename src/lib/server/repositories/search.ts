@@ -23,7 +23,8 @@ export const SEARCH_KINDS = [
 	'goal',
 	'area',
 	'important_date',
-	'daily_log'
+	'daily_log',
+	'library_item'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -133,6 +134,19 @@ export async function search(
 			       (t.archived_at is not null) as archived,
 			       '/areas' as path
 			from important_dates t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('library_item')) {
+		branches.push(sql`
+			select 'library_item' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.author,'')
+			           || ' ' || coalesce(t.summary,'')) as doc,
+			       concat_ws(' ', t.author, t.summary) as body,
+			       (t.archived_at is not null) as archived,
+			       '/library/' || t.id as path
+			from library_items t
 			where ${readableScope(sql, viewer, 't')}
 		`);
 	}

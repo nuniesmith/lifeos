@@ -93,6 +93,27 @@ const int = (row: StagedRow, column: string): number | null => {
 	return Number.isFinite(n) ? n : null;
 };
 
+/**
+ * A full timestamp, for the columns that carry one.
+ *
+ * `date()` throws away the time of day, which is right for a due date and
+ * wrong for "last interaction" — the library's rediscover ordering is the
+ * only thing that makes an old note findable again.
+ */
+const timestamp = (row: StagedRow, column: string): string | null => {
+	const raw = (row.raw[column] ?? '').trim();
+	if (!raw) return null;
+
+	// Notion writes the zone as a trailing "(UTC)", which Date.parse ignores
+	// entirely — it then reads the clock time as LOCAL and every timestamp
+	// shifts by the server's offset. Rewriting the marker into a form the
+	// parser understands is what makes the value mean what it says.
+	const zoned = /\(UTC\)\s*$/i.test(raw) ? `${raw.replace(/\(UTC\)\s*$/i, '').trim()} UTC` : raw;
+
+	const parsed = Date.parse(zoned);
+	return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+};
+
 /** Decimal readings such as a blood glucose of 6.2, which `int` would truncate. */
 const numeric = (row: StagedRow, column: string): number | null => {
 	const raw = (row.raw[column] ?? '').trim();
@@ -249,6 +270,24 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
  * relation name makes the report show what was actually connected rather than
  * how many links were seen.
  */
+/**
+ * Table name to the `entity_tags.entity_type` the application uses.
+ *
+ * Mirrors TAGGABLE in repositories/tags.ts; a table missing here simply
+ * cannot be tagged, which is why the relation returns null rather than
+ * inventing a type the reader would never query for.
+ */
+const TAGGABLE_BY_TABLE: Record<string, string> = {
+	tasks: 'task',
+	projects: 'project',
+	areas: 'area',
+	goals: 'goal',
+	habits: 'habit',
+	important_dates: 'important_date',
+	daily_logs: 'daily_log',
+	library_items: 'library_item'
+};
+
 async function applyRelation(
 	sql: Queryable,
 	from: { table: string; id: string },
@@ -256,6 +295,20 @@ async function applyRelation(
 	property: string
 ): Promise<string | null> {
 	const pair = `${from.table}->${to.table}`;
+
+	// Tags are the one relation that is the same shape from every table, and
+	// nothing was handling it: every "Tags & Topics" link in the export — on
+	// tasks, projects, goals, areas and the library — was being counted and
+	// then dropped, so `entity_tags` came out of a full import empty.
+	if (to.table === 'tags') {
+		const entityType = TAGGABLE_BY_TABLE[from.table];
+		if (!entityType) return null;
+		await sql`
+			insert into entity_tags (tag_id, entity_type, entity_id)
+			values (${to.id}, ${entityType}, ${from.id}) on conflict do nothing
+		`;
+		return 'tag.attached';
+	}
 
 	switch (pair) {
 		case 'tasks->projects':
@@ -839,6 +892,58 @@ const upsertPrepTasks = mapper('prep_tasks', async (sql, row, o) => {
 	return r?.id ?? null;
 });
 
+// ─── the library (migration 0013) ──────────────────────────────────────────
+
+const ENTRY_TYPE = [
+	['book', 'book'],
+	['note', 'note'],
+	['reference', 'reference']
+] as const;
+
+const LIBRARY_STATUS = [
+	['reading list', 'reading_list'],
+	['inbox', 'inbox'],
+	['new', 'inbox'],
+	['live', 'live'],
+	['archive', 'archived_read']
+] as const;
+
+const upsertLibrary = mapper('library_items', async (sql, row, o) => {
+	const [r] = await sql<{ id: string }[]>`
+		insert into library_items (household_id, owner_user_id, title, full_title, author,
+		                           url, summary, notes, entry_type, format, status,
+		                           highlight_count, last_interaction_at, is_favourite,
+		                           notion_page_id, source_record_id, created_by, archived_at)
+		values (${o.householdId}, null, ${row.title ?? 'Untitled'},
+		        ${text(row, 'Full Title')}, ${text(row, 'Author')}, ${text(row, 'URL')},
+		        ${text(row, 'Summary')}, ${withBody(row, null)},
+		        ${matchOption(text(row, 'Entry Type'), ENTRY_TYPE, 'reference')},
+		        ${text(row, 'Format')},
+		        ${matchOption(text(row, 'Status'), LIBRARY_STATUS, 'inbox')},
+		        ${int(row, 'Highlights') ?? 0},
+		        ${timestamp(row, 'Last Interaction')}::timestamptz,
+		        ${bool(row, 'Favourite?')},
+		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
+		        ${bool(row, 'Archive?') ? new Date().toISOString() : null}::timestamptz)
+		on conflict (notion_page_id) do update set
+			title = excluded.title,
+			full_title = excluded.full_title,
+			author = excluded.author,
+			url = excluded.url,
+			summary = excluded.summary,
+			notes = excluded.notes,
+			entry_type = excluded.entry_type,
+			format = excluded.format,
+			status = excluded.status,
+			highlight_count = excluded.highlight_count,
+			last_interaction_at = excluded.last_interaction_at,
+			is_favourite = excluded.is_favourite,
+			source_record_id = excluded.source_record_id
+		returning id
+	`;
+	return r?.id ?? null;
+});
+
 /** Source database name to mapper. Unlisted databases stay staged only. */
 const MAPPERS: Record<string, Mapper> = {
 	'Areas Database': upsertAreas,
@@ -864,7 +969,8 @@ const MAPPERS: Record<string, Mapper> = {
 	'Ingredients Database': upsertIngredients,
 	'Recipes Database': upsertRecipes,
 	'Meal Plan Database': upsertMealPlans,
-	'Prep Tasks Database': upsertPrepTasks
+	'Prep Tasks Database': upsertPrepTasks,
+	Library: upsertLibrary
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);

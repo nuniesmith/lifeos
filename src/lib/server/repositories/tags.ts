@@ -44,7 +44,8 @@ export const TAGGABLE = {
 	goal: 'goals',
 	habit: 'habits',
 	important_date: 'important_dates',
-	daily_log: 'daily_logs'
+	daily_log: 'daily_logs',
+	library_item: 'library_items'
 } as const;
 
 export type TaggableType = keyof typeof TAGGABLE;

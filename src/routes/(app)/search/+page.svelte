@@ -14,7 +14,8 @@
 		goal: 'Goal',
 		area: 'Area',
 		important_date: 'Date',
-		daily_log: 'Journal'
+		daily_log: 'Journal',
+		library_item: 'Library'
 	};
 
 	/**

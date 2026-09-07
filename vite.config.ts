@@ -10,6 +10,12 @@ export default defineConfig({
 		// like a product bug and is not one. Unit tests are fast enough that
 		// serialising them costs nothing.
 		fileParallelism: false,
+		// Pinned to a zone that is not UTC, and to the household's own, so the
+		// date handling is exercised rather than accidentally satisfied. A
+		// timestamp bug that shifts a value by the local offset is invisible on
+		// a UTC machine — which every CI runner is — and the "(UTC)" marker in
+		// the Notion export is exactly that kind of bug.
+		env: { TZ: 'America/Toronto' },
 		projects: [
 			{
 				extends: true,
