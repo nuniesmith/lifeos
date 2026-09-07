@@ -6,6 +6,7 @@ import { sql } from '$lib/server/db';
 import { resolveSession } from '$lib/server/auth/service';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
+import { ensureStorage } from '$lib/server/storage';
 
 /**
  * First-run bootstrap, attempted once per process at startup.
@@ -17,9 +18,14 @@ import { logger } from '$lib/server/logger';
  */
 const bootstrapped = building
 	? Promise.resolve()
-	: runBootstrap(sql).catch((err) => {
-			logger.error({ err }, 'first-run bootstrap did not complete; will retry on next start');
-		});
+	: ensureStorage()
+			// Storage first: readiness statfs's the upload directory, so an
+			// install where it does not exist never becomes ready even though
+			// nothing is actually wrong.
+			.then(() => runBootstrap(sql))
+			.catch((err) => {
+				logger.error({ err }, 'first-run bootstrap did not complete; will retry on next start');
+			});
 
 /**
  * The single backend seam. Session resolution lands here in Phase 3; until

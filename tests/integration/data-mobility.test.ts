@@ -122,7 +122,12 @@ afterAll(async () => {
 	}
 	await maintenance.end({ timeout: 5 });
 	if (workspace) await rm(workspace, { recursive: true, force: true });
-});
+	// The same 30s the setup gets, and for the same reason: this drops two
+	// databases on a server the rest of the integration suite is hammering in
+	// parallel, and the 10s default is not a statement about how long that
+	// should take. It began timing out when four more integration files were
+	// added — the work here did not change, the contention did.
+}, 30_000);
 
 describe('portable data mobility', () => {
 	it('dry-runs and restores parented tasks and habit ownership onto a fresh system', async () => {
