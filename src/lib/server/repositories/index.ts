@@ -38,6 +38,7 @@ export {
 	type WeekStart
 } from './dates';
 
+export * from './archive';
 export * from './areas';
 export * from './daily-logs';
 export * from './goals';

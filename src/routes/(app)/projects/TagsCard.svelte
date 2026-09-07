@@ -30,7 +30,7 @@
 		<ul class="tags">
 			{#each tags as tag (tag.id)}
 				<li class="tag">
-					<a href={resolve(appPath(`/areas/tags`))}>{tag.name}</a>
+					<a href={resolve(appPath(`/topics`))}>{tag.name}</a>
 					<form method="POST" action="?/detachTag" use:enhance>
 						<input type="hidden" name="tagId" value={tag.id} />
 						<button type="submit" class="remove" aria-label="Remove tag {tag.name} from {of}">
@@ -61,7 +61,7 @@
 		<!-- No control is offered when there is nothing to choose: a select with
 		     one disabled placeholder is a button that cannot work. -->
 		<p class="muted">
-			<a href={resolve(appPath('/areas/tags'))}>Make a tag</a> to group records across the household.
+			<a href={resolve(appPath('/topics'))}>Make a tag</a> to group records across the household.
 		</p>
 	{/if}
 </Card>

@@ -24,7 +24,7 @@
 		{ label: 'New project', icon: 'projects', href: '/projects' },
 		{ label: 'Perform review', icon: 'tasks' },
 		{ label: 'New habit', icon: 'habits', href: '/habits' },
-		{ label: 'New tag or topic', icon: 'areas', href: '/areas/tags' },
+		{ label: 'New tag or topic', icon: 'areas', href: '/topics' },
 		{ label: 'New task', icon: 'check', kind: 'task' },
 		{ label: 'New wishlist item', icon: 'goals' },
 		{ label: 'New contact', icon: 'people' }

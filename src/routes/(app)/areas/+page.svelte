@@ -23,7 +23,7 @@
 		</Badge>
 	{/snippet}
 	{#snippet actions()}
-		<Button size="sm" href="/areas/tags">Tags</Button>
+		<Button size="sm" href="/topics">Tags</Button>
 	{/snippet}
 </PageHeader>
 
