@@ -259,6 +259,42 @@ function orderTaskRows(rows) {
 	return ordered;
 }
 
+/**
+ * Refuses a bundle the target database is too old to hold.
+ *
+ * The bundle records the migration it was exported at. If the target is behind
+ * that, its tables are missing columns the rows carry, and the restore fails
+ * partway through with a driver error naming a column — which says nothing
+ * about the actual problem, and says it only after the media has been staged.
+ * Checking up front turns that into one sentence, before anything is written.
+ *
+ * A target that is AHEAD is fine and expected: migrations here only add, so a
+ * newer database holds an older bundle. It is reported, not refused.
+ */
+async function checkSchema(manifest) {
+	const bundle = manifest.schemaVersion;
+	// Bundles written before the manifest recorded a real version claimed a
+	// frozen '0007' regardless of their true schema, so the field cannot be
+	// trusted to mean anything. Those are readable but not checkable.
+	if (!bundle || !/^\d{4}_/.test(bundle)) {
+		console.log(`Schema check skipped: this bundle records no usable schema version.`);
+		return;
+	}
+	const applied = await sql`select name from schema_migrations order by name desc limit 1`;
+	const target = applied[0]?.name;
+	if (!target) throw new Error('the target database has no migrations applied; run migrate first');
+
+	if (target === bundle) {
+		console.log(`Schema: ${target} on both sides.`);
+	} else if (target < bundle) {
+		throw new Error(
+			`the target database is at ${target} but this bundle was exported at ${bundle}; run migrations on the target before restoring`
+		);
+	} else {
+		console.log(`Schema: bundle ${bundle}, target ${target} (target is newer, which is fine).`);
+	}
+}
+
 async function resolveTarget() {
 	const household = (
 		await sql`select id, name from households where ${targetHousehold ? sql`id = ${targetHousehold}::uuid` : sql`true`} order by created_at limit 1`
@@ -308,6 +344,7 @@ async function main() {
 	const info = await stat(root);
 	if (!info.isDirectory()) throw new Error(`input is not a directory: ${root}`);
 	const manifest = await readAndVerifyManifest();
+	await checkSchema(manifest);
 	const target = await resolveTarget();
 	const rowsByTable = new Map();
 	for (const table of TABLES) rowsByTable.set(table, await jsonRows(table));

@@ -276,10 +276,24 @@ async function main() {
 			sha256: createHash('sha256').update(bytes).digest('hex')
 		};
 	}
+	// The schema this bundle was actually taken from, read from the database
+	// rather than written down. It was a string literal — '0007' — frozen at
+	// whatever migration existed the day the script was written, so a bundle
+	// exported at 0016 still claimed 0007. A version field that cannot change
+	// records nothing, and nothing read it either; see restore-data.mjs, which
+	// now refuses a bundle whose schema is ahead of the target database.
+	// Ordered by name, not applied_at: the filenames carry the sequence, and a
+	// database restored from a dump has every row's timestamp bunched together.
+	const applied = await sql`
+		select name from schema_migrations order by name desc limit 1
+	`;
+	const schemaVersion = applied[0]?.name;
+	if (!schemaVersion) throw new Error('no migrations are applied; nothing to export');
+
 	const manifest = {
 		format: 'lifeos-portable',
 		formatVersion: 1,
-		schemaVersion: '0007',
+		schemaVersion,
 		exportedAt: new Date().toISOString(),
 		household,
 		members,
