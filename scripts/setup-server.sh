@@ -110,6 +110,45 @@ chown "$SERVICE_USER:$SERVICE_GROUP" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 ok ".env available to $SERVICE_USER (0600)"
 
+# ─── scheduled backup ──────────────────────────────────────────────────────
+#
+# backup.sh has always had a --scheduled mode and a 14-day retention sweep that
+# only makes sense on a schedule. Nothing ever called it: the only backups this
+# host had were the ones deploy.sh takes before migrating, so the real backup
+# interval was "however often somebody happens to deploy", and the retention
+# never ran at all. A backup policy nobody scheduled is not a backup policy.
+CHECKOUT="${LIFEOS_CHECKOUT:-/home/$SERVICE_USER/lifeos}"
+UNITS="$(dirname "${BASH_SOURCE[0]}")/../deploy/systemd"
+
+if [[ -d "$UNITS" ]]; then
+    say "Installing the daily backup timer"
+    for unit in lifeos-backup.service lifeos-backup.timer; do
+        sed -e "s|__USER__|$SERVICE_USER|g" \
+            -e "s|__GROUP__|$SERVICE_GROUP|g" \
+            -e "s|__CHECKOUT__|$CHECKOUT|g" \
+            -e "s|__STATE_DIR__|$STATE_DIR|g" \
+            "$UNITS/$unit" > "/etc/systemd/system/$unit"
+    done
+    systemctl daemon-reload
+    systemctl enable --now lifeos-backup.timer
+
+    # Reported, not assumed: `enable --now` succeeds on a timer whose service
+    # cannot start, and the next line is the only place that difference shows
+    # up before the first 03:30 comes around.
+    if systemctl is-active --quiet lifeos-backup.timer; then
+        ok "backup timer active; next run $(systemctl show lifeos-backup.timer \
+            -p NextElapseUSecRealtime --value)"
+    else
+        warn "backup timer installed but not active; check: systemctl status lifeos-backup.timer"
+    fi
+
+    if [[ ! -d "$CHECKOUT" ]]; then
+        warn "checkout $CHECKOUT does not exist yet; the timer will fail until the first deploy clones it"
+    fi
+else
+    warn "deploy/systemd is missing; no scheduled backup was installed"
+fi
+
 # ─── tailscale ─────────────────────────────────────────────────────────────
 if ! command -v tailscale >/dev/null 2>&1; then
     say "Installing Tailscale"
@@ -141,4 +180,9 @@ Next steps
   6. Push to main — the deploy workflow takes it from there
 
 Funnel must stay off. This host is reachable from the tailnet only.
+
+Backups run daily at 03:30 (systemd timer, Persistent so a host that was off
+catches up on boot). Check with:
+  systemctl list-timers lifeos-backup.timer
+  journalctl -u lifeos-backup.service -n 50
 NEXT
