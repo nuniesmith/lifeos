@@ -9,7 +9,14 @@ import { one } from '$lib/server/db/scalar';
 import {
 	SEARCH_KINDS,
 	createArea,
+	createBill,
 	createDailyLog,
+	createHabit,
+	createHealthTerm,
+	createIngredient,
+	createPerson,
+	createRecipe,
+	createWishlistItem,
 	createLibraryItem,
 	createGoal,
 	createProject,
@@ -135,6 +142,26 @@ describe('every search result links somewhere real', () => {
 			        '2026-04-02', ${owner.userId}::uuid)
 		`;
 
+		// The feature packs. Every kind must be present, which is the point of the
+		// assertion below: a branch with no record of its own never has its path
+		// checked, and that is exactly how /library/<id> once shipped pointing at a
+		// route that did not exist.
+		ok(await createRecipe(sql, owner, { name: `${word} soup` }), 'recipe');
+		ok(await createIngredient(sql, owner, { name: `${word} root` }), 'ingredient');
+		ok(await createPerson(sql, owner, { name: `${word} keeper` }), 'person');
+		ok(await createHabit(sql, owner, { name: `${word} walk` }), 'habit');
+		ok(await createWishlistItem(sql, owner, { name: `${word} hutch` }), 'wishlist item');
+		ok(await createBill(sql, owner, { name: `${word} insurance` }), 'bill');
+		ok(await createHealthTerm(sql, owner, { kind: 'symptom', name: `${word} ache` }), 'term');
+		// Media items are import-only — there is no create path — so this one is
+		// inserted directly rather than skipped, which would leave its branch
+		// unchecked.
+		await sql`
+			insert into media_items (household_id, owner_user_id, name, status, created_by)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, ${word + ' series'},
+			        'watching', ${owner.userId}::uuid)
+		`;
+
 		const hits = await search(sql, owner, word);
 		const routes = routeMatchers();
 
@@ -249,6 +276,24 @@ describe('search', () => {
 			expect(owner.role).toBe('admin');
 			expect(await search(sql, owner, 'hospital')).toEqual([]);
 			expect(titles(await search(sql, partner, 'hospital'))).toEqual(['Hospital appointment']);
+		});
+
+		it('applies the same scope to the feature packs, not just tasks', async () => {
+			// The new kinds all go through readableScope, but "all of them use the
+			// helper" is a claim about code, not about behaviour. A recipe is the
+			// cheapest way to check the behaviour is really there.
+			ok(
+				await createRecipe(sql, partner, {
+					name: 'Hangover cure',
+					visibility: 'private',
+					ownerUserId: partner.userId
+				}),
+				'private recipe'
+			);
+
+			expect(owner.role).toBe('admin');
+			expect(await search(sql, owner, 'hangover')).toEqual([]);
+			expect(titles(await search(sql, partner, 'hangover'))).toEqual(['Hangover cure']);
 		});
 
 		it('returns a household record to both members', async () => {

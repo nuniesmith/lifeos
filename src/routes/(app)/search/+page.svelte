@@ -15,7 +15,15 @@
 		area: 'Area',
 		important_date: 'Date',
 		daily_log: 'Journal',
-		library_item: 'Library'
+		library_item: 'Library',
+		recipe: 'Recipe',
+		ingredient: 'Ingredient',
+		person: 'Person',
+		media_item: 'Watchlist',
+		habit: 'Habit',
+		wishlist_item: 'Wishlist',
+		bill: 'Bill',
+		health_term: 'Health'
 	};
 
 	/**

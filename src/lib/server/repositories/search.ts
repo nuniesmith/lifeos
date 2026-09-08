@@ -24,7 +24,18 @@ export const SEARCH_KINDS = [
 	'area',
 	'important_date',
 	'daily_log',
-	'library_item'
+	'library_item',
+	// The feature packs. Without these, searching a recipe, a person, a film or
+	// a symptom by name returns nothing at all — which in a workspace where
+	// those are most of the records makes search look broken rather than empty.
+	'recipe',
+	'ingredient',
+	'person',
+	'media_item',
+	'habit',
+	'wishlist_item',
+	'bill',
+	'health_term'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -147,6 +158,111 @@ export async function search(
 			       (t.archived_at is not null) as archived,
 			       '/library/' || t.id as path
 			from library_items t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	// Each of these carries a name and some prose, and lands on the page that
+	// lists its kind. Only habits have a detail route of their own; the rest go
+	// to the list, because that is where the record is actually shown.
+	if (wanted('recipe')) {
+		branches.push(sql`
+			select 'recipe' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')
+			           || ' ' || coalesce(t.cuisine,'') || ' ' || coalesce(t.occasion,'')) as doc,
+			       concat_ws(' ', t.cuisine, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/food' as path
+			from recipes t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('ingredient')) {
+		branches.push(sql`
+			select 'ingredient' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.aisle,'')
+			           || ' ' || coalesce(t.category,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.aisle, t.category) as body,
+			       (t.archived_at is not null) as archived,
+			       '/food' as path
+			from ingredients t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('person')) {
+		branches.push(sql`
+			select 'person' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.kind,'')
+			           || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.kind, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/people' as path
+			from people t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('media_item')) {
+		branches.push(sql`
+			select 'media_item' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.genre,'')
+			           || ' ' || coalesce(t.why_saved,'')) as doc,
+			       concat_ws(' ', t.media_type, t.genre, t.why_saved) as body,
+			       (t.archived_at is not null) as archived,
+			       '/entertainment' as path
+			from media_items t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('habit')) {
+		branches.push(sql`
+			select 'habit' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.description,'')) as doc,
+			       t.description as body,
+			       (t.archived_at is not null) as archived,
+			       '/habits/' || t.id as path
+			from habits t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('wishlist_item')) {
+		branches.push(sql`
+			select 'wishlist_item' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.purpose,'')
+			           || ' ' || coalesce(t.occasion,'') || ' ' || coalesce(t.shop_source,'')) as doc,
+			       concat_ws(' ', t.purpose, t.occasion) as body,
+			       (t.archived_at is not null) as archived,
+			       '/wishlist' as path
+			from wishlist_items t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('bill')) {
+		branches.push(sql`
+			select 'bill' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.category,'')
+			           || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.category, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/finance' as path
+			from bills t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('health_term')) {
+		branches.push(sql`
+			select 'health_term' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.kind, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/health' as path
+			from health_vocabulary t
 			where ${readableScope(sql, viewer, 't')}
 		`);
 	}
