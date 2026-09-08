@@ -260,6 +260,37 @@ function orderTaskRows(rows) {
 }
 
 /**
+ * Orders attachments so an image is inserted before any variant of it.
+ *
+ * `variant_of` is a self-reference, and the export orders attachments by id —
+ * which puts a thumbnail before its original about half the time. The restore
+ * then failed on the foreign key partway through, after staging the media.
+ *
+ * The same shape as orderTaskRows, and written the same way rather than as a
+ * one-pass partition: nothing forbids a variant of a variant today, and a
+ * cheap loop that handles it is better than a cheap assumption that does not.
+ */
+function orderAttachmentRows(rows) {
+	const pending = new Map(rows.map((row) => [row.id, row]));
+	const ordered = [];
+	while (pending.size) {
+		let moved = 0;
+		for (const [id, row] of pending) {
+			if (row.variant_of && pending.has(row.variant_of)) continue;
+			ordered.push(row);
+			pending.delete(id);
+			moved++;
+		}
+		if (!moved) {
+			throw new Error(
+				`attachment variant cycle in export: ${[...pending.keys()].slice(0, 5).join(', ')}`
+			);
+		}
+	}
+	return ordered;
+}
+
+/**
  * Refuses a bundle the target database is too old to hold.
  *
  * The bundle records the migration it was exported at. If the target is behind
@@ -349,6 +380,7 @@ async function main() {
 	const rowsByTable = new Map();
 	for (const table of TABLES) rowsByTable.set(table, await jsonRows(table));
 	rowsByTable.set('tasks', orderTaskRows(rowsByTable.get('tasks')));
+	rowsByTable.set('attachments', orderAttachmentRows(rowsByTable.get('attachments')));
 	for (const attachment of rowsByTable.get('attachments')) {
 		const extension = attachment.content_type.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
 		const mediaPath = `media/${attachment.sha256}.${extension}`;

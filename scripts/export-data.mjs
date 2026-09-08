@@ -159,7 +159,16 @@ async function rowsFor(db, table, id) {
 		case 'meal_plan_recipes':
 			return db`select m.* from meal_plan_recipes m join meal_plans p on p.id = m.meal_plan_id where p.household_id = ${id}::uuid order by m.meal_plan_id, m.recipe_id, m.slot`;
 		case 'attachments':
-			return db`select id, household_id, encode(sha256, 'hex') as sha256, byte_size, content_type, width, height, original_name, storage_key, created_at, created_by, archived_at, purge_after from attachments where household_id = ${id}::uuid order by id`;
+			// Every other table is `select *`, which picks up new columns for
+			// free. This one could not be, because sha256 is bytea and has to
+			// travel as hex — so it carried a hand-written column list, and
+			// migration 0017 added `variant_of` and `variant_kind` without it.
+			// The export dropped them silently: 179 image variants restored with
+			// no parent, which is not a broken variant but no variant at all.
+			//
+			// `select a.*` first, then the encoded sha256 after it, so the later
+			// column wins and the list can never fall behind the schema again.
+			return db`select a.*, encode(a.sha256, 'hex') as sha256 from attachments a where a.household_id = ${id}::uuid order by a.id`;
 		case 'attachment_links':
 			return db`select l.* from attachment_links l join attachments a on a.id = l.attachment_id where a.household_id = ${id}::uuid order by l.attachment_id, l.entity_type, l.entity_id`;
 		default:
@@ -246,6 +255,26 @@ async function main() {
 				}
 			}
 			if (table === 'attachments') attachments = rows;
+
+			// Whatever the query was, it must have produced every column the
+			// table has. A hand-written list that falls behind a migration is
+			// invisible otherwise: the export succeeds, the restore succeeds,
+			// and a column's worth of data is simply gone.
+			if (rows.length > 0) {
+				const declared = (
+					await tx`
+						select column_name from information_schema.columns
+						where table_schema = 'public' and table_name = ${table}
+					`
+				).map((r) => r.column_name);
+				const exported = new Set(Object.keys(rows[0]));
+				const missing = declared.filter((c) => !exported.has(c));
+				if (missing.length > 0) {
+					throw new Error(
+						`export of ${table} is missing column(s) the table has: ${missing.join(', ')}`
+					);
+				}
+			}
 		}
 	});
 
