@@ -34,8 +34,21 @@ export async function imagesForPage(
 	const rows = await sql<
 		{ id: string; width: number | null; height: number | null; original_name: string | null }[]
 	>`
-		select a.id, a.width, a.height, a.original_name
+		-- The display variant when one exists, the original otherwise. A variant
+		-- is a re-encoding at the same dimensions, so width and height come from
+		-- whichever row is actually served.
+		-- DISTINCT ON the image, because one file can be linked to a record
+		-- twice: six records here use their page cover again inside the body,
+		-- and without this the journal draws the same photograph two days
+		-- running down the page. The ordering below decides which link wins.
+		select distinct on (coalesce(v.id, a.id))
+		       coalesce(v.id, a.id) as id,
+		       coalesce(v.width, a.width) as width,
+		       coalesce(v.height, a.height) as height,
+		       a.original_name
 		from attachments a
+		left join attachments v
+		  on v.variant_of = a.id and v.variant_kind = 'display' and v.archived_at is null
 		join attachment_links l
 		  on l.attachment_id = a.id and l.entity_type = 'source_record'
 		join source_records r on r.id = l.entity_id
@@ -48,11 +61,15 @@ export async function imagesForPage(
 		  and ir.household_id = ${viewer.householdId}::uuid
 		  and a.archived_at is null
 		  and a.content_type like 'image/%'
+		  -- A variant is a smaller copy of another image on this page, not a
+		  -- picture of its own; listing one shows the same thing twice.
+		  and a.variant_of is null
 		-- The page's cover first, then the pictures in the body in the order they
 		-- appeared. Covers arrive from a different export than everything else
 		-- (see scripts/import-covers.mjs) and so were being interleaved by
 		-- created_at, which put a day's cover in the middle of its photographs.
-		order by (l.role = 'cover') desc, l.position, a.created_at
+		-- DISTINCT ON requires the deduplicated expression to lead the ordering.
+		order by coalesce(v.id, a.id), (l.role = 'cover') desc, l.position, a.created_at
 	`;
 
 	return rows.map((row) => ({
@@ -91,11 +108,20 @@ export async function coversForPages(
 			original_name: string | null;
 		}[]
 	>`
-		select r.notion_page_id::text as page_id, a.id, a.width, a.height, a.original_name
+		-- The thumbnail when one exists. Covers here run to 11 MB and are drawn
+		-- as 48-pixel rows and a 6rem band; serving originals made one page ship
+		-- 21 MB to render seven pictures.
+		select r.notion_page_id::text as page_id,
+		       coalesce(v.id, a.id) as id,
+		       coalesce(v.width, a.width) as width,
+		       coalesce(v.height, a.height) as height,
+		       a.original_name
 		from attachments a
+		left join attachments v
+		  on v.variant_of = a.id and v.variant_kind = 'thumb' and v.archived_at is null
 		join attachment_links l
 		  on l.attachment_id = a.id and l.entity_type = 'source_record'
-		 and l.role in ('cover', 'cover_thumb')
+		 and l.role = 'cover'
 		join source_records r on r.id = l.entity_id
 		join import_runs ir on ir.id = r.import_run_id
 		where r.notion_page_id = any(${ids}::uuid[])
@@ -103,12 +129,9 @@ export async function coversForPages(
 		  and ir.household_id = ${viewer.householdId}::uuid
 		  and a.archived_at is null
 		  and a.content_type like 'image/%'
-		-- The thumbnail first, so the loop below keeps it and the full-size
-		-- cover is only used where no thumbnail was made.
-		order by (l.role = 'cover_thumb') desc
 	`;
 
-	// First row per page wins, and the ordering above makes that the thumbnail.
+	// One cover per page; the first row wins if a page somehow has two.
 	const covers = new Map<string, RecordImage>();
 	for (const row of rows) {
 		if (covers.has(row.page_id)) continue;

@@ -21,8 +21,8 @@
  * Covers attach to the `source_records` row, the same place body images go,
  * with role 'cover' to tell them apart.
  *
- * Each cover also gets a THUMBNAIL, stored as its own attachment with role
- * 'cover_thumb'. This is not an optimisation, it is the difference between the
+ * Each cover also gets a THUMBNAIL, stored as its own attachment pointing at
+ * the cover through `variant_of`. This is not an optimisation, it is the difference between the
  * feature working and not: the covers in this workspace have a median size of
  * 1.2 MB and run to 11 MB, and the pages that show them draw 48-pixel list rows
  * and a 6rem tile band. Serving the originals made /entertainment ship 21 MB to
@@ -257,11 +257,12 @@ const main = async () => {
 				const thumbKey = storageKeyFor(thumbSha, 'webp');
 				const thumbInserted = await tx`
 				insert into attachments (household_id, sha256, byte_size, content_type,
-				                         width, height, original_name, storage_key)
+				                         width, height, original_name, storage_key,
+				                         variant_of, variant_kind)
 				values (${household.id}, ${thumbSha}, ${thumbBytes.length}, 'image/webp',
 				        ${Math.min(dimensions?.width ?? THUMB_PX, THUMB_PX)},
 				        ${Math.min(dimensions?.height ?? THUMB_PX, THUMB_PX)},
-				        ${item.name}, ${thumbKey})
+				        ${item.name}, ${thumbKey}, ${attachmentId}, 'thumb')
 				on conflict (household_id, sha256) do nothing
 				returning id
 			`;
@@ -275,12 +276,9 @@ const main = async () => {
 					where household_id = ${household.id} and sha256 = ${thumbSha}
 				`
 					)[0]?.id;
+				// No link row: a thumbnail is reached through its parent's
+				// `variant_of`, not by being attached to the record a second time.
 				if (thumbId) {
-					await tx`
-					insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
-					values (${thumbId}, 'source_record', ${item.record.id}, 'cover_thumb', 0)
-					on conflict do nothing
-				`;
 					thumbBytesTotal += thumbBytes.length;
 					originalBytesTotal += item.bytes.length;
 				}

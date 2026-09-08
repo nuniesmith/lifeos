@@ -4,7 +4,7 @@ import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { one } from '$lib/server/db/scalar';
-import { coversForPages } from '$lib/server/repositories';
+import { coversForPages, imagesForPage } from '$lib/server/repositories';
 import { viewerOf } from '$lib/server/auth/authz';
 import type { AuthUser } from '$lib/server/auth/service';
 
@@ -282,5 +282,127 @@ describe('covers for a set of records', () => {
 	it('asks nothing and returns nothing for an empty list', async () => {
 		expect(await coversForPages(sql, viewerFor(), [])).toEqual(new Map());
 		expect(await coversForPages(sql, viewerFor(), [null, null])).toEqual(new Map());
+	});
+});
+
+/**
+ * Variants — the smaller copies pages actually serve.
+ *
+ * Two facts make this worth its own block. The covers in a real workspace run
+ * to 11 MB and are drawn as 48-pixel rows, so serving the original is the
+ * difference between a page and a hang. And a variant is itself an attachment,
+ * so the queries that list a record's pictures have to know not to show it as
+ * one.
+ */
+describe('image variants', () => {
+	/** A smaller copy of an attachment, stored the way the scripts store one. */
+	async function variantOf(original: string, kind: 'thumb' | 'display', key: string) {
+		const bytes = Buffer.concat([PNG, Buffer.from(key)]);
+		const target = join(uploadDir, key);
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, bytes);
+		return one(
+			await sql<{ id: string }[]>`
+				insert into attachments (household_id, sha256, byte_size, content_type, storage_key,
+				                         created_by, variant_of, variant_kind)
+				values (${householdId}::uuid, decode(md5(${key}), 'hex'), ${bytes.length}, 'image/webp',
+				        ${key}, ${userId}::uuid, ${original}::uuid, ${kind})
+				returning id
+			`
+		).id;
+	}
+
+	async function recordWithImage(pageId: string, key: string, role: string) {
+		const run = one(
+			await sql<{ id: string }[]>`
+				insert into import_runs (household_id, status, dry_run, importer_version)
+				values (${householdId}::uuid, 'succeeded', false, 'test') returning id
+			`
+		);
+		const source = one(
+			await sql<{ id: string }[]>`
+				insert into import_sources (import_run_id, relative_path, kind, sha256, byte_size)
+				values (${run.id}::uuid, ${key}, 'csv_all', decode(md5(${key}), 'hex'), 1) returning id
+			`
+		);
+		const record = one(
+			await sql<{ id: string }[]>`
+				insert into source_records (import_run_id, source_id, notion_page_id, database_name,
+				                            title, ordinal, raw)
+				values (${run.id}::uuid, ${source.id}::uuid, ${pageId}::uuid, 'Daily Log Database',
+				        'A day', 0, '{}'::text::jsonb)
+				returning id
+			`
+		);
+		const attachment = await storedAttachment(householdId, key);
+		await sql`
+			insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
+			values (${attachment}::uuid, 'source_record', ${record.id}::uuid, ${role}, 0)
+		`;
+		return { record: record.id, attachment };
+	}
+
+	it('serves the thumbnail instead of the cover when one exists', async () => {
+		const pageId = '33333333-3333-4333-8333-333333333333';
+		const { attachment } = await recordWithImage(pageId, 'v1/v1/v1.png', 'cover');
+		const thumb = await variantOf(attachment, 'thumb', 'v1/v1/v1-t.webp');
+
+		const covers = await coversForPages(sql, viewerFor(), [pageId]);
+		expect(covers.get(pageId)?.id).toBe(thumb);
+	});
+
+	it('falls back to the cover when no thumbnail was made', async () => {
+		const pageId = '44444444-4444-4444-8444-444444444444';
+		const { attachment } = await recordWithImage(pageId, 'v2/v2/v2.png', 'cover');
+
+		const covers = await coversForPages(sql, viewerFor(), [pageId]);
+		expect(covers.get(pageId)?.id).toBe(attachment);
+	});
+
+	it('serves the display variant of a body image', async () => {
+		const pageId = '55555555-5555-4555-8555-555555555555';
+		const { attachment } = await recordWithImage(pageId, 'v3/v3/v3.png', 'body_image');
+		const display = await variantOf(attachment, 'display', 'v3/v3/v3-d.webp');
+
+		const images = await imagesForPage(sql, viewerFor(), pageId);
+		expect(images.map((i) => i.id)).toEqual([display]);
+	});
+
+	it('never lists a variant as a picture of its own', async () => {
+		const pageId = '66666666-6666-4666-8666-666666666666';
+		const { record, attachment } = await recordWithImage(pageId, 'v4/v4/v4.png', 'body_image');
+		const display = await variantOf(attachment, 'display', 'v4/v4/v4-d.webp');
+
+		// The variant is linked as though it were a picture in its own right, and
+		// its ORIGINAL is unlinked from this record. That combination is what the
+		// guard uniquely catches.
+		//
+		// Two weaker versions of this case could not fail. With no link at all a
+		// variant never reaches the join. With both linked, DISTINCT ON collapses
+		// them because the original resolves to the same variant id. Only when
+		// the variant stands alone does dropping the guard list it as a picture.
+		await sql`
+			insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
+			values (${display}::uuid, 'source_record', ${record}::uuid, 'body_image', 1)
+		`;
+		await sql`
+			delete from attachment_links
+			where attachment_id = ${attachment}::uuid and entity_id = ${record}::uuid
+		`;
+
+		expect(await imagesForPage(sql, viewerFor(), pageId)).toEqual([]);
+	});
+
+	it('shows an image once even when a record links it twice', async () => {
+		// Six records in the real workspace use their page cover again inside the
+		// body; without deduplication the journal draws it twice.
+		const pageId = '77777777-7777-4777-8777-777777777777';
+		const { record, attachment } = await recordWithImage(pageId, 'v5/v5/v5.png', 'cover');
+		await sql`
+			insert into attachment_links (attachment_id, entity_type, entity_id, role, position)
+			values (${attachment}::uuid, 'source_record', ${record}::uuid, 'body_image', 1)
+		`;
+
+		expect(await imagesForPage(sql, viewerFor(), pageId)).toHaveLength(1);
 	});
 });
