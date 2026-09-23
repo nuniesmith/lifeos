@@ -100,6 +100,14 @@ LIFEOS_BOOTSTRAP_PASSWORD=${LIFEOS_BOOTSTRAP_PASSWORD}
 LIFEOS_TIMEZONE=America/Toronto
 LIFEOS_CURRENCY=CAD
 
+# Where nginx publishes. Loopback is right when Tailscale Serve on this same
+# host terminates TLS. A host whose reverse proxy is on ANOTHER machine sets
+# this to its own 100.x Tailscale address, so the proxy can reach it over the
+# tailnet and nothing off the tailnet can. Never 0.0.0.0, never a routable
+# address. The port is separate because 8080 is often already taken.
+LIFEOS_BIND_ADDR=127.0.0.1
+LIFEOS_BIND_PORT=8080
+
 # Replaced by each deploy with the digest that was rolled out.
 LIFEOS_IMAGE=
 EOF

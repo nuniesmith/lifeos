@@ -1,5 +1,9 @@
-# Production stack for a 1 GB Nanode. Nginx terminates on loopback only;
-# Tailscale Serve provides HTTPS. Nothing binds a public interface.
+# Production stack. Nginx terminates plain HTTP on one address of the host's
+# choosing; something in front of it provides TLS. Nothing binds a public
+# interface: the default is loopback (Tailscale Serve in front, as on the
+# Nanode), and the alternative is a Tailscale address, which is reachable only
+# from the tailnet. LIFEOS_BIND_ADDR must never be set to 0.0.0.0 or a routable
+# address — see OPS-006.
 name: lifeos
 
 services:
@@ -60,8 +64,12 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      # Loopback only. Tailscale Serve forwards to this.
-      - '127.0.0.1:8080:8080'
+      # Defaults to loopback, where Tailscale Serve forwards to it. A host
+      # whose reverse proxy lives on another machine sets LIFEOS_BIND_ADDR to
+      # its own 100.x Tailscale address instead, so the proxy can reach it
+      # over the tailnet and nothing else can. The port is separate because a
+      # shared host may already have 8080 taken by something else.
+      - '${LIFEOS_BIND_ADDR:-127.0.0.1}:${LIFEOS_BIND_PORT:-8080}:8080'
     volumes:
       - ./infrastructure/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on: [app]
