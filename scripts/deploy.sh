@@ -58,6 +58,19 @@ COMPOSE_FILES=(-f "${LIFEOS_COMPOSE_FILE:-compose.prod.yml}")
 [[ -n "${LIFEOS_COMPOSE_OVERRIDE:-}" ]] && COMPOSE_FILES+=(-f "$LIFEOS_COMPOSE_OVERRIDE")
 COMPOSE=(docker compose "${COMPOSE_FILES[@]}" --env-file "$ENV_FILE")
 
+# The address nginx is published on. It is not always 127.0.0.1:8080 any more:
+# a host whose reverse proxy is on another machine publishes on its Tailscale
+# address instead (compose.prod.yml, LIFEOS_BIND_ADDR/LIFEOS_BIND_PORT). The
+# health gate below has to poll wherever that is — polling the old literal on
+# such a host fails a deploy that in fact succeeded, which is the one failure
+# mode a health gate must not have.
+# The defaults here must stay identical to compose.prod.yml's, or the gate
+# polls an address nothing is listening on.
+env_value() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- || true; }
+BIND_ADDR="$(env_value LIFEOS_BIND_ADDR)"
+BIND_PORT="$(env_value LIFEOS_BIND_PORT)"
+HEALTH_BASE="http://${BIND_ADDR:-127.0.0.1}:${BIND_PORT:-8080}"
+
 set_image() {
     LIFEOS_IMAGE="$1"
     export LIFEOS_IMAGE
@@ -160,7 +173,8 @@ set_image "$LIFEOS_IMAGE"
 
 # ─── hard health gate ──────────────────────────────────────────────────────
 say "Waiting for health"
-app_live() { curl -fsS --max-time 3 http://127.0.0.1:8080/api/health/live >/dev/null 2>&1; }
+say "Health gate polling $HEALTH_BASE"
+app_live() { curl -fsS --max-time 3 "$HEALTH_BASE/api/health/live" >/dev/null 2>&1; }
 healthy=false
 wait_for 45 2 app_live && healthy=true
 
@@ -180,7 +194,7 @@ ok "application is live"
 
 # Readiness is reported but does not gate: a stale backup or a disk warning
 # should be visible without refusing an otherwise good deploy.
-ready=$(curl -fsS --max-time 5 http://127.0.0.1:8080/api/health/ready || echo '{"status":"unreachable"}')
+ready=$(curl -fsS --max-time 5 "$HEALTH_BASE/api/health/ready" || echo '{"status":"unreachable"}')
 say "Readiness: $(echo "$ready" | head -c 200)"
 
 # ─── reclaim disk (OPS-015) ────────────────────────────────────────────────
