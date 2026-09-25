@@ -23,14 +23,15 @@ Notion exports. What exists:
   when coordinates are configured), quick capture from every page, inbox
   triage and brain dump, tasks with subtasks and dependencies, projects,
   goals, areas, topics, a calendar, habits with check-ins and targets, the
-  journal, a review queue, full-text search, and archiving with an Archive
-  page to restore from.
+  journal, a review queue, full-text search, and one Archive page that lists
+  and restores anything archived anywhere.
 - **Feature packs.** Food (the week's meal plan, the shopping list, recipes,
   prep), the library with its reading list and knowledge hub, people and the
   wishlist, entertainment, bills and subscriptions, the yearly review and the
   wheel of life, and health: a symptom, mood, energy and activity vocabulary
-  with how often each came up, plus `/health/medications` (with dose logging),
-  `/health/measurements`, `/health/labs` and `/health/visits`.
+  with how often each came up, and — linked from `/health` with a line of
+  status each — medications with dose logging, measurements with charts, lab
+  results against their reference ranges, and medical visits.
 - **Import.** `./run.sh import` reads a Notion Markdown & CSV export, reports
   against the acceptance baseline below, compares its formula replacements
   with the values Notion rendered, and names every database it did not import
