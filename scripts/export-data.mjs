@@ -49,6 +49,14 @@ const TABLES = [
 	// Feature packs (migrations 0011-0015). Parents before the tables that
 	// reference them; the link tables come after both of their sides.
 	'health_vocabulary',
+	// migration 0018: replaces the old `vitamin` health_vocabulary kind.
+	// `medication_doses` has no household_id of its own — scoped through
+	// `medications` the same way `daily_log_health` is scoped through
+	// `daily_logs` — so it is listed here for real (dose history is still the
+	// household's data) even though data-mobility.test.ts's household_id scan
+	// would not have caught its absence.
+	'medications',
+	'medication_doses',
 	'ingredients',
 	'recipes',
 	'meal_plans',
@@ -145,6 +153,7 @@ async function rowsFor(db, table, id) {
 		case 'goal_habits':
 			return db`select r.* from goal_habits r join goals g on g.id = r.goal_id where g.household_id = ${id}::uuid order by r.goal_id, r.habit_id`;
 		case 'health_vocabulary':
+		case 'medications':
 		case 'ingredients':
 		case 'recipes':
 		case 'meal_plans':
@@ -163,6 +172,8 @@ async function rowsFor(db, table, id) {
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'daily_log_health':
 			return db`select h.* from daily_log_health h join daily_logs l on l.id = h.daily_log_id where l.household_id = ${id}::uuid order by h.daily_log_id, h.vocabulary_id`;
+		case 'medication_doses':
+			return db`select d.* from medication_doses d join medications m on m.id = d.medication_id where m.household_id = ${id}::uuid order by d.medication_id, d.on_date, d.slot`;
 		case 'recipe_ingredients':
 			return db`select r.* from recipe_ingredients r join recipes x on x.id = r.recipe_id where x.household_id = ${id}::uuid order by r.recipe_id, r.ingredient_id`;
 		case 'meal_plan_recipes':

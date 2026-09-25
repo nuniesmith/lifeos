@@ -67,6 +67,11 @@ const TABLES = [
 	// link tables after both of their sides, so a foreign key never lands
 	// before the row it points at.
 	'health_vocabulary',
+	// migration 0018: medication_id/created_by need no special remapping —
+	// `mappedValue` already handles created_by generically, and ids are
+	// preserved verbatim, so medications only has to land before its doses.
+	'medications',
+	'medication_doses',
 	'ingredients',
 	'recipes',
 	'meal_plans',
@@ -116,6 +121,11 @@ const ORDER = [
 	// link tables after both of their sides, so a foreign key never lands
 	// before the row it points at.
 	'health_vocabulary',
+	// migration 0018: medication_id/created_by need no special remapping —
+	// `mappedValue` already handles created_by generically, and ids are
+	// preserved verbatim, so medications only has to land before its doses.
+	'medications',
+	'medication_doses',
 	'ingredients',
 	'recipes',
 	'meal_plans',

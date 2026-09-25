@@ -198,7 +198,8 @@ const NOT_PORTABLE: Record<string, string> = {
 	app_settings: 'per-install configuration, not content',
 	change_log: 'an audit of edits to rows that are themselves being copied',
 	backup_runs: 'bookkeeping about this install\u2019s backups',
-	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id'
+	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id',
+	medication_doses: 'exported, but scoped through medications rather than by household_id'
 };
 
 describe('everything household-scoped is portable', () => {
