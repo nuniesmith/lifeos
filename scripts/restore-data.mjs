@@ -79,6 +79,11 @@ const TABLES = [
 	'life_assessments',
 	'significant_events',
 	'attachments',
+	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
+	// dependency on each other; lab_results references both, so it comes after.
+	'lab_markers',
+	'medical_visits',
+	'lab_results',
 	'task_dependencies',
 	'entity_tags',
 	'habit_logs',
@@ -89,6 +94,7 @@ const TABLES = [
 	'daily_log_health',
 	'recipe_ingredients',
 	'meal_plan_recipes',
+	'medical_visit_symptoms',
 	'attachment_links'
 ];
 
@@ -122,6 +128,9 @@ const ORDER = [
 	'life_assessments',
 	'significant_events',
 	'attachments',
+	'lab_markers',
+	'medical_visits',
+	'lab_results',
 	'task_dependencies',
 	'entity_tags',
 	'habit_logs',
@@ -132,6 +141,7 @@ const ORDER = [
 	'daily_log_health',
 	'recipe_ingredients',
 	'meal_plan_recipes',
+	'medical_visit_symptoms',
 	'attachment_links'
 ];
 

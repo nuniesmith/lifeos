@@ -60,6 +60,11 @@ const TABLES = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
+	// dependency on each other; lab_results references both, so it comes after.
+	'lab_markers',
+	'medical_visits',
+	'lab_results',
 	'task_dependencies',
 	'entity_tags',
 	'habit_logs',
@@ -70,6 +75,7 @@ const TABLES = [
 	'daily_log_health',
 	'recipe_ingredients',
 	'meal_plan_recipes',
+	'medical_visit_symptoms',
 	'attachments',
 	'attachment_links'
 ];
@@ -150,6 +156,9 @@ async function rowsFor(db, table, id) {
 		case 'wishlist_items':
 		case 'life_assessments':
 		case 'significant_events':
+		case 'lab_markers':
+		case 'medical_visits':
+		case 'lab_results':
 			// All carry household_id directly, so one branch serves them.
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'daily_log_health':
@@ -158,6 +167,8 @@ async function rowsFor(db, table, id) {
 			return db`select r.* from recipe_ingredients r join recipes x on x.id = r.recipe_id where x.household_id = ${id}::uuid order by r.recipe_id, r.ingredient_id`;
 		case 'meal_plan_recipes':
 			return db`select m.* from meal_plan_recipes m join meal_plans p on p.id = m.meal_plan_id where p.household_id = ${id}::uuid order by m.meal_plan_id, m.recipe_id, m.slot`;
+		case 'medical_visit_symptoms':
+			return db`select s.* from medical_visit_symptoms s join medical_visits v on v.id = s.medical_visit_id where v.household_id = ${id}::uuid order by s.medical_visit_id, s.vocabulary_id`;
 		case 'attachments':
 			// Every other table is `select *`, which picks up new columns for
 			// free. This one could not be, because sha256 is bytea and has to
