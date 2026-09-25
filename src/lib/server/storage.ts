@@ -21,18 +21,22 @@ import { logger } from './logger';
  * genuine state rather than the container restarting in a loop.
  */
 export async function ensureStorage(): Promise<void> {
-	// The import directory is included so an operator dropping an export in does
-	// not have to create it first; `scripts/import.mjs` reads it as the default
-	// root.
+	// The upload directory always, because the application writes to it. The
+	// import and backup directories only when an operator has configured them:
+	// an operator dropping an export in should not have to create the import
+	// directory first, and one who sets the backup directory expects it to
+	// exist.
 	//
-	// The backup directory is NOT where backups land, despite what this comment
-	// used to claim. `scripts/backup.sh` runs on the host and writes to
-	// $LIFEOS_STATE_DIR/backups, and the readiness check reads the `backup_runs`
-	// table rather than any directory — so nothing consumes this path. It is
-	// created because the variable is declared and an operator who sets it
-	// expects the directory to exist; if it is ever wired to something, the
-	// wiring is the change, not this line.
-	const directories = [env.LIFEOS_UPLOAD_DIR, env.LIFEOS_IMPORT_DIR, env.LIFEOS_BACKUP_DIR];
+	// Neither is consumed by the running application. `scripts/import.mjs` is a
+	// CLI with its own default root, and `scripts/backup.sh` runs on the host and
+	// writes to $LIFEOS_STATE_DIR/backups; readiness reads the `backup_runs`
+	// table, not a directory. They used to default to `./var/...`, which the
+	// production image can never create (/app is root-owned and the process runs
+	// as node), so every production start logged two EACCES warnings about
+	// directories nothing would ever read.
+	const directories = [env.LIFEOS_UPLOAD_DIR, env.LIFEOS_IMPORT_DIR, env.LIFEOS_BACKUP_DIR].filter(
+		(dir): dir is string => Boolean(dir)
+	);
 
 	await Promise.all(
 		directories.map(async (dir) => {

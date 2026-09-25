@@ -56,8 +56,14 @@ const schema = z
 		LIFEOS_BOOTSTRAP_PASSWORD: z.string().min(12).optional(),
 
 		LIFEOS_UPLOAD_DIR: z.string().default('./var/uploads'),
-		LIFEOS_IMPORT_DIR: z.string().default('./var/imports'),
-		LIFEOS_BACKUP_DIR: z.string().default('./var/backups'),
+		// Optional and deliberately without defaults: nothing in the running
+		// application reads either path. Imports are a CLI step
+		// (scripts/import.mjs, which has its own default root) and backups are
+		// written on the host by scripts/backup.sh. The old `./var/...` defaults
+		// only made ensureStorage try to create them inside the production
+		// image, where /app is root-owned, and log EACCES on every start.
+		LIFEOS_IMPORT_DIR: z.string().optional(),
+		LIFEOS_BACKUP_DIR: z.string().optional(),
 
 		LIFEOS_TIMEZONE: z.string().default('America/Toronto'),
 		LIFEOS_CURRENCY: z.string().length(3).default('CAD'),
