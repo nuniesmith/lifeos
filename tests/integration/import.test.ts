@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from 'postgres';
@@ -627,5 +627,220 @@ describe('the import CLI', () => {
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+/**
+ * Exports whose SHAPE changed between two runs, as the 2026-09-24 export's
+ * did: a database renamed, columns moved elsewhere, placeholders filled in,
+ * and date-mention titles whose filenames are written relative to the export
+ * day. Each test writes miniature exports carrying the REAL database ids, since
+ * recognising a renamed database by its id is part of what is under test.
+ */
+describe('exports whose shape changed between imports', () => {
+	const DAILY_LOG = { name: 'Daily Log Database', id: '3b7879a556f180788365fc81070ab3bf' };
+	const SYMPTOMS_ID = '3bc879a556f1801a97e8d6ab23727d35';
+	const SERIES = { name: 'Series Database', id: '3d4879a556f180869fdac9138875a432' };
+	const INCOME = { name: 'Income Database', id: '3d3879a556f180b98b18d283ba9a94fb' };
+	const page = (n: number) => 'e'.repeat(28) + n.toString(16).padStart(4, '0');
+	const uuid = (hex: string) =>
+		`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+
+	interface Row {
+		page?: string;
+		/** The page file's title when Notion names it differently from the row. */
+		file?: string;
+		cells: Record<string, string>;
+		body?: string;
+	}
+	interface Database {
+		name: string;
+		id: string;
+		headers: string[];
+		rows: Row[];
+	}
+
+	const cell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+	const roots: string[] = [];
+
+	async function exportOf(databases: Database[]): Promise<string> {
+		const root = await mkdtemp(join(tmpdir(), 'lifeos-shape-'));
+		roots.push(root);
+		const dir = join(root, 'Life OS', 'System');
+		for (const db of databases) {
+			await mkdir(join(dir, db.name), { recursive: true });
+			const lines = [db.headers, ...db.rows.map((r) => db.headers.map((h) => r.cells[h] ?? ''))];
+			await writeFile(
+				join(dir, `${db.name} ${db.id}_all.csv`),
+				'﻿' + lines.map((l) => l.map(cell).join(',')).join('\n')
+			);
+			for (const r of db.rows) {
+				if (!r.page) continue; // an untitled row has no page file
+				const title = r.file ?? r.cells[db.headers[0]!]!;
+				const props = db.headers
+					.slice(1)
+					.filter((h) => r.cells[h])
+					.map((h) => `${h}: ${r.cells[h]}`);
+				await writeFile(
+					join(dir, db.name, `${title} ${r.page}.md`),
+					`# ${title}\n\n${props.join('\n')}\n\n${r.body ?? ''}\n`
+				);
+			}
+		}
+		return root;
+	}
+
+	const importFrom = (root: string) =>
+		runImport(sql, {
+			root,
+			householdId,
+			ownerUserId: userId,
+			startedBy: userId,
+			dryRun: false,
+			uploadDir
+		});
+
+	const systolicOf = async (hex: string) =>
+		(
+			await sql<{ systolic_bp: number | null }[]>`
+				select systolic_bp from daily_logs where notion_page_id = ${uuid(hex)}
+			`
+		)[0]?.systolic_bp;
+
+	afterAll(async () => {
+		for (const root of roots) await rm(root, { recursive: true, force: true });
+	});
+
+	it('keeps a value whose column left the export, and clears one that was emptied', async () => {
+		const day = page(1);
+		const withReading = (reading: string | null): Database => ({
+			...DAILY_LOG,
+			headers:
+				reading === null ? ['Day', 'Date', 'Caffeine'] : ['Day', 'Date', 'Systolic BP', 'Caffeine'],
+			rows: [
+				{
+					page: day,
+					cells: {
+						Day: 'Aug 5',
+						Date: 'August 5, 2026',
+						...(reading === null ? {} : { 'Systolic BP': reading }),
+						Caffeine: 'No'
+					}
+				}
+			]
+		});
+
+		await importFrom(await exportOf([withReading('118')]));
+		expect(await systolicOf(day)).toBe(118);
+
+		// Notion moved the reading to another database: the column is gone.
+		const moved = await importFrom(await exportOf([withReading(null)]));
+		expect(await systolicOf(day)).toBe(118);
+		expect(promotionOf(moved).carriedColumns).toContainEqual({
+			database: 'Daily Log Database',
+			columns: ['Systolic BP']
+		});
+
+		// The column is back, and the cell is empty: that is a real edit.
+		await importFrom(await exportOf([withReading('')]));
+		expect(await systolicOf(day)).toBeNull();
+	});
+
+	it('keeps importing a database that was renamed, found by its id', async () => {
+		await importFrom(
+			await exportOf([
+				{
+					name: 'Symptoms Database',
+					id: SYMPTOMS_ID,
+					headers: ['Name'],
+					rows: [{ page: page(10), cells: { Name: 'Headache' } }]
+				}
+			])
+		);
+		const renamed = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						name: 'Symptom Library Database',
+						id: SYMPTOMS_ID,
+						headers: ['Name', 'Category'],
+						rows: [
+							{ page: page(10), cells: { Name: 'Headache' } },
+							{ page: page(11), cells: { Name: 'Nausea', Category: 'Digestive' } }
+						]
+					}
+				])
+			)
+		);
+
+		expect(renamed.renamed).toContainEqual({
+			database: 'Symptom Library Database',
+			knownAs: 'Symptoms Database'
+		});
+		expect(renamed.unrecognised.map((d) => d.database)).not.toContain('Symptom Library Database');
+		const names = await sql<{ name: string }[]>`
+			select name from health_vocabulary where kind = 'symptom' order by name
+		`;
+		expect(names.map((n) => n.name)).toEqual(['Headache', 'Nausea']);
+	});
+
+	it('reports an empty placeholder that gained real rows instead of skipping it', async () => {
+		const promoted = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						...SERIES,
+						headers: ['Series', 'Books Released'],
+						rows: [{ page: page(20), cells: { Series: 'A Series', 'Books Released': '3' } }]
+					},
+					{ ...INCOME, headers: ['Name', 'Amount'], rows: [{ cells: { Name: '', Amount: '' } }] }
+				])
+			)
+		);
+
+		const series = promoted.unrecognised.find((d) => d.database === 'Series Database');
+		expect(series?.note).toMatch(/placeholder/);
+		expect(promoted.notImported.map((d) => d.database)).not.toContain('Series Database');
+		// Still empty, so still skipped on purpose.
+		expect(promoted.notImported.map((d) => d.database)).toContain('Income Database');
+	});
+
+	it("matches a row to its page by properties when the page's filename is relative to the export day", async () => {
+		const tuesday = page(30);
+		const summary = await importFrom(
+			await exportOf([
+				{
+					...DAILY_LOG,
+					headers: ['Day', 'Date', 'Caffeine', 'Intimacy'],
+					rows: [
+						{
+							page: tuesday,
+							// What Notion wrote on the Thursday it was exported.
+							file: 'Tuesday, @Tuesday',
+							cells: {
+								Day: 'Tuesday, @September 22, 2026',
+								Date: 'September 22, 2026',
+								Caffeine: 'No',
+								Intimacy: 'Yes'
+							},
+							body: 'The whole of that day.'
+						},
+						{
+							page: page(31),
+							cells: { Day: 'Aug 5', Date: 'August 5, 2026', Caffeine: 'Yes', Intimacy: 'No' }
+						}
+					]
+				}
+			])
+		);
+
+		const [log] = await sql<{ note: string | null }[]>`
+			select note from daily_logs where notion_page_id = ${uuid(tuesday)}
+		`;
+		expect(log?.note).toContain('The whole of that day.');
+		expect(summary.issues.map((i) => i.code)).toContain(
+			'title_matched_no_page_resolved_by_properties'
+		);
+		expect(summary.issues.map((i) => i.code)).not.toContain('row_without_page_id');
 	});
 });

@@ -5,7 +5,7 @@ import {
 	extractPageLinks,
 	parseMarkdownPage
 } from '$lib/server/import/markdown';
-import { propertyAgreement } from '$lib/server/import/run';
+import { pickByAgreement, propertyAgreement } from '$lib/server/import/run';
 
 // The shape Notion actually exports, taken from a real page.
 const PAGE = `# Reorganize bedside table
@@ -194,5 +194,160 @@ describe('angle-bracket targets', () => {
 		// Markdown allows this for targets containing spaces, and formatters
 		// rewrite plain targets into this form.
 		expect(extractImages('![a](<x/my file_(1).png>)')).toEqual(['x/my file_(1).png']);
+	});
+});
+
+describe('property values that contain blank lines', () => {
+	// The shape of a Daily Log page from the 2026-09-24 export, values invented.
+	// Formula displays render as several paragraphs INSIDE one value; ending the
+	// block at their first blank line poured every later property -- and about
+	// sixty lines a day of formula text -- into the body, and so into the note.
+	const columns = [
+		'Date',
+		'Daily Check In',
+		'Daily Health Snapshot',
+		'Symptom Impact',
+		'Symptom Impact Score',
+		'Weekly Movement'
+	];
+	const src = [
+		'# Wednesday, @Yesterday',
+		'',
+		'Date: September 23, 2026',
+		"Daily Check In: 🌡️ TODAY'S CHECK-IN",
+		'',
+		'💛 MOOD',
+		'Content',
+		'',
+		'🩺 SYMPTOMS',
+		'Impact: Disruptive',
+		'Daily Health Snapshot: ❤️ HEALTH AT A GLANCE',
+		'',
+		'💗 HEART RATE',
+		'No reading logged',
+		'Symptom Impact: Disruptive',
+		'Symptom Impact Score: 2',
+		'Weekly Movement: 0',
+		'',
+		'![photo.png](Wednesday/photo.png)',
+		'',
+		'Real journal text.'
+	].join('\n');
+	const page = parseMarkdownPage(src, columns);
+
+	it('reads every property, including those after a multi-paragraph value', () => {
+		expect(Object.keys(page.properties)).toEqual(columns);
+	});
+
+	it('keeps the paragraphs inside the value they belong to', () => {
+		expect(page.properties['Daily Check In']).toBe(
+			"🌡️ TODAY'S CHECK-IN\n\n💛 MOOD\nContent\n\n🩺 SYMPTOMS\nImpact: Disruptive"
+		);
+	});
+
+	it('does not read "Symptom Impact Score" as a value of "Symptom Impact"', () => {
+		expect(page.properties['Symptom Impact']).toBe('Disruptive');
+		expect(page.properties['Symptom Impact Score']).toBe('2');
+	});
+
+	it('starts the body where the body starts', () => {
+		expect(page.body.startsWith('![photo.png]')).toBe(true);
+		expect(page.body).not.toContain('MOOD');
+		expect(page.body).toContain('Real journal text.');
+	});
+
+	it('still ends at the first blank line when the columns are not known', () => {
+		const bare = parseMarkdownPage(src);
+		expect(Object.keys(bare.properties)).toEqual(['Date', 'Daily Check In']);
+		expect(bare.body).toContain('Symptom Impact: Disruptive');
+	});
+
+	it('does not swallow a body line that happens to look like an unread property', () => {
+		const p = parseMarkdownPage(
+			['# T', '', 'Status: To Do', '', '![img.png](T/img.png)', '', 'Archive: typed by hand'].join(
+				'\n'
+			),
+			['Status', 'Archive']
+		);
+		expect(p.properties).toEqual({ Status: 'To Do' });
+		expect(p.body).toContain('Archive: typed by hand');
+	});
+
+	it('recognises column names the generic pattern cannot express', () => {
+		const p = parseMarkdownPage(
+			['# Morning', '', 'Log ☀️ High Energy Version: Yes', '# of Servings: 4', '', 'Body.'].join(
+				'\n'
+			),
+			['Log ☀️ High Energy Version', '# of Servings']
+		);
+		expect(p.properties).toEqual({ 'Log ☀️ High Energy Version': 'Yes', '# of Servings': '4' });
+		expect(p.body).toBe('Body.');
+	});
+
+	it('reads a column whose name ends in a space', () => {
+		const p = parseMarkdownPage('# D\n\nPhysical Symptoms : Joint pain\n\nBody.', [
+			'Physical Symptoms '
+		]);
+		expect(p.properties).toEqual({ 'Physical Symptoms': 'Joint pain' });
+	});
+
+	it("keeps the last value's closing paragraphs when the CSV row says they are its", () => {
+		// Nothing follows the last property to prove the block goes on, so only
+		// the CSV's copy of the value can tell its paragraphs from the body.
+		const row = {
+			Date: 'September 1, 2026',
+			'Plan Details Display': '🥕 INGREDIENTS\nNone\n\n🛒 STILL NEED\nNothing to buy'
+		};
+		const meal = [
+			'# Plan',
+			'',
+			'Date: September 1, 2026',
+			'Plan Details Display: 🥕 INGREDIENTS',
+			'None',
+			'',
+			'🛒 STILL NEED',
+			'Nothing to buy',
+			'',
+			'Real notes.'
+		].join('\n');
+		const withRow = parseMarkdownPage(meal, Object.keys(row), row);
+		expect(withRow.properties['Plan Details Display']).toBe(row['Plan Details Display']);
+		expect(withRow.body).toBe('Real notes.');
+
+		// Without the row that paragraph cannot be placed, and lands in the body.
+		expect(parseMarkdownPage(meal, Object.keys(row)).body).toContain('🛒 STILL NEED');
+	});
+});
+
+describe('matching a row to a page by its properties', () => {
+	const row = {
+		Day: 'Tuesday, @September 22, 2026',
+		Date: 'September 22, 2026',
+		Caffeine: 'No',
+		Intimacy: 'No'
+	};
+
+	it('picks the page that clearly agrees best', () => {
+		const pages = new Map([
+			['tuesday', { Date: 'September 22, 2026', Caffeine: 'No', Intimacy: 'No' }],
+			['wednesday', { Date: 'September 23, 2026', Caffeine: 'No', Intimacy: 'No' }]
+		]);
+		expect(pickByAgreement(row, pages)).toBe('tuesday');
+	});
+
+	it('refuses a tie rather than guess', () => {
+		const pages = new Map([
+			['a', { Caffeine: 'No', Intimacy: 'No' }],
+			['b', { Caffeine: 'No', Intimacy: 'No' }]
+		]);
+		expect(pickByAgreement(row, pages)).toBeNull();
+	});
+
+	it('refuses a thin match', () => {
+		expect(pickByAgreement(row, new Map([['a', { Caffeine: 'No' }]]))).toBeNull();
+	});
+
+	it('refuses when there is nothing to choose from', () => {
+		expect(pickByAgreement(row, new Map())).toBeNull();
 	});
 });

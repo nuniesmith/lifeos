@@ -136,9 +136,31 @@ try {
 			console.log(`  ${RED}NOT RECOGNISED${OFF} — no mapper and no recorded reason:`);
 			for (const d of unrecognised.sort((a, b) => b.rows - a.rows)) {
 				console.log(`    ${String(d.rows).padStart(3)}  ${d.database}`);
+				if (d.note) console.log(`         ${d.note}`);
 			}
 			console.log('    Decide whether each is data to import or furniture to');
 			console.log('    list in NOT_IMPORTED, then re-run.');
+		}
+
+		const renamed = s.promoted.renamed ?? [];
+		if (renamed.length > 0) {
+			console.log('');
+			console.log('  Renamed in Notion, recognised by id:');
+			for (const d of renamed) console.log(`    ${d.database}  (was ${d.knownAs})`);
+		}
+
+		// Values kept rather than blanked: the operator should know which
+		// columns left the export, because a mapper still reading one of them is
+		// now frozen at its last value until it is pointed somewhere new.
+		const carried = s.promoted.carriedColumns ?? [];
+		if (carried.length > 0) {
+			console.log('');
+			console.log(
+				`  ${RED}Columns no longer in the export${OFF} — values kept from earlier imports:`
+			);
+			for (const d of carried) {
+				console.log(`    ${d.database}: ${d.columns.join(', ')}`);
+			}
 		}
 		console.log('');
 	}
