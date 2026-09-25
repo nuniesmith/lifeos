@@ -1,5 +1,6 @@
 import type { Viewer } from '../auth/authz';
 import { readableScope, type Queryable } from './base';
+import { HEALTH_KINDS } from './health';
 
 /**
  * Household-scoped full-text search (UI-010).
@@ -150,7 +151,7 @@ export async function search(
 			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.notes,'')) as doc,
 			       coalesce(t.notes, '') as body,
 			       (t.archived_at is not null) as archived,
-			       '/areas' as path
+			       '/calendar' as path
 			from important_dates t
 			where ${readableScope(sql, viewer, 't')}
 		`);
@@ -263,6 +264,9 @@ export async function search(
 	}
 
 	if (wanted('health_term')) {
+		// Only the kinds /health still lists. A retired kind (vitamin, now a
+		// medication) can survive in the table, and a hit for it would link to a
+		// page that no longer shows it.
 		branches.push(sql`
 			select 'health_term' as kind, t.id, t.name as title,
 			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
@@ -271,6 +275,7 @@ export async function search(
 			       '/health' as path
 			from health_vocabulary t
 			where ${readableScope(sql, viewer, 't')}
+			  and t.kind in ${sql([...HEALTH_KINDS])}
 		`);
 	}
 

@@ -178,6 +178,8 @@ describe('every search result links somewhere real', () => {
 		expect(pathOf('lab_marker')).toBe(`/health/labs/${marker.id}`);
 		expect(pathOf('medical_visit')).toBe(`/health/visits/${visit.id}`);
 		expect(pathOf('medication')).toBe('/health/medications');
+		// Important dates are shown on the calendar; /areas never lists them.
+		expect(pathOf('important_date')).toBe('/calendar');
 	});
 });
 
@@ -259,6 +261,19 @@ describe('search', () => {
 			'Friday 17 Apr 2026',
 			'Reading — Friday 17 Apr 2026'
 		]);
+	});
+
+	it('does not find a health word of a kind /health no longer lists', async () => {
+		// Written as the old add form did before vitamins became medications
+		// (migration 0018); the table's CHECK still permits the kind.
+		await sql`
+			insert into health_vocabulary (household_id, owner_user_id, kind, name, created_by)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, 'vitamin', 'Wombat drops',
+			        ${owner.userId}::uuid)
+		`;
+		ok(await createHealthTerm(sql, owner, { kind: 'symptom', name: 'Wombat ache' }), 'term');
+
+		expect(titles(await search(sql, owner, 'wombat'))).toEqual(['Wombat ache']);
 	});
 
 	it('restricts to the kinds asked for, and reads no other table', async () => {
