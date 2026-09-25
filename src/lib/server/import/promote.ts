@@ -12,6 +12,7 @@ import {
 	parseSourceDate,
 	parseSourceRange
 } from './csv.ts';
+import { mapLabMarker, mapLabResult, mapMedicalVisit } from './mappers/labs-visits.ts';
 
 /**
  * Promotion of staged rows into domain tables (IMP-007, IMP-010).
@@ -642,6 +643,38 @@ async function applyRelation(
 		case 'habits->areas':
 			await sql`update habits set area_id = ${to.id} where id = ${from.id}`;
 			return 'habit.area';
+
+		// ─── labs and visits (migration 0020) ──────────────────────────────
+		case 'lab_results->lab_markers':
+			await sql`update lab_results set marker_id = ${to.id} where id = ${from.id}`;
+			return 'lab_result.marker';
+
+		case 'lab_results->medical_visits':
+			await sql`update lab_results set medical_visit_id = ${to.id} where id = ${from.id}`;
+			return 'lab_result.visit';
+
+		case 'medical_visits->health_vocabulary':
+			// The visit's "Symptoms" relation, into the same term list a daily
+			// log links against (kind = 'symptom') -- see `daily_logs->
+			// health_vocabulary` above for why the property name need not be
+			// inspected here either.
+			await sql`
+				insert into medical_visit_symptoms (medical_visit_id, vocabulary_id)
+				values (${from.id}, ${to.id}) on conflict do nothing
+			`;
+			return 'visit.symptom';
+
+		// The source's Daily Log carries the reciprocal "Medical Visits"
+		// relation, and either side may be the one Notion actually populates —
+		// both are handled, and whichever runs first wins; the second is then
+		// a no-op update rather than a second, conflicting write.
+		case 'medical_visits->daily_logs':
+			await sql`update medical_visits set daily_log_id = ${to.id} where id = ${from.id}`;
+			return 'visit.daily_log';
+
+		case 'daily_logs->medical_visits':
+			await sql`update medical_visits set daily_log_id = ${from.id} where id = ${to.id}`;
+			return 'visit.daily_log';
 
 		default:
 			return null;
@@ -1445,23 +1478,24 @@ const NOT_IMPORTED: Record<string, string> = {
 	'Income Database': 'one empty row carrying only a formula display; no income records exist',
 	'Savings Log Database': 'one empty placeholder row',
 	'Payment Log Database': 'one empty placeholder row',
-	'Series Database': 'one empty placeholder row',
-	'Medical Visit Log Database': 'one empty placeholder row — no visit has been recorded yet'
+	'Series Database': 'one empty placeholder row'
 };
 
 /**
  * The NOT_IMPORTED entries whose only reason is that they were empty. That
  * reason stops being true the moment someone uses the database, so while any
  * of these holds a titled row it is reported as needing a mapper instead of
- * as skipped on purpose -- which is how Series (6 rows) and Medical Visit Log
- * (1 visit) would otherwise have been dropped by the 2026-09-24 export.
+ * as skipped on purpose -- which is how Series (6 rows) would otherwise have
+ * been dropped by the 2026-09-24 export. Medical Visit Log was the first real
+ * example of exactly this (1 visit, since given a mapper -- see MAPPERS) and
+ * is why the mechanism exists at all; it is gone from this set now that it
+ * has one.
  */
 const EMPTY_PLACEHOLDERS = new Set([
 	'Income Database',
 	'Savings Log Database',
 	'Payment Log Database',
-	'Series Database',
-	'Medical Visit Log Database'
+	'Series Database'
 ]);
 
 /**
@@ -1482,6 +1516,10 @@ const DATABASE_NAMES_BY_ID: Record<string, string> = {
 	'3c3879a5-56f1-80c6-9fc5-e2a24fa7a067': 'Important Dates Database',
 	'3d3879a5-56f1-80b9-8b18-d283ba9a94fb': 'Income Database',
 	'3c8879a5-56f1-80fc-850c-c1a518c818ba': 'Ingredients Database',
+	// New in the 2026-09-24 export (DISC: Health Databases). Both are new
+	// databases with no earlier name to preserve, so the id maps to itself.
+	'3e3879a5-56f1-80d7-ac21-fd7759999a01': 'Lab Markers Database',
+	'3e3879a5-56f1-806b-b6e4-f20780d33f2f': 'Lab Results Database',
 	'44c879a5-56f1-8219-83d3-813fba0385b6': 'Library',
 	'3b6879a5-56f1-805b-8a6a-d9f107a0e544': 'Master Dashboards',
 	'3c8879a5-56f1-8088-bacd-fc42e2e24d20': 'Meal Plan Database',
@@ -1542,7 +1580,12 @@ const MAPPERS: Record<string, Mapper> = {
 	'Movies & TV Database': upsertMedia,
 	'Bills & Subscriptions Database': upsertBills,
 	'Wheel of Life Database': upsertAssessments,
-	'Highlights & Significant Events Database': upsertEvents
+	'Highlights & Significant Events Database': upsertEvents,
+
+	// ─── labs and visits (migration 0020) ──────────────────────────────────
+	'Lab Markers Database': mapLabMarker,
+	'Lab Results Database': mapLabResult,
+	'Medical Visit Log Database': mapMedicalVisit
 };
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);
