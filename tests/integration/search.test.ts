@@ -240,6 +240,27 @@ describe('search', () => {
 		expect(hits[1]?.archived).toBe(true);
 	});
 
+	it('titles a journal day and a reading with the day of the month', async () => {
+		// 17 April 2026 is a Friday. `D` in to_char is the day of the *week*, so
+		// the old format printed "Friday 6 Apr 2026" — plausible enough to pass
+		// by eye, and exactly right on the one date in four weeks where the two
+		// numbers happen to agree, which is the date the privacy case below uses.
+		ok(await createDailyLog(sql, owner, { onDate: '2026-04-17', note: 'Tidal pools' }), 'log');
+		ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-04-17T07:15',
+				weight: 70,
+				notes: 'Tidal pools, then weighed'
+			}),
+			'reading'
+		);
+
+		expect(titles(await search(sql, owner, 'tidal')).sort()).toEqual([
+			'Friday 17 Apr 2026',
+			'Reading — Friday 17 Apr 2026'
+		]);
+	});
+
 	it('restricts to the kinds asked for, and reads no other table', async () => {
 		ok(await createTask(sql, owner, { title: 'Anemone planting' }), 'task');
 		ok(await createProject(sql, owner, { name: 'Anemone bed' }), 'project');

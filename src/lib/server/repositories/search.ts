@@ -327,7 +327,7 @@ export async function search(
 	if (wanted('daily_log')) {
 		// Deliberately owner-scoped, not visibility-scoped. See the header.
 		branches.push(sql`
-			select 'daily_log' as kind, t.id, to_char(t.on_date, 'FMDay D Mon YYYY') as title,
+			select 'daily_log' as kind, t.id, to_char(t.on_date, 'FMDay FMDD Mon YYYY') as title,
 			       to_tsvector('english',
 			           coalesce(t.note,'') || ' ' || coalesce(t.gratitude,'') || ' ' ||
 			           coalesce(t.highlight,'') || ' ' || coalesce(t.mood,'')) as doc,
@@ -347,7 +347,7 @@ export async function search(
 		// as it does for daily_log above.
 		branches.push(sql`
 			select 'health_measurement' as kind, t.id,
-			       'Reading — ' || to_char(t.measured_at at time zone h.timezone, 'FMDay D Mon YYYY') as title,
+			       'Reading — ' || to_char(t.measured_at at time zone h.timezone, 'FMDay FMDD Mon YYYY') as title,
 			       to_tsvector('english',
 			           coalesce(t.bp_context,'') || ' ' || coalesce(t.glucose_context,'') || ' ' ||
 			           coalesce(t.notes,'')) as doc,
