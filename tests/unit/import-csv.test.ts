@@ -26,8 +26,8 @@ describe('BOM handling', () => {
 
 describe('CSV parsing', () => {
 	it('keeps commas inside quoted fields', () => {
-		const rows = parseCsv('a,b\n"Andrea Hunt, NP",x\n');
-		expect(rows[1]).toEqual(['Andrea Hunt, NP', 'x']);
+		const rows = parseCsv('a,b\n"Mira Castellan, NP",x\n');
+		expect(rows[1]).toEqual(['Mira Castellan, NP', 'x']);
 	});
 
 	it('keeps newlines inside quoted fields', () => {
@@ -75,10 +75,10 @@ describe('relation cells', () => {
 	it('survives a comma inside a title', () => {
 		// Splitting on ", " would produce two broken halves here.
 		const refs = parseRelationCell(
-			'Andrea Hunt, NP (People%20Database/Andrea%20Hunt%203c8879a556f1803b8f0df37147b3aae7.csv)'
+			'Mira Castellan, NP (People%20Database/Mira%20Castellan%203c8879a556f1803b8f0df37147b3aae7.csv)'
 		);
 		expect(refs).toHaveLength(1);
-		expect(refs[0]!.title).toBe('Andrea Hunt, NP');
+		expect(refs[0]!.title).toBe('Mira Castellan, NP');
 	});
 
 	it('survives commas in titles across several references', () => {
