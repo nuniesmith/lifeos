@@ -70,9 +70,11 @@ default. Exporting all of `.env` works too, but only after its empty
 `LIFEOS_BOOTSTRAP_PASSWORD=` line is removed or given at least 12 characters —
 an empty value is rejected.
 
-The first request creates the household and an `admin` account. Its password
-is printed once to the dev server's terminal, unless `LIFEOS_BOOTSTRAP_PASSWORD`
-is set. Signing in forces a new username and password.
+On an empty database the server creates the household and an `admin` account
+as it starts (the dev server loads its hooks on the first request, so there it
+happens then). The password is printed once to the server's terminal, unless
+`LIFEOS_BOOTSTRAP_PASSWORD` is set. Signing in forces a new username and
+password.
 
 To load a Notion export, start the app once so the household exists, then run
 `./run.sh import --root <export dir>`. That is a dry run that prints the
