@@ -51,14 +51,26 @@ export interface PromoteSummary {
 	refusedByMapper: { database: string; rows: number }[];
 	/** Databases deliberately not imported, with why and how many rows. */
 	notImported: { database: string; rows: number; reason: string }[];
-	/** Databases with no mapper and no recorded reason — the ones to look at. */
-	unrecognised: { database: string; rows: number }[];
+	/**
+	 * Databases with no mapper and no recorded reason — the ones to look at.
+	 * `note` says why one that used to be skipped on purpose is here instead.
+	 */
+	unrecognised: { database: string; rows: number; note?: string }[];
+	/** Databases found by their Notion id after being renamed in Notion. */
+	renamed: { database: string; knownAs: string }[];
+	/**
+	 * Columns a database no longer exports whose values were kept from an
+	 * earlier import rather than overwritten with nothing.
+	 */
+	carriedColumns: { database: string; columns: string[] }[];
 }
 
 interface StagedRow {
 	id: string;
 	notion_page_id: string | null;
 	database_name: string;
+	/** The database's own Notion id, which survives a rename; the name does not. */
+	database_notion_id: string | null;
 	title: string | null;
 	raw: Record<string, string>;
 	/** Page body from the Markdown export; the CSVs do not carry it. */
@@ -202,11 +214,15 @@ const GOAL_STATUS: Record<string, string> = {
 
 export async function promote(sql: Queryable, options: PromoteOptions): Promise<PromoteSummary> {
 	const rows = await sql<StagedRow[]>`
-		select id, notion_page_id, database_name, title, raw, body
-		from source_records
-		where import_run_id = ${options.importRunId}
-		order by database_name, ordinal
+		select r.id, r.notion_page_id, r.database_name, s.notion_id as database_notion_id,
+		       r.title, r.raw, r.body
+		from source_records r
+		left join import_sources s on s.id = r.source_id
+		where r.import_run_id = ${options.importRunId}
+		order by r.database_name, r.ordinal
 	`;
+
+	const carriedColumns = await carryForwardRemovedColumns(sql, options.importRunId, rows);
 
 	const counts: Record<string, number> = {};
 	const relations: Record<string, number> = {};
@@ -229,14 +245,27 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 
 	// ─── pass one: rows become records ─────────────────────────────────────
 	const notImported: { database: string; rows: number; reason: string }[] = [];
-	const unrecognised: { database: string; rows: number }[] = [];
+	const unrecognised: { database: string; rows: number; note?: string }[] = [];
+	const renamed: { database: string; knownAs: string }[] = [];
 	const refused: Record<string, number> = {};
 
 	for (const [database, staged] of byDatabase) {
-		const mapper = MAPPERS[database];
+		const knownAs = knownDatabaseName(database, staged[0]?.database_notion_id ?? null);
+		if (knownAs !== database) renamed.push({ database, knownAs });
+
+		const mapper = MAPPERS[knownAs];
 		if (!mapper) {
-			const reason = NOT_IMPORTED[database];
-			if (reason) notImported.push({ database, rows: staged.length, reason });
+			const reason = NOT_IMPORTED[knownAs];
+			if (reason && EMPTY_PLACEHOLDERS.has(knownAs) && staged.some((r) => r.title?.trim())) {
+				// Skipped because it was empty -- and it no longer is. Reporting
+				// it as "not imported on purpose: one empty placeholder row" would
+				// be a reason that has stopped being true.
+				unrecognised.push({
+					database,
+					rows: staged.length,
+					note: `skipped while it was an empty placeholder; it now holds titled rows and needs a mapper`
+				});
+			} else if (reason) notImported.push({ database, rows: staged.length, reason });
 			// No mapper and no reason: something new in the export, and the
 			// report has to say so rather than dropping it quietly.
 			else unrecognised.push({ database, rows: staged.length });
@@ -290,8 +319,89 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 		skippedWithoutPageId,
 		refusedByMapper: Object.entries(refused).map(([database, rows]) => ({ database, rows })),
 		notImported,
-		unrecognised
+		unrecognised,
+		renamed,
+		carriedColumns
 	};
+}
+
+/**
+ * The name a database's mapper is registered under, found by Notion id first.
+ *
+ * Mappers are keyed by name, and names change: on 2026-09-24 Symptoms became
+ * "Symptom Library", Vitamins "Vitamins & Medications" and Activity "Movement
+ * Library". Looked up by name alone, all three fell through to "not
+ * recognised" -- 52 vocabulary entries stopped updating, the daily log's links
+ * to them fell from 52 to 23, and nothing failed. The id is what
+ * survives a rename, so it decides; the name is the fallback for a database
+ * this table does not list.
+ */
+export function knownDatabaseName(name: string, notionId: string | null): string {
+	return (notionId && DATABASE_NAMES_BY_ID[notionId]) || name;
+}
+
+/**
+ * Keeps the last known value of each column a database no longer exports.
+ *
+ * Mappers overwrite a record with what the export holds, and a column that is
+ * gone reads as empty. When Notion moved blood pressure, heart rate and glucose
+ * out of the Daily Log (2026-09-24), re-importing would have blanked those
+ * values on every day that had them. A removed column is not evidence that a
+ * value was cleared; an EMPTY cell in a column that still exists is, and that
+ * still clears it.
+ *
+ * Each staged row is given, for every column its database no longer exports,
+ * the value its page had in the most recent committed import that had it.
+ * Only rows promotion reads are changed: source_records keeps exactly what the
+ * export said.
+ */
+async function carryForwardRemovedColumns(
+	sql: Queryable,
+	importRunId: string,
+	rows: StagedRow[]
+): Promise<{ database: string; columns: string[] }[]> {
+	const pageIds = [
+		...new Set(rows.map((r) => r.notion_page_id).filter((id): id is string => !!id))
+	];
+	if (pageIds.length === 0) return [];
+
+	// Oldest first, so the newest import's value is the one that survives.
+	const history = await sql<
+		{ notion_page_id: string; database_notion_id: string | null; raw: Record<string, string> }[]
+	>`
+		select r.notion_page_id, s.notion_id as database_notion_id, r.raw
+		from source_records r
+		join import_runs i on i.id = r.import_run_id
+		left join import_sources s on s.id = r.source_id
+		where not i.dry_run
+		  and r.import_run_id <> ${importRunId}
+		  and r.notion_page_id = any(${pageIds}::uuid[])
+		order by i.started_at, r.ordinal
+	`;
+	if (history.length === 0) return [];
+
+	const lastKnown = new Map<string, Record<string, string>>();
+	for (const h of history) {
+		// Keyed by page AND database: a column of some other database the page
+		// once lived in is not a column this one removed.
+		const key = `${h.notion_page_id}|${h.database_notion_id}`;
+		lastKnown.set(key, { ...(lastKnown.get(key) ?? {}), ...h.raw });
+	}
+
+	const carried = new Map<string, Set<string>>();
+	for (const row of rows) {
+		if (!row.notion_page_id) continue;
+		const previous = lastKnown.get(`${row.notion_page_id}|${row.database_notion_id}`);
+		if (!previous) continue;
+		for (const [column, value] of Object.entries(previous)) {
+			if (column in row.raw) continue;
+			row.raw[column] = value;
+			const columns = carried.get(row.database_name) ?? new Set<string>();
+			columns.add(column);
+			carried.set(row.database_name, columns);
+		}
+	}
+	return [...carried].map(([database, columns]) => ({ database, columns: [...columns].sort() }));
 }
 
 /**
@@ -1272,6 +1382,66 @@ const NOT_IMPORTED: Record<string, string> = {
 	'Payment Log Database': 'one empty placeholder row',
 	'Series Database': 'one empty placeholder row',
 	'Medical Visit Log Database': 'one empty placeholder row — no visit has been recorded yet'
+};
+
+/**
+ * The NOT_IMPORTED entries whose only reason is that they were empty. That
+ * reason stops being true the moment someone uses the database, so while any
+ * of these holds a titled row it is reported as needing a mapper instead of
+ * as skipped on purpose -- which is how Series (6 rows) and Medical Visit Log
+ * (1 visit) would otherwise have been dropped by the 2026-09-24 export.
+ */
+const EMPTY_PLACEHOLDERS = new Set([
+	'Income Database',
+	'Savings Log Database',
+	'Payment Log Database',
+	'Series Database',
+	'Medical Visit Log Database'
+]);
+
+/**
+ * Notion database id -> the name its mapper or NOT_IMPORTED entry is listed
+ * under, as the database was named in the 2026-09-07 export. A database's id
+ * survives a rename; its name does not (see knownDatabaseName).
+ */
+const DATABASE_NAMES_BY_ID: Record<string, string> = {
+	'3bc879a5-56f1-8041-84bb-e5e8cd7dd446': 'Activity Database',
+	'3af879a5-56f1-8024-8984-e5702c84e0fe': 'Areas Database',
+	'3d3879a5-56f1-80bb-b350-dc43401590df': 'Bills & Subscriptions Database',
+	'3b7879a5-56f1-8078-8365-fc81070ab3bf': 'Daily Log Database',
+	'3bf879a5-56f1-8078-adb6-d71c304bba40': 'Energy Level Database',
+	'3c3879a5-56f1-80e0-8cc5-c346fd3683a3': 'Exercise Database',
+	'3b6879a5-56f1-8006-93b9-ea7495766449': 'Goals Database',
+	'3b6879a5-56f1-803d-bbbb-d2e1f896abe4': 'Habit Tracker Database',
+	'3bf879a5-56f1-805f-bd26-fac6769ea5ca': 'Highlights & Significant Events Database',
+	'3c3879a5-56f1-80c6-9fc5-e2a24fa7a067': 'Important Dates Database',
+	'3d3879a5-56f1-80b9-8b18-d283ba9a94fb': 'Income Database',
+	'3c8879a5-56f1-80fc-850c-c1a518c818ba': 'Ingredients Database',
+	'44c879a5-56f1-8219-83d3-813fba0385b6': 'Library',
+	'3b6879a5-56f1-805b-8a6a-d9f107a0e544': 'Master Dashboards',
+	'3c8879a5-56f1-8088-bacd-fc42e2e24d20': 'Meal Plan Database',
+	'3cf879a5-56f1-80ef-86ff-f1f136997612': 'Media Picker Database',
+	'3c8879a5-56f1-8002-8bcf-d042e9832348': 'Medical Visit Log Database',
+	'3d3879a5-56f1-80cc-91bc-e78fd7037290': 'Money at a Glance Database',
+	'3bc879a5-56f1-809e-958f-eb6c23799cbf': 'Months Database',
+	'3bc879a5-56f1-8007-a683-f12cac9acfd3': 'Mood Feelings Database',
+	'3ce879a5-56f1-80ba-aa63-eb5cd4aecf3b': 'Movies & TV Database',
+	'3d3879a5-56f1-80b8-9c61-efe38efe6ef7': 'Payment Log Database',
+	'3c3879a5-56f1-80c4-a8f6-ca6c00ae76b1': 'People & Places Databases',
+	'3c8879a5-56f1-80ce-846e-f9f97fac4d14': 'Pet Database',
+	'3cc879a5-56f1-8049-9e5c-d8a1ae499d9e': 'Prep Tasks Database',
+	'3ad879a5-56f1-8031-a1a5-dee86a4dc15f': 'Projects Database',
+	'3c8879a5-56f1-804d-ac63-cbf79e8e9007': 'Recipes Database',
+	'3d3879a5-56f1-8020-bc46-f982dcfdaea0': 'Savings Log Database',
+	'3d4879a5-56f1-8086-9fda-c9138875a432': 'Series Database',
+	'3bc879a5-56f1-801a-97e8-d6ab23727d35': 'Symptoms Database',
+	'3c5879a5-56f1-8039-86f7-d70d341816e7': 'System Status Database',
+	'3c3879a5-56f1-8067-b950-faff680c4a3a': 'Tags & Topics (Resources) Database',
+	'3ad879a5-56f1-80c1-ac15-d106e1e07e2c': 'Tasks Database',
+	'3bc879a5-56f1-808c-8f0e-d230d152b08f': 'Vitamins Database',
+	'3bf879a5-56f1-8019-99a4-e87f780b2706': 'Wheel of Life Database',
+	'3bb879a5-56f1-8069-a31a-ebe568c7cbbe': 'Wishlist Database',
+	'3b7879a5-56f1-80da-bc99-efafeb7b2a63': 'Years Database'
 };
 
 /** Source database name to mapper. Unlisted databases stay staged only. */

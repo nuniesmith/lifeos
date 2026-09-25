@@ -236,6 +236,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				inv.files.filter((f) => f.kind === 'markdown' && f.notionId).map((f) => [f.notionId!, f])
 			);
 			let disambiguated = 0;
+			let matchedByProperties = 0;
 			const recordIdByNotionId = new Map<string, string>();
 			let rowCount = 0;
 			let rowsWithoutPageId = 0;
@@ -254,6 +255,9 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 				const pageTitles = pageIndex.get(pageDirectoryFor(file.relativePath));
 				// Which page files this database's rows have already claimed.
 				const claimed = new Map<string, Set<string>>();
+				// Pages whose title no row here has, parsed only if a row fails
+				// to match by title (see the fallback below).
+				let orphans: Map<string, Record<string, string>> | null = null;
 
 				if (!table.headers.length) {
 					note('error', 'empty_database', `${file.relativePath} has no header row`);
@@ -281,7 +285,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 							for (const candidate of free) {
 								const md = markdownById.get(candidate);
 								if (!md) continue;
-								const page = parseMarkdownPage(await readText(md), table.headers);
+								const page = parseMarkdownPage(await readText(md), table.headers, record);
 								const score = propertyAgreement(record, page.properties);
 								if (score > bestScore) {
 									bestScore = score;
@@ -296,6 +300,42 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 						claimed.set(key, taken);
 						break;
 					}
+
+					// No title matched. A title can differ from its page's filename in
+					// a way no normalisation recovers: Notion writes a date mention
+					// absolutely in the CSV ("Tuesday, @September 22, 2026") but
+					// relative to the export day in the filename ("Tuesday, @Tuesday",
+					// "Wednesday, @Yesterday", "Thursday, @Today"), so a recent day's
+					// filename changes with every export. Those rows lost their page
+					// body -- the day's whole journal -- to "no matching page file".
+					//
+					// Fall back to the page whose properties agree best, the same
+					// evidence duplicate titles are settled by, but only among ORPHAN
+					// pages -- ones whose title no row here has -- so nothing a title
+					// match would claim can be taken, and only on a clear winner.
+					if (!pageId && title && pageTitles) {
+						if (!orphans) {
+							const rowKeys = new Set(
+								table.rows.flatMap((r) => titleKeys((r[titleColumn] ?? '').trim()))
+							);
+							orphans = new Map();
+							for (const [key, ids] of pageTitles) {
+								if (rowKeys.has(key)) continue;
+								for (const id of ids) {
+									const md = markdownById.get(id);
+									if (!md) continue;
+									orphans.set(id, parseMarkdownPage(await readText(md), table.headers).properties);
+								}
+							}
+						}
+						const match = pickByAgreement(record, orphans);
+						if (match) {
+							pageId = match;
+							orphans.delete(match);
+							matchedByProperties++;
+						}
+					}
+
 					// An untitled row cannot have a page file: Notion names those
 					// files after the title. Counted separately so it is not
 					// mistaken for a matching failure.
@@ -313,7 +353,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					if (pageId) {
 						const pageFile = markdownById.get(pageId);
 						if (pageFile) {
-							const page = parseMarkdownPage(await readText(pageFile), table.headers);
+							const page = parseMarkdownPage(await readText(pageFile), table.headers, record);
 							body = page.body || null;
 							pageProperties = page.properties;
 							bodyImages = page.images;
@@ -459,6 +499,15 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 					'duplicate_title_disambiguated',
 					`${disambiguated} row(s) with a duplicate title were matched to a page by ` +
 						`property agreement rather than listing order`
+				);
+			}
+			if (matchedByProperties > 0) {
+				note(
+					'info',
+					'title_matched_no_page_resolved_by_properties',
+					`${matchedByProperties} row(s) whose title matched no page file were matched ` +
+						`to one by property agreement (a date mention in a title is written ` +
+						`relative to the export day in its filename)`
 				);
 			}
 
@@ -690,6 +739,34 @@ export function propertyAgreement(
 		if (cell === value || cell.split('\n')[0]!.trim() === value) score++;
 	}
 	return score;
+}
+
+/**
+ * The candidate page whose properties agree best with a row, or null unless
+ * that page is a clear winner: at least `minimum` agreeing values AND strictly
+ * more than any other candidate. A tie or a thin match stays unmatched -- a
+ * row with no page loses its body, while a row given the WRONG page gets
+ * another day's journal and every relation on it.
+ */
+export function pickByAgreement(
+	row: Record<string, string>,
+	candidates: Map<string, Record<string, string>>,
+	minimum = 2
+): string | null {
+	let best: string | null = null;
+	let bestScore = -1;
+	let runnerUp = -1;
+	for (const [id, properties] of candidates) {
+		const score = propertyAgreement(row, properties);
+		if (score > bestScore) {
+			runnerUp = bestScore;
+			bestScore = score;
+			best = id;
+		} else if (score > runnerUp) {
+			runnerUp = score;
+		}
+	}
+	return best !== null && bestScore >= minimum && bestScore > runnerUp ? best : null;
 }
 
 /**

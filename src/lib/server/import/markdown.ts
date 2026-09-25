@@ -14,6 +14,10 @@ import { parseRelationCell, type RelationRef } from './csv.ts';
  * other line continues the one above it, because property values can span
  * lines. Terminating at "the first line that is not a property" instead put the
  * remaining properties into the body of 200 pages.
+ *
+ * When the database's columns are known, a blank line does not end the block
+ * if another of those properties is still to come: formula displays render as
+ * several paragraphs INSIDE one value (see parseMarkdownPage).
  */
 
 export interface MarkdownPage {
@@ -40,19 +44,94 @@ const NOTION_ID = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/;
 const PROPERTY_LINE = /^([A-Za-z][A-Za-z0-9 '&/?()-]{0,60}?):[ \t](.*)$/;
 
 /**
+ * Lines that can only be page body, never part of a property value: an image,
+ * a link line, an HTML block (`<aside>`), a heading, a table, a quote or a
+ * code fence. Formula displays are plain text, so meeting one of these while
+ * looking ahead means the property block is over.
+ */
+const BODY_ONLY_LINE = /^\s*(?:!\[|\[|<|#|\||>|```)/;
+
+/** Whitespace-insensitive form, for comparing the page's text with the CSV's. */
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+/**
  * @param knownProperties Column names from the database's CSV header. When
  * supplied, only those keys start a property, which removes the one genuine
  * ambiguity in this format: a body line like `Note: buy milk` is
  * indistinguishable from a property without knowing the schema. Callers that
  * have the header should always pass it.
+ * @param rowValues The page's CSV row, when known. Lets the final
+ * multi-paragraph property keep its closing paragraphs (see valueContinues).
  */
 export function parseMarkdownPage(
 	source: string,
-	knownProperties?: Iterable<string>
+	knownProperties?: Iterable<string>,
+	rowValues?: Record<string, string>
 ): MarkdownPage {
-	const known = knownProperties ? new Set([...knownProperties].map((k) => k.trim())) : null;
-	const isKnown = (key: string) => known === null || known.has(key);
+	const known = knownProperties
+		? [...new Set([...knownProperties].map((k) => k.trim()))].filter(Boolean)
+		: null;
 	const lines = source.replace(/\r\n?/g, '\n').split('\n');
+
+	/** The property a line starts, if it starts one. */
+	const propertyOf = (line: string): { key: string; value: string } | null => {
+		if (known) {
+			// With the schema in hand, match the column names themselves: the
+			// generic pattern cannot express a key like "Log ☀️ High Energy
+			// Version", and a line starts one of these keys or none. Whitespace
+			// before the colon is allowed because Notion keeps a column's
+			// trailing space ("Physical Symptoms : …"). Requiring the colon
+			// straight after the key is what keeps "Symptom Impact Score: 2"
+			// from reading as a value of "Symptom Impact", whatever the order.
+			for (const key of known) {
+				if (!line.startsWith(key)) continue;
+				const rest = /^\s*:(?:[ \t](.*))?$/.exec(line.slice(key.length));
+				if (rest) return { key, value: rest[1] ?? '' };
+			}
+			return null;
+		}
+		const match = PROPERTY_LINE.exec(line);
+		return match ? { key: match[1]!.trim(), value: match[2] ?? '' } : null;
+	};
+
+	/**
+	 * Whether a property not yet read follows `from` before anything that can
+	 * only be body. Formula displays render as several paragraphs inside ONE
+	 * value -- the 2026-09-24 Daily Log has four ("Daily Check In", "Daily
+	 * Health Snapshot", "Medication Summary", "Nutrition Summary") -- and ending
+	 * the block at their first blank line poured every later property into the
+	 * body: ~60 lines per day, 1,494 across 25 days of notes. Only asked when
+	 * the columns are known, since only then is "a property" unambiguous.
+	 */
+	const propertyAhead = (from: number, seen: Map<string, string[]>): boolean => {
+		for (let i = from; i < lines.length; i++) {
+			const line = lines[i]!;
+			if (line.trim() === '') continue;
+			// A known key first: a column really is called "# of Servings", and
+			// read as a heading it would end the block one property early.
+			const found = propertyOf(line);
+			if (found && !seen.has(found.key)) return true;
+			if (BODY_ONLY_LINE.test(line)) return false;
+		}
+		return false;
+	};
+
+	/**
+	 * Whether the paragraph at `from` is still the value of `key`, judged
+	 * against the CSV's copy of that value. propertyAhead cannot settle the
+	 * LAST multi-paragraph property -- nothing follows it to prove the block
+	 * goes on -- so without this its closing paragraphs ("🛒 STILL NEED" on a
+	 * meal plan) became body. The CSV holds each formula's full text, so the
+	 * page text is still the value exactly while it remains a prefix of it.
+	 */
+	const valueContinues = (from: number, key: string, sofar: string[]): boolean => {
+		const whole = rowValues?.[key];
+		if (!whole) return false;
+		const next: string[] = [];
+		for (let i = from; i < lines.length && lines[i]!.trim() !== ''; i++) next.push(lines[i]!);
+		if (next.length === 0) return false;
+		return squash(whole).startsWith(squash([...sofar, ...next].join('\n')));
+	};
 
 	let index = 0;
 	let title = '';
@@ -74,23 +153,43 @@ export function parseMarkdownPage(
 	// two — and stopping at the first continuation line dumped the remaining
 	// properties into the body of 200 pages.
 	const properties: Record<string, string> = {};
-	const firstMatch = index < lines.length ? PROPERTY_LINE.exec(lines[index]!) : null;
-	if (firstMatch && isKnown(firstMatch[1]!.trim())) {
+	if (index < lines.length && propertyOf(lines[index]!)) {
+		const values = new Map<string, string[]>();
 		let currentKey: string | null = null;
 		while (index < lines.length) {
 			const line = lines[index]!;
-			if (line.trim() === '') break;
+			if (line.trim() === '') {
+				// The blank line ends the block, unless the columns are known and
+				// one of them is still to come, or the CSV shows the value goes
+				// on -- then it is a paragraph break inside the current value.
+				if (
+					!known ||
+					!currentKey ||
+					!(
+						propertyAhead(index + 1, values) ||
+						valueContinues(index + 1, currentKey, values.get(currentKey)!)
+					)
+				) {
+					break;
+				}
+				values.get(currentKey)!.push('');
+				index++;
+				continue;
+			}
 
-			const match = PROPERTY_LINE.exec(line);
-			if (match && isKnown(match[1]!.trim())) {
-				currentKey = match[1]!.trim();
-				if (!(currentKey in properties)) properties[currentKey] = (match[2] ?? '').trim();
+			const found = propertyOf(line);
+			// Notion emits each property once, so a key already read is text
+			// inside the current value, not a second copy of that property.
+			if (found && !values.has(found.key)) {
+				currentKey = found.key;
+				values.set(currentKey, [found.value.trim()]);
 			} else if (currentKey) {
 				// A continuation of the value above.
-				properties[currentKey] = `${properties[currentKey]}\n${line.trim()}`.trim();
+				values.get(currentKey)!.push(line.trim());
 			}
 			index++;
 		}
+		for (const [key, parts] of values) properties[key] = parts.join('\n').trim();
 		// Skip the blank line that ended the block.
 		while (index < lines.length && lines[index]!.trim() === '') index++;
 	}
