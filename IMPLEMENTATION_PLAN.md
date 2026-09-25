@@ -1,6 +1,6 @@
 # LifeOS Website Implementation Plan
 
-**Status:** Proposed implementation plan  
+**Status:** In progress — §13 records what is done  
 **Prepared:** 2026-09-04  
 **Target:** A private, mobile-friendly LifeOS web application running on a US$5/month Linode and reachable over Tailscale HTTPS  
 **Deployment reference reviewed:** `princess` commit `5dd69978641e6c24329356a81b51a8c285a4fc4d` and shared `actions` commit `5d4948b899fdda4abdcb1b80b8959030aa1571ea`
@@ -843,7 +843,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 - [ ] **DISC-001** Record SHA-256, byte size, archive entry count, duplicate paths, and file-type counts for both supplied ZIPs.
 - [x] **DISC-002** Add private-data paths to `.gitignore`/`.dockerignore`. Done: exports are at `data/` (416 MB, 1,829 files, incl. medical/income/spending records); `data/`, `var/imports/`, `var/uploads/`, and `*.zip` are ignored and verified untracked. The repo is private, but the constraint is history permanence, not visibility.
-- [ ] **DISC-003** Create the 36-database source catalog and checked mapping file from the reviewed headers.
+- [~] **DISC-003** Create the 36-database source catalog and checked mapping file from the reviewed headers. _Partial: `docs/source-catalog.md` records all 36 databases with row and column counts and their relation columns. The mapping lives in code — `MAPPERS`, `NOT_IMPORTED` and `DATABASE_NAMES_BY_ID` in `src/lib/server/import/promote.ts` — and an import names any database with no entry; there is no separate mapping file checked against the headers._
 - [ ] **DISC-004** Capture formulas, rollups, button behavior, select/status options, relation cardinality, templates, views, filters, sorts, and groups from live Notion. **IMP-008 has narrowed which of these actually matter.** The straightforward replacement already reproduces `Projects / Completed Tasks` exactly (7/7). Three columns do not reproduce and their filters must be captured before the replacement can be trusted: `Areas / Open Direct Tasks` (12/15), `Projects / Total Tasks` (6/7), `Tasks / Number of Subtasks` (30/31). Do **not** infer these from the numbers — three readings of "Open Direct Tasks" were tried (all open tasks, top-level only, not-via-a-project) and each matched some areas while contradicting others, so any of them would have agreed by accident.
 - [ ] **DISC-005** Confirm Accounts and Life Admin contents and obtain direct exports if non-empty.
 - [ ] **DISC-006** Classify every template/placeholder as migrate-as-content, convert-to-app-default, or archive-only.
@@ -857,7 +857,7 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 
 - [x] **BASE-001** Scaffold SvelteKit/Svelte 5/TypeScript with `adapter-node`, strict type checks, Vitest, and Playwright.
 - [x] **BASE-002** Add Drizzle, `postgres`, validation, Markdown parsing/sanitization, structured logging, and image-processing dependencies with exact lockfile versions.
-- [ ] **BASE-003** Establish LifeOS design tokens, typography fallbacks, base layouts, error/empty/loading states, and accessible form components. _Partial: tokens (three-state light/dark), typography fallbacks, base layout with skip-link, and the error state are done. Empty/loading states and the accessible form components are still outstanding — they need real routes to hang off, so they land with Phase 4._
+- [x] **BASE-003** Establish LifeOS design tokens, typography fallbacks, base layouts, error/empty/loading states, and accessible form components. _Done: tokens (three-state light/dark), typography fallbacks, the base layout with skip-link, `ErrorState`, `EmptyState` and `LoadingState`, and `Field`, `Input`, `Select`, `Textarea` and `Checkbox`, which tie label, hint and error together through `aria-describedby` and `aria-invalid` (`src/lib/components/`, covered by `tests/unit/components.test.ts`)._
 - [x] **BASE-004** Add `.env.example` with documented public/private separation and startup validation for required production variables.
 - [x] **BASE-005** Create multi-stage non-root Dockerfile, Compose development/production files, persistent volumes, health checks, resource guards, and log rotation.
 - [x] **BASE-006** Add minimal Nginx config with loopback publish, trusted headers, security headers, streaming, cache rules, and health routing.
@@ -885,11 +885,11 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 ### Phase 3 — Domain schema and importer
 
 - [x] **MODEL-001** Add MVP domain migrations for areas, goals, projects, tasks, tags, important dates, daily logs, habits, and links/logs.
-- [ ] **MODEL-002** Add feature-pack migrations or staged schema modules for library/people, food, health, finance, media, and yearly review.
-- [ ] **MODEL-003** Implement tested repository/service boundaries, transactions, archive/trash, optimistic conflict handling, and shared derived-query modules.
+- [~] **MODEL-002** Add feature-pack migrations or staged schema modules for library/people, food, health, finance, media, and yearly review. _Partial: migrations 0011–0015 and 0018–0020 add health (a shared vocabulary, medications, measurements, labs and visits), food, the library, people with the wishlist and watchlist, bills, and the wheel of life and significant events. Finance stops at `bills`: there are no income, spending, savings/funding or account tables._
+- [~] **MODEL-003** Implement tested repository/service boundaries, transactions, archive/trash, optimistic conflict handling, and shared derived-query modules. _Partial: `src/lib/server/repositories/base.ts` gives every repository its household and visibility scoping as SQL, a conflict result for a stale `updated_at`, archiving through `archived_at`, and calls that run inside a caller's transaction; derived views live beside their tables (`tasks.ts`, `habits.ts`, `reflection.ts`), and `tests/integration/repositories.test.ts` covers the boundary. The Archive page lists and restores only tasks, projects, goals, areas, habits and tags._
 - [x] **IMP-001** Implement safe ZIP reader, limits, entry inventory, Notion ID extraction, hashing, and duplicate-path reporting.
 - [x] **IMP-002** Parse 36 `_all.csv` inventories with a real CSV parser reading `utf-8-sig`, and validate expected headers/row counts against the 436-row baseline. Reject line-count-based row totals.
-- [ ] **IMP-003** Parse HTML pages/tables for page IDs, typed values, stable relation IDs, and asset references.
+- [~] **IMP-003** Parse HTML pages/tables for page IDs, typed values, stable relation IDs, and asset references. _Partial: covers only — `scripts/import-covers.mjs` takes each page's cover image from the HTML export, joined on the page id in the filename. Page ids, relation ids and values all come from the Markdown & CSV export (relation cells carry the 32-hex id); HTML tables and properties are not parsed._
 - [x] **IMP-004** Parse Markdown properties/body, nested tasks, links, and rich content fallback.
 - [x] **IMP-005** Implement two-pass page/relationship import into provenance and domain tables.
 - [x] **IMP-006** Implement media validation, SHA-256 deduplication, immutable storage, derivatives, and attachment links.
@@ -911,35 +911,35 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [x] **UI-007** Build life-area and tag views.
 - [x] **UI-008** Build important dates and upcoming view.
 - [x] **UI-009** Build daily log editor and habit check-in/history/targets.
-- [ ] **UI-010** Build household-scoped PostgreSQL full-text search with privacy filters.
-- [ ] **UI-011** Add mobile/accessibility states and Playwright core-flow tests.
+- [x] **UI-010** Build household-scoped PostgreSQL full-text search with privacy filters.
+- [x] **UI-011** Add mobile/accessibility states and Playwright core-flow tests.
 
 **Gate:** The wife can perform the complete daily task/habit/log workflow on a phone without returning to Notion.
 
 ### Phase 5 — Feature packs
 
-- [ ] **PACK1-001** Implement library capture, notes/body rendering, reading status, tags, relations, and resurfacing.
-- [ ] **PACK1-002** Implement people/places, relationship links, important dates, and privacy-safe contact detail views.
-- [ ] **PACK2-001** Implement recipes with sanitized rich instructions, nutrition, images, search, favorites, and related recipes.
-- [ ] **PACK2-002** Implement ingredient identity, pantry status, shopping items, stores/aisles, quantities/units, and recipe joins.
-- [ ] **PACK2-003** Implement meal plan slots, prep tasks, daily-log menu, and shopping-list generation.
-- [ ] **PACK3-001** Implement mood/energy/symptom/supplement/activity/exercise logging on the daily timeline.
-- [ ] **PACK3-002** Implement measurements, medical visits/files, providers/places, and pets.
+- [~] **PACK1-001** Implement library capture, notes/body rendering, reading status, tags, relations, and resurfacing. _Partial: `library_items` (migration 0013) is imported and shown three ways — `/library`, `/reading`, `/knowledge` — and `/library/[id]` edits an entry and lists its topics; the Knowledge Hub resurfaces what was opened least recently. Entries cannot be added from the app, topics cannot be changed there, notes show as plain text, and entries have no links to one another._
+- [~] **PACK1-002** Implement people/places, relationship links, important dates, and privacy-safe contact detail views. _Partial: `people` (migration 0014) holds people, places, pets and "me" with groups and a birthday; `/people` lists them by group with the gifts wanted for each, and adds new ones. There is no per-person page, no contact details, and important dates do not link to people._
+- [~] **PACK2-001** Implement recipes with sanitized rich instructions, nutrition, images, search, favorites, and related recipes. _Partial: `recipes` (migration 0012) carries times, servings, per-serving nutrition, courses, seasons and a favourite flag; `/food` lists them with their covers, and search finds them. There is no recipe page, so instructions are not shown; recipes cannot be added or edited from the app, and there are no related-recipe links._
+- [~] **PACK2-002** Implement ingredient identity, pantry status, shopping items, stores/aisles, quantities/units, and recipe joins. _Partial: an ingredient's status is both its pantry state and the shopping list — `/food` groups the list by aisle and switches status — ingredients carry store, aisle and quantity, and `recipe_ingredients` holds each pairing's amount. Quantities and amounts are free text rather than number and unit, and ingredients cannot be added or attached to recipes from the app._
+- [~] **PACK2-003** Implement meal plan slots, prep tasks, daily-log menu, and shopping-list generation. _Partial: `meal_plans` and `meal_plan_recipes` hold breakfast, lunch, dinner and snack slots, shown a week at a time on `/food`, and prep tasks are listed and ticked off there. Meals cannot be planned from the app (`planMeal` in `repositories/food.ts` has no route), the journal does not show the day's menu, and no shopping list is generated from a plan._
+- [~] **PACK3-001** Implement mood/energy/symptom/supplement/activity/exercise logging on the daily timeline. _Partial: symptoms, moods, energy levels, activities and exercises share `health_vocabulary` (migration 0011) and are imported with the days they were logged on; `/health` adds terms and counts how often each came up, the journal records energy and mood, and `/health/medications` logs supplement doses. A term cannot be logged against a day from the app (`logHealthTerm` has no route), and no page shows a day's health entries as a timeline._
+- [~] **PACK3-002** Implement measurements, medical visits/files, providers/places, and pets. _Partial: readings live in `health_measurements` (migration 0019; `/health/measurements`, with charts), and lab results and medical visits in migration 0020 (`/health/labs`, `/health/visits`); pets are people of kind `pet`. A visit's provider and location are free text rather than links to people and places, visits carry no files, and pets are not linked to visits._
 - [ ] **PACK4-001** Implement financial accounts after source confirmation.
-- [ ] **PACK4-002** Implement exact-decimal income/spending, recurring expenses, savings/funding, project links, and monthly reports.
-- [ ] **PACK5-001** Implement media library, watch progress/history, favorites, and picker.
-- [ ] **PACK5-002** Implement wishlist, significant events, annual reports, and Wheel of Life.
+- [~] **PACK4-002** Implement exact-decimal income/spending, recurring expenses, savings/funding, project links, and monthly reports. _Partial: recurring expenses only — `bills` (migration 0014) holds exact-decimal amounts with a currency and a frequency, and `/finance` totals their monthly equivalent. There are no income, spending or savings/funding records, no project links and no monthly reports._
+- [~] **PACK5-001** Implement media library, watch progress/history, favorites, and picker. _Partial: `media_items` (migration 0014) tracks status, season and episode, times watched and a favourite flag; `/entertainment` groups titles by status, with covers, and moves them between statuses. There is no per-viewing history, no picker, and titles cannot be added from the app._
+- [~] **PACK5-002** Implement wishlist, significant events, annual reports, and Wheel of Life. _Partial: all four exist and are imported — `/wishlist` with who each item is for, significant events and a year in review computed from the logs on `/yearly-review`, and wheel-of-life ratings on `/perspectives` — and each page adds new entries. Existing entries cannot be edited from the app, so a gift cannot be marked bought or given._
 - [ ] **PACK6-001** Define requirements before implementing placeholder dashboards; do not infer hidden workflows from decorative exports.
 
 **Gate per pack:** imported records are editable, source relations are preserved, derived numbers match documented behavior, export/backup covers new tables, and mobile tests pass.
 
 ### Phase 6 — Data mobility and recovery
 
-- [ ] **MOVE-001** Define and document portable export schema/version policy.
-- [ ] **MOVE-002** Implement streaming NDJSON/CSV/Markdown/media household export with manifest and checksums.
-- [ ] **MOVE-003** Implement portable import dry-run, relationship validation, and explicit collision strategies.
-- [ ] **BKP-001** Implement full custom-format PostgreSQL dump, manifest, upload snapshot, and Restic backup.
-- [ ] **BKP-002** Implement retention, stale/failure status, disk checks, secret-redacted logs, and systemd timer.
+- [~] **MOVE-001** Define and document portable export schema/version policy. _Partial: the manifest records `format`, `formatVersion` 1 and the exporting database's latest migration as `schemaVersion`; `scripts/restore-data.mjs` refuses any other format version and any bundle newer than the target schema, and accepts older ones. The policy is stated only in the scripts' comments, not in `docs/data-mobility.md`._
+- [~] **MOVE-002** Implement streaming NDJSON/CSV/Markdown/media household export with manifest and checksums. _Partial: `scripts/export-data.mjs` writes a household's tables as NDJSON and CSV, task and daily-log notes as Markdown, and media named by SHA-256, from one repeatable-read snapshot, with a manifest of per-file checksums; `tests/integration/data-mobility.test.ts` fails if a household table is left out. It reads each table whole rather than streaming it, and writes a directory rather than an archive._
+- [x] **MOVE-003** Implement portable import dry-run, relationship validation, and explicit collision strategies.
+- [~] **BKP-001** Implement full custom-format PostgreSQL dump, manifest, upload snapshot, and Restic backup. _Partial: `scripts/backup.sh` takes a custom-format `pg_dump`, reads it back with `pg_restore --list`, and records its size, SHA-256 and per-table row counts in `backup_runs`. It does not capture uploads, write a manifest alongside the dump, or send anything off the host with Restic._
+- [x] **BKP-002** Implement retention, stale/failure status, disk checks, secret-redacted logs, and systemd timer. _Retention is `backup.sh`'s 14-day sweep of local dumps, always keeping the newest; the §10 snapshot policy needs Restic first (BKP-001). Status is `backup_runs` plus readiness, which fails a backup older than 36 hours; the timer is `deploy/systemd/lifeos-backup.timer`, installed by `scripts/setup-server.sh`._
 - [ ] **BKP-003** Implement safe staged restore with pre-restore preservation, validation, atomic switch, session invalidation, and smoke tests.
 - [ ] **BKP-004** Restore onto a blank environment and record measured RPO/RTO, counts, checksums, and recovery gaps. **The drill host is an ephemeral Linode provisioned by `provision.yml` and destroyed afterwards** (a `g6-nanode-1` hour costs cents), _not_ the production node and _not_ a local Docker stack — a restore that never exercises provisioning, Tailscale join, and Serve has not tested recovery. Record the drill's Linode ID and destruction time in the report.
 - [ ] **BKP-005** Add scheduled verification and quarterly fresh-host drill checklist, including the teardown step so drills cannot silently leave a second billed node running.
@@ -955,13 +955,13 @@ Each phase ends with a usable gate. Do not start final cutover merely because th
 - [~] **OPS-005** Join the server as `tag:lifeos`, keep runners as `tag:ci`, implement minimum tailnet grants, and prove the database/public interfaces are unreachable.
 - [~] **OPS-006** Configure and idempotently verify Tailscale Serve to loopback Nginx; assert Funnel is disabled and remove Princess's Cloudflare, Certbot, wildcard DNS, certificate volume, and exit-node paths.
 - [~] **OPS-007** Configure production secrets, explicit HTTPS `ORIGIN`, scoped DB credentials, GHCR pull credentials, Restic backend, and offline recovery material without per-deploy `.env` rewriting.
-- [ ] **OPS-008** Reuse the `nuniesmith/actions` composites as-is (they are proven in Princess production); set a `LIFEOS_TAILSCALE_IP` override secret and pass it exactly as Princess passes `PRINCESS_TAILSCALE_IP`; pin every used component to a reviewed SHA and add a controlled pin-update process. **Do not modify the shared composites for LifeOS' benefit** — see the note below.
-- [ ] **OPS-009** Add `ci.yml` with lockfile install, static checks, PostgreSQL integration tests, Playwright, image build, and scanning; publish commit-tagged GHCR images only from trusted `main` runs.
+- [~] **OPS-008** Reuse the `nuniesmith/actions` composites as-is (they are proven in Princess production); set a `LIFEOS_TAILSCALE_IP` override secret and pass it exactly as Princess passes `PRINCESS_TAILSCALE_IP`; pin every used component to a reviewed SHA and add a controlled pin-update process. **Do not modify the shared composites for LifeOS' benefit** — see the note below. _Partial: `.github/workflows/deploy.yml` pins `tailscale-connect`, `ssh-deploy`, `health-check` and `discord-notify` to one reviewed commit and passes `LIFEOS_TAILSCALE_IP` (or `PROD_TAILSCALE_IP`) as the SSH target. No pin-update process is written down._
+- [x] **OPS-009** Add `ci.yml` with lockfile install, static checks, PostgreSQL integration tests, Playwright, image build, and scanning; publish commit-tagged GHCR images only from trusted `main` runs.
 - [~] **OPS-010** Add `deploy.yml` with the GitHub production environment, `cancel-in-progress: false`, tailnet discovery, exact commit/digest capture, and a remote `flock` deployment lock.
 - [~] **OPS-011** Implement the custom stateful deploy sequence: resource preflight, image pull, required pre-deploy backup, one-shot migration, app/Nginx rollout with PostgreSQL kept alive, hard health gate, and sanitized Discord report.
 - [~] **OPS-012** Test retry after interruption at every deploy boundary and prove exact-image rollback; document when a forward fix versus database restore is required after a migration failure.
 - [ ] **OPS-013** Load-test the realistic dataset, measure memory/disk, tune PostgreSQL/app pool, and confirm no swap thrashing.
-- [ ] **OPS-014** Add actionable alerts for service unavailable, deployment failure, backup stale/failed, restore verification failed, and disk pressure.
+- [~] **OPS-014** Add actionable alerts for service unavailable, deployment failure, backup stale/failed, restore verification failed, and disk pressure. _Partial: the deploy workflow reports its combined deploy-and-health result to Discord, and `/api/health/ready` reports a backup older than 36 hours and disk use past 70 % and 85 %; the admin `/system` page shows that and the recent backup runs with their status. Nothing watches readiness between deploys or raises an alert from it, and there is no restore verification to alert on._
 - [~] **OPS-015** Reclaim disk after every deploy: prune dangling images/build cache and retain only the last N tagged LifeOS images (N ≥ 3, so the OPS-012 exact-image rollback target always survives). Never `docker system prune -a`, which would delete the rollback target and the PostgreSQL image. Assert free space after pruning and include reclaimed bytes in the Discord deploy report. Rationale: alerting at 70%/85% (OPS-014) detects disk pressure but nothing currently reclaims, and deploy-by-digest (OPS-010) adds an image per release on a 25 GB disk.
 
 **Gate:** Production survives container/host restart, is unreachable outside the intended tailnet ACL, and passes backup/rollback tests within the 1 GB memory envelope.
