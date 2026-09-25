@@ -132,7 +132,7 @@ export interface RelationRef {
  *
  * The grammar is `Title (Percent%20Encoded%20Path/Name%20<32hex>.csv)`, joined
  * by `, ` when multi-valued. Splitting on `, ` is wrong: 32 titles in this
- * export contain commas ("Andrea Hunt, NP", "@August 9, 2026"). Matching the
+ * export contain commas ("Mira Castellan, NP", "@August 9, 2026"). Matching the
  * parenthesised group instead makes the separator irrelevant.
  */
 export function parseRelationCell(value: string): RelationRef[] {

@@ -91,7 +91,7 @@ describe('committed import', () => {
 		const titles = (
 			await sql<{ title: string }[]>`select title from source_records order by title`
 		).map((r) => r.title);
-		expect(titles).toContain('Call Andrea Hunt, NP');
+		expect(titles).toContain('Call Mira Castellan, NP');
 		expect(titles).toContain('Multi\nline task');
 	});
 
@@ -119,7 +119,7 @@ describe('committed import', () => {
 		await run(false);
 		const task = one(
 			await sql<{ area_id: string | null }[]>`
-				select area_id from tasks where title = 'Call Andrea Hunt, NP'
+				select area_id from tasks where title = 'Call Mira Castellan, NP'
 			`
 		);
 		expect(task.area_id).not.toBeNull();
@@ -129,7 +129,7 @@ describe('committed import', () => {
 		await run(false);
 		const task = one(
 			await sql<{ do_on: unknown; is_important: boolean; status: string }[]>`
-				select do_on, is_important, status from tasks where title = 'Call Andrea Hunt, NP'
+				select do_on, is_important, status from tasks where title = 'Call Mira Castellan, NP'
 			`
 		);
 		// The whole workspace once imported with every field null while the
@@ -458,7 +458,7 @@ describe('committed import', () => {
 			`
 		);
 		expect(row).toEqual({
-			title: 'Moved to London',
+			title: 'Adopted a greyhound',
 			on_date: '2026-05-19',
 			area: 'Environment: House & Home'
 		});
@@ -555,7 +555,7 @@ describe('page bodies and their images', () => {
 		await run(false);
 		const task = one(
 			await sql<{ notes: string | null }[]>`
-				select notes from tasks where title = 'Call Andrea Hunt, NP'
+				select notes from tasks where title = 'Call Mira Castellan, NP'
 			`
 		);
 		expect(task.notes).toContain('bring the paperwork');
@@ -569,7 +569,7 @@ describe('page bodies and their images', () => {
 		const rows = await sql<{ role: string }[]>`
 			select l.role from attachment_links l
 			join source_records r on r.id = l.entity_id
-			where r.title = 'Call Andrea Hunt, NP' and l.entity_type = 'source_record'
+			where r.title = 'Call Mira Castellan, NP' and l.entity_type = 'source_record'
 		`;
 		// scan_(1).png: stopping at the first ')' produced a path matching nothing.
 		expect(rows).toHaveLength(1);

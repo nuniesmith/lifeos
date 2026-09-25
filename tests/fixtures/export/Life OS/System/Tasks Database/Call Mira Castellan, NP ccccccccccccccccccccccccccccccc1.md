@@ -1,4 +1,4 @@
-# Call Andrea Hunt, NP
+# Call Mira Castellan, NP
 
 Status: To Do
 Important: Yes
@@ -10,4 +10,4 @@ Ask about the referral: bring the paperwork.
 - [ ] Book the slot
   - [ ] Check the calendar
 
-![scan](Call%20Andrea%20Hunt%2C%20NP/scan_(1).png)
+![scan](Call%20Mira%20Castellan%2C%20NP/scan_(1).png)
