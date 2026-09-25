@@ -31,8 +31,9 @@ import type { Actions, PageServerLoad } from './$types';
  * dose history rather than read off a stored formula result; see
  * `computeDueStatus` in the repository for why.
  *
- * Linked from, but does not touch, `/health` — the landing page belongs to a
- * sibling change on this branch's neighbour.
+ * Linked from `/health`, whose one-line summary of this page comes from
+ * `medicationGlance` — the same rule as the header counts here, so a change
+ * to what "due today" means belongs in the repository, not in either page.
  */
 
 export interface MedicationView extends Medication {

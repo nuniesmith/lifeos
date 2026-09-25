@@ -529,6 +529,65 @@ export function setLabResultArchived(
 	);
 }
 
+// ─── at a glance (the Health landing page) ────────────────────────────────
+
+export interface LabGlance {
+	/** Live markers the viewer can see. */
+	markers: number;
+	/** Of those, how many have at least one live result the viewer can see. */
+	withResults: number;
+	/** Of those, how many have a latest result outside the marker's range. */
+	outOfRange: number;
+}
+
+/**
+ * How many markers currently read out of range, for `/health`.
+ *
+ * "Currently" is each marker's latest result — by `result_date`, and by entry
+ * order on a day with two draws — because an old high that has since come
+ * back down is history, not something to act on. The range itself is
+ * {@link rangeStatus}, applied here rather than restated in SQL, so the
+ * inclusive-bound rule lives in one place: SQL returns one row per marker
+ * (its bounds and its latest value, never the whole history) and the
+ * counting happens on that.
+ *
+ * Both sides are scoped as their own lists are: the marker readable and live,
+ * the result readable and live. A result the viewer cannot see — another
+ * member's private draw — cannot be anyone's "latest" here.
+ */
+export async function labGlance(sql: Queryable, viewer: Viewer): Promise<LabGlance> {
+	const rows = await sql<{ reference_low: unknown; reference_high: unknown; latest: unknown }[]>`
+		select lm.reference_low, lm.reference_high, latest.value as latest
+		from ${sql(MARKERS)} lm
+		left join lateral (
+			select lr.value
+			from ${sql(RESULTS)} lr
+			where lr.marker_id = lm.id
+			  and ${readableScope(sql, viewer, 'lr')}
+			  and lr.archived_at is null
+			order by lr.result_date desc, lr.created_at desc
+			limit 1
+		) latest on true
+		where ${readableScope(sql, viewer, 'lm')}
+		  and lm.archived_at is null
+	`;
+
+	let withResults = 0;
+	let outOfRange = 0;
+	for (const row of rows) {
+		const latest = toNumberOrNull(row.latest);
+		if (latest === null) continue;
+		withResults++;
+		const status = rangeStatus(
+			latest,
+			toNumberOrNull(row.reference_low),
+			toNumberOrNull(row.reference_high)
+		);
+		if (status === 'low' || status === 'high') outOfRange++;
+	}
+	return { markers: rows.length, withResults, outOfRange };
+}
+
 // ─── results, joined with their marker (for a visit's own page) ───────────
 
 export interface VisitLabResult {
@@ -664,6 +723,12 @@ export interface MedicalVisitFilters extends PageOptions {
 	includeArchived?: boolean;
 	/** Chronological ascending (soonest/earliest first). Default: descending. */
 	order?: 'asc' | 'desc';
+	/**
+	 * An ISO instant, inclusive: only visits at or after it. With `order:
+	 * 'asc'` and `limit: 1` this is "the next appointment" — asked of the
+	 * index rather than by fetching every visit and filtering in JS.
+	 */
+	from?: string;
 }
 
 export async function listMedicalVisits(
@@ -676,6 +741,7 @@ export async function listMedicalVisits(
 		select ${visitColumns(sql)} from ${sql(VISITS)}
 		where ${readableScope(sql, viewer, VISITS)}
 		  and ${liveScope(sql, VISITS, filters.includeArchived)}
+		  ${filters.from ? sql`and visit_at >= ${filters.from}::timestamptz` : sql``}
 		order by ${filters.order === 'asc' ? sql`visit_at asc` : sql`visit_at desc`}
 		limit ${limit} offset ${offset}
 	`;

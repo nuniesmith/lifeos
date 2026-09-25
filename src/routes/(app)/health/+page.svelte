@@ -58,6 +58,17 @@
 {/if}
 
 <div class="stack">
+	<section aria-labelledby="glance-heading">
+		<h2 id="glance-heading" class="section-title">At a glance</h2>
+		<Card flush>
+			<List>
+				{#each data.glance as entry (entry.href)}
+					<ListRow title={entry.title} meta={entry.status} href={entry.href} />
+				{/each}
+			</List>
+		</Card>
+	</section>
+
 	<div class="filters">
 		<a class="chip" class:on={!data.kind} href={resolve(appPath(filterHref(null)))}>All</a>
 		{#each data.kinds as kind (kind)}
@@ -116,9 +127,13 @@
 					{#if data.vitals.length === 0}
 						<EmptyState
 							title="No readings recorded"
-							description="Blood pressure, heart rate, sleep and water are recorded on the day itself."
+							description="Add a blood pressure, heart rate or glucose reading under Measurements and it shows up here, a row per day."
 							icon="today"
-						/>
+						>
+							{#snippet action()}
+								<Button href="/health/measurements" size="sm" icon="plus">Add a reading</Button>
+							{/snippet}
+						</EmptyState>
 					{:else}
 						<div class="scroll">
 							<table>
@@ -145,6 +160,9 @@
 								</tbody>
 							</table>
 						</div>
+						<p class="table-foot">
+							<a href={resolve(appPath('/health/measurements'))}>Add a reading</a>
+						</p>
 					{/if}
 				</Card>
 			</section>
@@ -282,6 +300,18 @@
 	tbody tr + tr th,
 	tbody tr + tr td {
 		border-top: 1px solid var(--c-border);
+	}
+	.table-foot {
+		margin: 0;
+		padding: 0 var(--sp-3);
+		border-top: 1px solid var(--c-border);
+		font-size: var(--fs-sm);
+	}
+	/* A thumb-sized target, not just the height of a line of small text. */
+	.table-foot a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--tap);
 	}
 
 	.add {
