@@ -22,8 +22,35 @@
 		goal: 'Goal',
 		area: 'Area',
 		habit: 'Habit',
-		tag: 'Tag'
+		tag: 'Tag',
+		daily_log: 'Journal',
+		important_date: 'Date',
+		significant_event: 'Event',
+		life_assessment: 'Assessment',
+		medication: 'Medication',
+		medical_visit: 'Visit',
+		lab_marker: 'Lab marker',
+		lab_result: 'Lab result',
+		health_measurement: 'Reading',
+		health_term: 'Health term',
+		recipe: 'Recipe',
+		ingredient: 'Ingredient',
+		meal_plan: 'Meal plan',
+		prep_task: 'Prep',
+		library_item: 'Library',
+		person: 'Person',
+		wishlist_item: 'Wishlist',
+		media_item: 'Watchlist',
+		bill: 'Bill'
 	};
+
+	/**
+	 * A chip for each kind that has something archived, and for the one being
+	 * filtered by even when it has nothing (so /bin still shows "Task 0").
+	 * With six kinds a dimmed zero was information; with two dozen, a chip for
+	 * every one wrapped to half a phone screen of zeros before the first record.
+	 */
+	const chips = $derived(data.kinds.filter((kind) => data.counts[kind] > 0 || data.kind === kind));
 
 	const filterHref = (kind: Kind | null): string => {
 		const query = data.search ? `q=${encodeURIComponent(data.search)}` : '';
@@ -73,7 +100,7 @@
 			<a class="chip" class:on={!data.kind} href={resolve(appPath(filterHref(null)))}>
 				All <span class="tally">{data.total}</span>
 			</a>
-			{#each data.kinds as kind (kind)}
+			{#each chips as kind (kind)}
 				<a
 					class="chip"
 					class:on={data.kind === kind}
@@ -188,13 +215,15 @@
 		color: var(--c-text-muted);
 		font-size: var(--fs-xs);
 		text-decoration: none;
+		/* A two-word label wraps as a whole chip, never inside one. */
+		white-space: nowrap;
 	}
 	.chip.on {
 		border-color: var(--c-accent);
 		background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 		color: var(--c-text);
 	}
-	/* Dimmed rather than hidden: a kind with nothing archived is information. */
+	/* Only the kind being filtered by can be empty; it stays, dimmed. */
 	.chip.empty {
 		opacity: 0.55;
 	}
