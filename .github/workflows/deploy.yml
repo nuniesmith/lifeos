@@ -184,7 +184,16 @@ jobs:
             fi
             ln -sfn /srv/lifeos/.env "$HOME/lifeos/.env"
 
-            # Private packages need a pull credential on the server.
+            # Private packages need a pull credential on the server -- in a
+            # Docker config of LifeOS's own, never the account's default one.
+            # The token is this job's and expires with it, but `docker login`
+            # keeps it. On a host whose deploy account is shared (freddy's
+            # `actions` also deploys freddy itself), a login left in
+            # ~/.docker/config.json made every later ghcr.io pull by that
+            # account present a dead credential and get DENIED -- public images
+            # included -- and on 2026-09-25 that took freddy's whole stack down.
+            export DOCKER_CONFIG="$HOME/.docker-lifeos"
+            mkdir -p "$DOCKER_CONFIG" && chmod 700 "$DOCKER_CONFIG"
             if [ -n '${{ steps.credentials.outputs.registry_token }}' ]; then
               printf '%s' '${{ steps.credentials.outputs.registry_token }}' | base64 --decode \
                 | docker login ghcr.io -u "$(printf '%s' '${{ steps.credentials.outputs.registry_user }}' | base64 --decode)" --password-stdin
@@ -192,6 +201,9 @@ jobs:
           deploy-command: |
             set -Eeuo pipefail
             cd "$HOME/lifeos"
+            # The same config the pre-deploy logged into (see above); each phase
+            # is a separate SSH session, so it has to be set again here.
+            export DOCKER_CONFIG="$HOME/.docker-lifeos"
             LIFEOS_IMAGE="${{ steps.image.outputs.ref }}" ./scripts/deploy.sh
 
       # A hard gate: deploy.sh already rolls back on failure, so an unhealthy
