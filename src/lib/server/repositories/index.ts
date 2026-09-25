@@ -50,6 +50,7 @@ export * from './important-dates';
 export * from './labs-visits';
 export * from './library';
 export * from './media';
+export * from './medications';
 export * from './projects';
 export * from './reflection';
 export * from './review';

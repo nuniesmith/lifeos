@@ -13,6 +13,7 @@ import {
 	parseSourceRange
 } from './csv.ts';
 import { mapLabMarker, mapLabResult, mapMedicalVisit } from './mappers/labs-visits.ts';
+import { applyMedicationDose, upsertMedication } from './mappers/medications.ts';
 
 /**
  * Promotion of staged rows into domain tables (IMP-007, IMP-010).
@@ -557,14 +558,23 @@ async function applyRelation(
 		}
 
 		case 'daily_logs->health_vocabulary':
-			// Physical Symptoms, Mood/Feelings, Vitamins and Energy all land
-			// here. Which list a term came from is the term's own `kind`, so the
-			// property name does not need inspecting — a day simply logged it.
+			// Physical Symptoms, Mood/Feelings and Energy all land here. Which
+			// list a term came from is the term's own `kind`, so the property
+			// name does not need inspecting — a day simply logged it. Vitamins
+			// used to be a fourth kind here too; migration 0018 gave it its own
+			// table, so "Medications & Vitamins" is the case below instead.
 			await sql`
 				insert into daily_log_health (daily_log_id, vocabulary_id)
 				values (${from.id}, ${to.id}) on conflict do nothing
 			`;
 			return 'daily_log.health';
+
+		case 'daily_logs->medications':
+			// "Medications & Vitamins" on the Daily Log. `applyMedicationDose`
+			// needs the log's date and the medication's own schedule to decide
+			// the slot, so it stays one INSERT ... SELECT rather than fetching
+			// either row separately just to hand its date/schedule back here.
+			return (await applyMedicationDose(sql, from.id, to.id)) ? 'medication.dose' : null;
 
 		case 'recipes->ingredients':
 			await sql`
@@ -935,10 +945,13 @@ const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
 /**
  * The health and journal vocabularies (migration 0011).
  *
- * Six Notion databases — Symptoms, Mood/Feelings, Vitamins, Energy Level,
- * Activity, Exercise — that are all the same shape: a list of named things
- * related back to the Daily Log. One factory rather than six near-identical
- * mappers, so a seventh list costs a line.
+ * Five Notion databases — Symptoms, Mood/Feelings, Energy Level, Activity,
+ * Exercise — that are all the same shape: a list of named things related
+ * back to the Daily Log. One factory rather than five near-identical
+ * mappers, so a sixth list costs a line. Vitamins used to be here too; it
+ * outgrew "a list of named things" (a medication has a dose, a brand and a
+ * schedule) and got its own table in migration 0018 — see
+ * `mappers/medications.ts`.
  *
  * `attributeColumns` are the per-kind extras that do not deserve a column
  * each: Energy Level carries an approach, a mantra and what to watch for;
@@ -1559,7 +1572,7 @@ const MAPPERS: Record<string, Mapper> = {
 	'Daily Log Database': upsertDailyLogs,
 	'Symptoms Database': vocabularyMapper('symptom'),
 	'Mood Feelings Database': vocabularyMapper('mood', ['Type', 'What Helps?']),
-	'Vitamins Database': vocabularyMapper('vitamin', ['Running Low']),
+	'Vitamins Database': mapper('medications', upsertMedication),
 	'Energy Level Database': vocabularyMapper('energy', [
 		'Approach',
 		'Mantra',

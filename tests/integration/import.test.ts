@@ -844,3 +844,305 @@ describe('exports whose shape changed between imports', () => {
 		expect(summary.issues.map((i) => i.code)).not.toContain('row_without_page_id');
 	});
 });
+
+describe('medications import (migration 0018)', () => {
+	// The real database id (`DATABASE_NAMES_BY_ID`'s 'Vitamins Database'), so
+	// this exercises the actual lookup the live export goes through. Every
+	// name, dose and date below is invented for this test.
+	const VITAMINS = {
+		name: 'Vitamins & Medications Database',
+		id: '3bc879a556f1808c8f0ed230d152b08f'
+	};
+	const DAILY_LOG = { name: 'Daily Log Database', id: '3b7879a556f180788365fc81070ab3bf' };
+	const page = (n: number) => 'd'.repeat(28) + n.toString(16).padStart(4, '0');
+
+	interface Row {
+		page?: string;
+		cells: Record<string, string>;
+		body?: string;
+	}
+	interface Database {
+		name: string;
+		id: string;
+		headers: string[];
+		rows: Row[];
+	}
+
+	const cell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+	const roots: string[] = [];
+
+	async function exportOf(databases: Database[]): Promise<string> {
+		const root = await mkdtemp(join(tmpdir(), 'lifeos-meds-'));
+		roots.push(root);
+		const dir = join(root, 'Life OS', 'System');
+		for (const db of databases) {
+			await mkdir(join(dir, db.name), { recursive: true });
+			const lines = [db.headers, ...db.rows.map((r) => db.headers.map((h) => r.cells[h] ?? ''))];
+			await writeFile(
+				join(dir, `${db.name} ${db.id}_all.csv`),
+				'﻿' + lines.map((l) => l.map(cell).join(',')).join('\n')
+			);
+			for (const r of db.rows) {
+				if (!r.page) continue;
+				const title = r.cells[db.headers[0]!]!;
+				const props = db.headers
+					.slice(1)
+					.filter((h) => r.cells[h])
+					.map((h) => `${h}: ${r.cells[h]}`);
+				await writeFile(
+					join(dir, db.name, `${title} ${r.page}.md`),
+					`# ${title}\n\n${props.join('\n')}\n\n${r.body ?? ''}\n`
+				);
+			}
+		}
+		return root;
+	}
+
+	const importFrom = (root: string) =>
+		runImport(sql, {
+			root,
+			householdId,
+			ownerUserId: userId,
+			startedBy: userId,
+			dryRun: false,
+			uploadDir
+		});
+
+	afterAll(async () => {
+		for (const root of roots) await rm(root, { recursive: true, force: true });
+	});
+
+	const MED_HEADERS = [
+		'Name',
+		'Type',
+		'Dose',
+		'Unit',
+		'Brand',
+		'Routine',
+		'Scheduled Weekday',
+		'Frequency',
+		'Start Date',
+		'End Date',
+		'Status',
+		'Running Low',
+		'Notes',
+		'Archive',
+		'Essential Calcium',
+		'Sodium'
+	];
+
+	it('maps type, dose, schedule and running-low into a medication row', async () => {
+		const morning = page(1);
+		const promoted = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						...VITAMINS,
+						headers: MED_HEADERS,
+						rows: [
+							{
+								page: morning,
+								cells: {
+									Name: 'Testamine',
+									Type: 'Prescription',
+									Dose: '10',
+									Unit: 'mg',
+									Brand: 'Acme',
+									Routine: 'Daily - AM',
+									Status: 'Taking',
+									'Running Low': 'Yes',
+									Notes: 'take with food'
+								}
+							}
+						]
+					}
+				])
+			)
+		);
+
+		expect(promoted.counts.medications).toBe(1);
+		const row = one(
+			await sql<
+				{
+					type: string;
+					dose: string;
+					unit: string;
+					brand: string;
+					schedule_kind: string;
+					status: string;
+					running_low: boolean;
+					notes: string | null;
+				}[]
+			>`
+				select type, dose, unit, brand, schedule_kind, status, running_low, notes
+				from medications where notion_page_id = ${uuidOf(morning)}
+			`
+		);
+		expect(row).toMatchObject({
+			type: 'prescription',
+			dose: '10',
+			unit: 'mg',
+			brand: 'Acme',
+			schedule_kind: 'daily_am',
+			status: 'taking',
+			running_low: true
+		});
+		expect(row.notes).toContain('take with food');
+	});
+
+	it('reads a scheduled weekday, and derives an interval from Frequency when there is no weekday', async () => {
+		const weekly = page(2);
+		const monthly = page(3);
+		await importFrom(
+			await exportOf([
+				{
+					...VITAMINS,
+					headers: MED_HEADERS,
+					rows: [
+						{
+							page: weekly,
+							cells: {
+								Name: 'Weeklamine',
+								Type: 'Prescription',
+								Routine: 'Scheduled',
+								'Scheduled Weekday': 'Friday',
+								Frequency: 'Weekly'
+							}
+						},
+						{
+							page: monthly,
+							cells: {
+								Name: 'Monthalol',
+								Type: 'Prescription',
+								Routine: 'Scheduled',
+								Frequency: 'Monthly'
+							}
+						}
+					]
+				}
+			])
+		);
+
+		const rows = await sql<
+			{ notion_page_id: string; scheduled_weekday: number | null; interval_days: number | null }[]
+		>`
+			select notion_page_id, scheduled_weekday, interval_days from medications
+			where notion_page_id in (${uuidOf(weekly)}, ${uuidOf(monthly)})
+		`;
+		const byId = new Map(rows.map((r) => [r.notion_page_id, r]));
+		expect(byId.get(uuidOf(weekly))).toMatchObject({ scheduled_weekday: 5, interval_days: null });
+		expect(byId.get(uuidOf(monthly))).toMatchObject({ scheduled_weekday: null, interval_days: 30 });
+	});
+
+	it('falls back to vitamin / as_needed for a blank Type or Routine rather than refusing the row', async () => {
+		const blank = page(4);
+		const promoted = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						...VITAMINS,
+						headers: MED_HEADERS,
+						rows: [{ page: blank, cells: { Name: 'Unlabelledine' } }]
+					}
+				])
+			)
+		);
+		expect(promoted.refusedByMapper).toEqual([]);
+		const row = one(
+			await sql<{ type: string; schedule_kind: string }[]>`
+				select type, schedule_kind from medications where notion_page_id = ${uuidOf(blank)}
+			`
+		);
+		expect(row).toMatchObject({ type: 'vitamin', schedule_kind: 'as_needed' });
+	});
+
+	it('turns the Daily Log relation into a dose on the log’s own date', async () => {
+		const med = page(5);
+		const logPage = page(6);
+		const promoted = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						...VITAMINS,
+						headers: MED_HEADERS,
+						rows: [
+							{
+								page: med,
+								cells: { Name: 'Relatedine', Type: 'Supplement', Routine: 'Daily - PM' }
+							}
+						]
+					},
+					{
+						...DAILY_LOG,
+						headers: ['Day', 'Date', 'Medications & Vitamins'],
+						rows: [
+							{
+								page: logPage,
+								cells: {
+									Day: 'Sep 24',
+									Date: 'September 24, 2026',
+									'Medications & Vitamins': `Relatedine (${VITAMINS.name}/Relatedine ${med}.md)`
+								}
+							}
+						]
+					}
+				])
+			)
+		);
+
+		expect(promoted.relations['medication.dose']).toBe(1);
+		const dose = one(
+			await sql<{ on_date: string; slot: string }[]>`
+				select d.on_date::text as on_date, d.slot
+				from medication_doses d
+				join medications m on m.id = d.medication_id
+				where m.notion_page_id = ${uuidOf(med)}
+			`
+		);
+		expect(dose).toMatchObject({ on_date: '2026-09-24', slot: 'pm' });
+	});
+
+	it('does not duplicate a dose on a rerun', async () => {
+		const med = page(7);
+		const logPage = page(8);
+		const build = () =>
+			exportOf([
+				{
+					...VITAMINS,
+					headers: MED_HEADERS,
+					rows: [{ page: med, cells: { Name: 'Rerunnable', Type: 'OTC', Routine: 'As Needed' } }]
+				},
+				{
+					...DAILY_LOG,
+					headers: ['Day', 'Date', 'Medications & Vitamins'],
+					rows: [
+						{
+							page: logPage,
+							cells: {
+								Day: 'Sep 24',
+								Date: 'September 24, 2026',
+								'Medications & Vitamins': `Rerunnable (${VITAMINS.name}/Rerunnable ${med}.md)`
+							}
+						}
+					]
+				}
+			]);
+
+		await importFrom(await build());
+		await importFrom(await build());
+
+		const count = countOf(
+			await sql<{ count: number }[]>`
+				select count(*)::int from medication_doses d
+				join medications m on m.id = d.medication_id
+				where m.notion_page_id = ${uuidOf(med)}
+			`
+		);
+		expect(count).toBe(1);
+	});
+});
+
+/** `page()` above returns a bare 32-hex id; the database stores it as a uuid. */
+function uuidOf(hex: string): string {
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
