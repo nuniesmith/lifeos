@@ -36,6 +36,11 @@ export interface PromoteOptions {
 	householdId: string;
 	ownerUserId: string | null;
 	createdBy: string | null;
+	/**
+	 * The zone Notion's zone-less date-times are read in. Defaults to the
+	 * household's own; see sourceInstant.
+	 */
+	timeZone?: string;
 }
 
 export interface PromoteSummary {
@@ -123,19 +128,69 @@ const int = (row: StagedRow, column: string): number | null => {
  * wrong for "last interaction" — the library's rediscover ordering is the
  * only thing that makes an old note findable again.
  */
-const timestamp = (row: StagedRow, column: string): string | null => {
-	const raw = (row.raw[column] ?? '').trim();
-	if (!raw) return null;
+const timestamp = (row: StagedRow, column: string, o: PromoteOptions): string | null =>
+	sourceInstant(row.raw[column] ?? '', o.timeZone ?? 'America/Toronto');
 
-	// Notion writes the zone as a trailing "(UTC)", which Date.parse ignores
-	// entirely — it then reads the clock time as LOCAL and every timestamp
-	// shifts by the server's offset. Rewriting the marker into a form the
-	// parser understands is what makes the value mean what it says.
-	const zoned = /\(UTC\)\s*$/i.test(raw) ? `${raw.replace(/\(UTC\)\s*$/i, '').trim()} UTC` : raw;
+/**
+ * The instant a Notion date-time names, as an ISO string.
+ *
+ * Notion writes date-times without a zone ("May 28, 2026", "September 20,
+ * 2026 8:58 PM"): they mean the workspace's wall clock, which is the
+ * household's zone. Date.parse reads such a string in the PROCESS zone
+ * instead, so the same import stored midnight Toronto from one host and 8 pm
+ * the previous evening from a UTC container -- 30 dates, 2026-09-25, each
+ * displayed a day early. So the wall-clock parts are read zone-free and then
+ * placed in `timeZone`. Only a value that names its own zone is read as
+ * written.
+ */
+export function sourceInstant(raw: string, timeZone: string): string | null {
+	const text = raw.trim();
+	if (!text) return null;
 
-	const parsed = Date.parse(zoned);
-	return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
-};
+	// Notion's own marker is a trailing "(UTC)", which Date.parse ignores
+	// entirely; rewritten, the value means what it says.
+	const utcMarked = /\(UTC\)\s*$/i.test(text);
+	const explicitZone = utcMarked || /(?:Z|[+-]\d{2}:?\d{2}|\bUTC|\bGMT)\s*$/i.test(text);
+	if (explicitZone) {
+		const parsed = Date.parse(utcMarked ? `${text.replace(/\(UTC\)\s*$/i, '').trim()} UTC` : text);
+		return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+	}
+
+	// Pinning the string to UTC reads its wall-clock parts without a zone...
+	const wall = Date.parse(`${text} UTC`);
+	if (!Number.isFinite(wall)) return null;
+	// ...which are then placed in the household's zone. The offset is taken at
+	// the wall time and re-taken once at the result, which settles every
+	// instant except the hour a DST change skips or repeats.
+	let instant = wall - zoneOffset(wall, timeZone);
+	instant = wall - zoneOffset(instant, timeZone);
+	return new Date(instant).toISOString();
+}
+
+/** How far `timeZone` is ahead of UTC at `instant`, in milliseconds. */
+function zoneOffset(instant: number, timeZone: string): number {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone,
+		hourCycle: 'h23',
+		year: 'numeric',
+		month: 'numeric',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: 'numeric',
+		second: 'numeric'
+	}).formatToParts(new Date(instant));
+	const part = (type: Intl.DateTimeFormatPartTypes) =>
+		Number(parts.find((p) => p.type === type)?.value);
+	const asUtc = Date.UTC(
+		part('year'),
+		part('month') - 1,
+		part('day'),
+		part('hour'),
+		part('minute'),
+		part('second')
+	);
+	return asUtc - Math.floor(instant / 1000) * 1000;
+}
 
 /** Decimal readings such as a blood glucose of 6.2, which `int` would truncate. */
 const numeric = (row: StagedRow, column: string): number | null => {
@@ -224,6 +279,16 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 
 	const carriedColumns = await carryForwardRemovedColumns(sql, options.importRunId, rows);
 
+	// Every mapper reads zone-less date-times in the household's zone, not the
+	// zone of whatever machine happens to run the import.
+	const [household] = await sql<{ timezone: string }[]>`
+		select timezone from households where id = ${options.householdId}
+	`;
+	const zoned: PromoteOptions = {
+		...options,
+		timeZone: options.timeZone ?? household?.timezone ?? 'America/Toronto'
+	};
+
 	const counts: Record<string, number> = {};
 	const relations: Record<string, number> = {};
 	let skippedWithoutPageId = 0;
@@ -279,7 +344,7 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 			}
 			// Archived rows keep their content but arrive archived, so nothing
 			// from the source is lost and nothing stale shows up in a live view.
-			const id = await mapper(sql, row, options);
+			const id = await mapper(sql, row, zoned);
 			if (!id) {
 				refused[database] = (refused[database] ?? 0) + 1;
 				continue;
@@ -1075,7 +1140,7 @@ const upsertLibrary = mapper('library_items', async (sql, row, o) => {
 		        ${text(row, 'Format')},
 		        ${matchOption(text(row, 'Status'), LIBRARY_STATUS, 'inbox')},
 		        ${int(row, 'Highlights') ?? 0},
-		        ${timestamp(row, 'Last Interaction')}::timestamptz,
+		        ${timestamp(row, 'Last Interaction', o)}::timestamptz,
 		        ${bool(row, 'Favourite?')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
 		        ${bool(row, 'Archive?') ? new Date().toISOString() : null}::timestamptz)
@@ -1255,7 +1320,7 @@ const upsertMedia = mapper('media_items', async (sql, row, o) => {
 		        ${text(row, 'Why I Saved This?')},
 		        ${bool(row, 'Favourite')}, ${bool(row, 'Watch Again?')},
 		        ${date(row, 'Date Started')}, ${date(row, 'Date FInished')},
-		        ${timestamp(row, 'Last Watched')}::timestamptz,
+		        ${timestamp(row, 'Last Watched', o)}::timestamptz,
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
 		on conflict (notion_page_id) do update set
 			name = excluded.name, media_type = excluded.media_type, status = excluded.status,
