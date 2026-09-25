@@ -131,9 +131,10 @@
 						meta={`Archived ${when(record.archivedAt)}`}
 						muted
 					>
-						{#snippet lead()}
-							<Badge tone="neutral">{LABELS[record.kind]}</Badge>
-						{/snippet}
+						<!-- Under the title, not beside it: with the Restore button on
+						     the right, a "Medication" badge on the left left a phone
+						     too narrow a column to fit a name without breaking it. -->
+						<Badge tone="neutral">{LABELS[record.kind]}</Badge>
 						{#snippet trail()}
 							<form method="POST" action="?/restore" use:enhance>
 								<input type="hidden" name="kind" value={record.kind} />
