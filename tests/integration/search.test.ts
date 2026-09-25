@@ -12,6 +12,7 @@ import {
 	createBill,
 	createDailyLog,
 	createHabit,
+	createHealthMeasurement,
 	createHealthTerm,
 	createIngredient,
 	createPerson,
@@ -153,6 +154,14 @@ describe('every search result links somewhere real', () => {
 		ok(await createWishlistItem(sql, owner, { name: `${word} hutch` }), 'wishlist item');
 		ok(await createBill(sql, owner, { name: `${word} insurance` }), 'bill');
 		ok(await createHealthTerm(sql, owner, { kind: 'symptom', name: `${word} ache` }), 'term');
+		ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-04-03T08:00',
+				weight: 70,
+				notes: `${word} reading`
+			}),
+			'health measurement'
+		);
 		// Media items are import-only — there is no create path — so this one is
 		// inserted directly rather than skipped, which would leave its branch
 		// unchecked.

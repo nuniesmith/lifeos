@@ -321,16 +321,17 @@ const main = async () => {
 	}
 
 	// ─── Daily log readings: numbers that must survive as numbers ───────────
+	//
+	// Blood Glucose / Systolic BP / Diastolic BP / Heart Rate are checked in
+	// the Health Measurements block below instead — migration 0019 moved them
+	// off daily_logs, and `upsertDailyLogs` no longer reads any of the four
+	// even from an export old enough to still have the columns.
 	{
 		const rows = await rowsOf(files.get('Daily Log Database'));
 		// `Physical Symptoms ` carries a trailing space in the export's header,
 		// and so does `Time Spent Reading `. Reading by the obvious name returns
 		// undefined for every row and reports a clean zero.
 		const READINGS = {
-			'Blood Glucose': 'blood_glucose',
-			'Systolic BP': 'systolic_bp',
-			'Diastolic BP': 'diastolic_bp',
-			'Heart Rate': 'heart_rate',
 			'Sleep Score': 'sleep_score',
 			Water: 'water',
 			Caffeine: 'caffeine'
@@ -360,6 +361,52 @@ const main = async () => {
 			}
 		}
 		report('Daily log readings (numbers stay numbers)', checked, wrong);
+	}
+
+	// ─── Health measurements: numbers that must survive as numbers ─────────
+	//
+	// Matched by the reading's own DATE, not by an exact instant: the source
+	// (and `sourceInstant`) can put more than one reading on a day, so this
+	// asks "does the source's value for this day and column appear somewhere
+	// among that day's stored readings" rather than assuming a 1:1 row match —
+	// looser than the daily-log check above on purpose, for the same reason
+	// `recentVitals` picks per-metric rather than per-row.
+	{
+		const rows = await rowsOf(files.get('Health Measurements Database'));
+		const READINGS = {
+			'Systolic BP': 'systolic',
+			'Diastolic BP': 'diastolic',
+			'Heart Rate': 'heart_rate',
+			'Blood Glucose': 'glucose',
+			Weight: 'weight',
+			'QT Interval': 'qt_interval'
+		};
+		const columns = Object.values(READINGS).join(', ');
+		const stored = new Map();
+		for (const r of await sql`select measured_at::date::text as d, ${sql.unsafe(columns)} from health_measurements`) {
+			if (!stored.has(r.d)) stored.set(r.d, []);
+			stored.get(r.d).push(r);
+		}
+		let checked = 0;
+		const wrong = [];
+		for (const row of rows) {
+			const date = (row['Date & Time'] ?? '').trim();
+			const parsed = date ? parseSourceDate(date) : null;
+			if (!parsed) continue;
+			const candidates = stored.get(parsed.date) ?? [];
+			for (const [column, field] of Object.entries(READINGS)) {
+				const raw = (row[column] ?? '').trim();
+				if (!raw || !/^-?\d+(\.\d+)?$/.test(raw)) continue;
+				checked++;
+				const want = Number(raw);
+				const matches = candidates.some(
+					(c) => c[field] !== null && Math.abs(Number(c[field]) - want) <= 0.005
+				);
+				if (!matches)
+					wrong.push(`${parsed.date} ${column}: source ${want}, not found among stored readings`);
+			}
+		}
+		report('Health measurements (numbers stay numbers)', checked, wrong);
 	}
 
 	// ─── Daily log -> health terms ─────────────────────────────────────────

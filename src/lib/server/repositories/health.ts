@@ -451,7 +451,19 @@ export interface VitalsReading {
 	water: number | null;
 }
 
-/** The scalar readings, most recent first, for the days that have any. */
+/**
+ * The scalar readings, most recent first, for the days that have any.
+ *
+ * Blood glucose, systolic/diastolic BP and heart rate moved to
+ * `health_measurements` (migration 0019); heart rate variability, sleep score
+ * and water stayed on `daily_logs`. This still returns one row per DAY, not
+ * per measurement, because the caller (`/health`) keys its table on `onDate`
+ * — a day with two blood-pressure readings must not become two rows. Where a
+ * day has more than one reading of the same kind, the most recent one wins,
+ * picked with `array_agg(... order by measured_at desc)` rather than `max()`:
+ * `max` would pick the largest NUMBER, which for blood pressure is not the
+ * same thing as the latest reading.
+ */
 export async function recentVitals(
 	sql: Queryable,
 	viewer: Viewer,
@@ -469,15 +481,41 @@ export async function recentVitals(
 			water: unknown;
 		}[]
 	>`
-		select on_date::text as on_date, blood_glucose, systolic_bp, diastolic_bp,
-		       heart_rate, heart_rate_variability, sleep_score, water
-		from daily_logs
-		where household_id = ${viewer.householdId}::uuid
-		  and owner_user_id = ${viewer.userId}::uuid
-		  and archived_at is null
-		  and (blood_glucose is not null or systolic_bp is not null or heart_rate is not null
-		       or heart_rate_variability is not null or sleep_score is not null or water is not null)
-		order by on_date desc
+		with measured as (
+			select m.household_id, m.owner_user_id, m.measured_at,
+			       m.glucose, m.systolic, m.diastolic, m.heart_rate,
+			       (m.measured_at at time zone h.timezone)::date as on_date
+			from health_measurements m
+			join households h on h.id = m.household_id
+			where m.household_id = ${viewer.householdId}::uuid
+			  and m.owner_user_id = ${viewer.userId}::uuid
+			  and m.archived_at is null
+		),
+		by_day as (
+			select on_date,
+			       (array_agg(glucose order by measured_at desc) filter (where glucose is not null))[1]
+			           as blood_glucose,
+			       (array_agg(systolic order by measured_at desc) filter (where systolic is not null))[1]
+			           as systolic_bp,
+			       (array_agg(diastolic order by measured_at desc) filter (where diastolic is not null))[1]
+			           as diastolic_bp,
+			       (array_agg(heart_rate order by measured_at desc) filter (where heart_rate is not null))[1]
+			           as heart_rate
+			from measured
+			group by on_date
+		)
+		select coalesce(by_day.on_date, d.on_date)::text as on_date,
+		       by_day.blood_glucose, by_day.systolic_bp, by_day.diastolic_bp, by_day.heart_rate,
+		       d.heart_rate_variability, d.sleep_score, d.water
+		from by_day
+		full join daily_logs d
+		  on d.on_date = by_day.on_date
+		 and d.household_id = ${viewer.householdId}::uuid
+		 and d.owner_user_id = ${viewer.userId}::uuid
+		 and d.archived_at is null
+		where by_day.on_date is not null
+		   or (d.heart_rate_variability is not null or d.sleep_score is not null or d.water is not null)
+		order by coalesce(by_day.on_date, d.on_date) desc
 		limit ${Math.min(Math.max(limit, 1), 365)}
 	`;
 

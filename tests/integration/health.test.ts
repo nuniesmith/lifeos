@@ -224,12 +224,17 @@ describe('logging against a day', () => {
 		expect(frequencies[1]).toMatchObject({ name: 'Headache', days: 1 });
 	});
 
-	it('reports the readings a day carried', async () => {
-		const day = await log(owner, '2026-08-08');
+	it('reports the readings a day carried, whichever table they live on', async () => {
+		// Blood glucose, systolic BP and heart rate live on health_measurements
+		// since migration 0019; water stays on daily_logs. recentVitals has to
+		// merge both into the one row-per-day the page renders.
+		await log(owner, '2026-08-08');
 		await sql`
-			update daily_logs set blood_glucose = 6.2, systolic_bp = 137, heart_rate = 90, water = 32
-			where id = ${day.id}::uuid
+			insert into health_measurements (household_id, owner_user_id, measured_at, glucose, systolic, heart_rate)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, '2026-08-08T12:00:00Z'::timestamptz,
+			        6.2, 137, 90)
 		`;
+		await sql`update daily_logs set water = 32 where household_id = ${owner.householdId}::uuid and on_date = '2026-08-08'`;
 
 		const vitals = await recentVitals(sql, owner);
 		expect(vitals).toHaveLength(1);
@@ -241,6 +246,33 @@ describe('logging against a day', () => {
 			heartRate: 90,
 			water: 32
 		});
+	});
+
+	it('picks the most recent reading of the day when there is more than one', async () => {
+		// health_measurements is one row per EVENT, not per day — a day can
+		// carry a morning and an evening reading. recentVitals still owes the
+		// page one row per day, and the day's own number has to be the latest
+		// one, not whichever `max()` would have picked.
+		await sql`
+			insert into health_measurements (household_id, owner_user_id, measured_at, systolic)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, '2026-08-08T08:00:00Z'::timestamptz, 110)
+		`;
+		await sql`
+			insert into health_measurements (household_id, owner_user_id, measured_at, systolic)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, '2026-08-08T20:00:00Z'::timestamptz, 130)
+		`;
+
+		const vitals = await recentVitals(sql, owner);
+		expect(vitals).toHaveLength(1);
+		expect(vitals[0]?.systolicBp).toBe(130);
+	});
+
+	it('excludes an archived measurement', async () => {
+		await sql`
+			insert into health_measurements (household_id, owner_user_id, measured_at, systolic, archived_at)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, '2026-08-08T08:00:00Z'::timestamptz, 110, now())
+		`;
+		expect(await recentVitals(sql, owner)).toEqual([]);
 	});
 
 	it('skips days with no readings at all', async () => {
@@ -281,8 +313,10 @@ describe('privacy', () => {
 	});
 
 	it('never returns the other member’s readings', async () => {
-		const day = await log(partner, '2026-08-08');
-		await sql`update daily_logs set heart_rate = 90 where id = ${day.id}::uuid`;
+		await sql`
+			insert into health_measurements (household_id, owner_user_id, measured_at, heart_rate)
+			values (${partner.householdId}::uuid, ${partner.userId}::uuid, '2026-08-08T12:00:00Z'::timestamptz, 90)
+		`;
 
 		expect(await recentVitals(sql, owner)).toEqual([]);
 		expect(await recentVitals(sql, partner)).toHaveLength(1);

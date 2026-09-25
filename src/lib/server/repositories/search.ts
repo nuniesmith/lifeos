@@ -35,7 +35,8 @@ export const SEARCH_KINDS = [
 	'habit',
 	'wishlist_item',
 	'bill',
-	'health_term'
+	'health_term',
+	'health_measurement'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -278,6 +279,27 @@ export async function search(
 			       (t.archived_at is not null) as archived,
 			       '/journal/' || to_char(t.on_date, 'YYYY-MM-DD') as path
 			from daily_logs t
+			where t.household_id = ${viewer.householdId}::uuid
+			  and t.owner_user_id = ${viewer.userId}::uuid
+		`);
+	}
+
+	if (wanted('health_measurement')) {
+		// Owner-scoped like daily_log, for the same reason: a reading is a fact
+		// about one person's body. There is no title column (migration 0019
+		// deliberately stores no derived summary), so the day stands in, exactly
+		// as it does for daily_log above.
+		branches.push(sql`
+			select 'health_measurement' as kind, t.id,
+			       'Reading — ' || to_char(t.measured_at at time zone h.timezone, 'FMDay D Mon YYYY') as title,
+			       to_tsvector('english',
+			           coalesce(t.bp_context,'') || ' ' || coalesce(t.glucose_context,'') || ' ' ||
+			           coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.bp_context, t.glucose_context, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/health/measurements' as path
+			from health_measurements t
+			join households h on h.id = t.household_id
 			where t.household_id = ${viewer.householdId}::uuid
 			  and t.owner_user_id = ${viewer.userId}::uuid
 		`);

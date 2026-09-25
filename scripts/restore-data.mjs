@@ -72,6 +72,8 @@ const TABLES = [
 	// preserved verbatim, so medications only has to land before its doses.
 	'medications',
 	'medication_doses',
+	// migration 0019: after daily_logs, whose id it optionally carries.
+	'health_measurements',
 	'ingredients',
 	'recipes',
 	'meal_plans',
@@ -126,6 +128,8 @@ const ORDER = [
 	// preserved verbatim, so medications only has to land before its doses.
 	'medications',
 	'medication_doses',
+	// migration 0019: after daily_logs, whose id it optionally carries.
+	'health_measurements',
 	'ingredients',
 	'recipes',
 	'meal_plans',
