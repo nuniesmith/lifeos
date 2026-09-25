@@ -93,6 +93,39 @@ export function requiredInt(
 	return n;
 }
 
+/** A decimal reading such as a weight of 154.2, which `optionalInt` would truncate. */
+export function optionalNumber(
+	value: unknown,
+	field: string,
+	bounds: { min?: number; max?: number } = {}
+): number | null {
+	if (value === null || value === undefined || value === '') return null;
+	const n = typeof value === 'number' ? value : Number(value);
+	if (!Number.isFinite(n)) throw new InvalidInput(`${field} must be a number`);
+	if (bounds.min !== undefined && n < bounds.min) {
+		throw new InvalidInput(`${field} must be at least ${bounds.min}`);
+	}
+	if (bounds.max !== undefined && n > bounds.max) {
+		throw new InvalidInput(`${field} must be at most ${bounds.max}`);
+	}
+	return n;
+}
+
+const LOCAL_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+
+/**
+ * An `<input type="datetime-local">` value: a wall clock with no zone of its
+ * own. Accepted as text and handed to the caller to place in whichever zone
+ * is the right one for the record being saved — see `toInstant` in
+ * `health-measurements.ts` for why that decision does not belong here.
+ */
+export function requiredLocalDateTime(value: unknown, field: string): string {
+	if (typeof value !== 'string' || !LOCAL_DATE_TIME.test(value)) {
+		throw new InvalidInput(`${field} must be a valid date and time`);
+	}
+	return value;
+}
+
 /** A fraction between 0 and 1, for the manual progress override on goals. */
 export function optionalFraction(value: unknown, field: string): number | null {
 	if (value === null || value === undefined || value === '') return null;

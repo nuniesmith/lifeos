@@ -14,6 +14,7 @@ import {
 } from './csv.ts';
 import { mapLabMarker, mapLabResult, mapMedicalVisit } from './mappers/labs-visits.ts';
 import { applyMedicationDose, upsertMedication } from './mappers/medications.ts';
+import { upsertHealthMeasurements } from './mappers/measurements.ts';
 
 /**
  * Promotion of staged rows into domain tables (IMP-007, IMP-010).
@@ -72,7 +73,8 @@ export interface PromoteSummary {
 	carriedColumns: { database: string; columns: string[] }[];
 }
 
-interface StagedRow {
+/** Exported so a mapper that outgrows this file (see ./mappers) can stay typed. */
+export interface StagedRow {
 	id: string;
 	notion_page_id: string | null;
 	database_name: string;
@@ -97,7 +99,7 @@ const withBody = (row: StagedRow, column: string | null): string | null => {
 	return row.body ?? columnValue;
 };
 
-const text = (row: StagedRow, column: string): string | null => {
+export const text = (row: StagedRow, column: string): string | null => {
 	const v = row.raw[column];
 	return v && v.trim() ? v.trim() : null;
 };
@@ -118,7 +120,7 @@ const bool = (row: StagedRow, column: string): boolean =>
 const boolOrNull = (row: StagedRow, column: string): boolean | null =>
 	parseSourceBoolean(row.raw[column] ?? '');
 
-const int = (row: StagedRow, column: string): number | null => {
+export const int = (row: StagedRow, column: string): number | null => {
 	const n = Number.parseInt(row.raw[column] ?? '', 10);
 	return Number.isFinite(n) ? n : null;
 };
@@ -195,7 +197,7 @@ function zoneOffset(instant: number, timeZone: string): number {
 }
 
 /** Decimal readings such as a blood glucose of 6.2, which `int` would truncate. */
-const numeric = (row: StagedRow, column: string): number | null => {
+export const numeric = (row: StagedRow, column: string): number | null => {
 	const raw = (row.raw[column] ?? '').trim();
 	if (!raw) return null;
 	const n = Number(raw);
@@ -575,6 +577,12 @@ async function applyRelation(
 			// the slot, so it stays one INSERT ... SELECT rather than fetching
 			// either row separately just to hand its date/schedule back here.
 			return (await applyMedicationDose(sql, from.id, to.id)) ? 'medication.dose' : null;
+		case 'health_measurements->daily_logs':
+			// The "Symptoms" relation on this same database is deliberately not
+			// handled here: migration 0019 does not model a measurement-to-symptom
+			// link, so it stays in source_links for a later pack to pick up.
+			await sql`update health_measurements set daily_log_id = ${to.id} where id = ${from.id}`;
+			return 'health_measurement.daily_log';
 
 		case 'recipes->ingredients':
 			await sql`
@@ -693,12 +701,17 @@ async function applyRelation(
 
 // ─── per-database mappers ──────────────────────────────────────────────────
 
-type MapFn = (sql: Queryable, row: StagedRow, options: PromoteOptions) => Promise<string | null>;
+/** Exported so a mapper split into its own file (see ./mappers) can stay typed. */
+export type MapFn = (
+	sql: Queryable,
+	row: StagedRow,
+	options: PromoteOptions
+) => Promise<string | null>;
 
-type Mapper = MapFn & { table: string };
+export type Mapper = MapFn & { table: string };
 
 /** Tags a mapping function with the table it writes to. */
-function mapper(table: string, fn: MapFn): Mapper {
+export function mapper(table: string, fn: MapFn): Mapper {
 	return Object.assign(fn, { table });
 }
 
@@ -896,22 +909,27 @@ const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
 	// is a RELATION to the Energy Level database — 'Balanced (…)' — and it was
 	// being read with parseInt, so it resolved to null on every row. It is a
 	// vocabulary term now and arrives through the relation pass instead.
+	//
+	// Blood Glucose / Systolic BP / Diastolic BP / Heart Rate are ALSO
+	// deliberately not read here, even though `carryForwardRemovedColumns` may
+	// still hand this row those keys from an older import: Notion moved them to
+	// the Health Measurements database (migration 0019, ./mappers/measurements),
+	// and daily_logs no longer has columns for them. Reading a carried-forward
+	// value here would resurrect a reading that has already been promoted
+	// somewhere else. Heart Rate Variability stays — it never moved.
 	const on = date(row, 'Date');
 	// The daily log's identity is its date; without one there is nothing to key.
 	if (!on || !o.ownerUserId) return null;
 
 	const [r] = await sql<{ id: string }[]>`
 		insert into daily_logs (household_id, owner_user_id, on_date, note,
-		                        gratitude, highlight, blood_glucose, systolic_bp,
-		                        diastolic_bp, heart_rate, heart_rate_variability,
+		                        gratitude, highlight, heart_rate_variability,
 		                        sleep_score, water, caffeine, carbonation, intimacy,
 		                        activation, effectiveness, head_space,
 		                        notion_page_id, source_record_id, created_by)
 		values (${o.householdId}, ${o.ownerUserId}, ${on}, ${withBody(row, 'Intention')},
 		        ${text(row, 'Gratitude')},
 		        ${text(row, 'Highlight of the Day')},
-		        ${numeric(row, 'Blood Glucose')}, ${int(row, 'Systolic BP')},
-		        ${int(row, 'Diastolic BP')}, ${int(row, 'Heart Rate')},
 		        ${int(row, 'Heart Rate Variability')}, ${int(row, 'Sleep Score')},
 		        ${int(row, 'Water')}, ${boolOrNull(row, 'Caffeine')},
 		        ${boolOrNull(row, 'Carbonation')}, ${boolOrNull(row, 'Intimacy')},
@@ -923,10 +941,6 @@ const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
 			note = excluded.note,
 			gratitude = excluded.gratitude,
 			highlight = excluded.highlight,
-			blood_glucose = excluded.blood_glucose,
-			systolic_bp = excluded.systolic_bp,
-			diastolic_bp = excluded.diastolic_bp,
-			heart_rate = excluded.heart_rate,
 			heart_rate_variability = excluded.heart_rate_variability,
 			sleep_score = excluded.sleep_score,
 			water = excluded.water,
@@ -1525,6 +1539,9 @@ const DATABASE_NAMES_BY_ID: Record<string, string> = {
 	'3c3879a5-56f1-80e0-8cc5-c346fd3683a3': 'Exercise Database',
 	'3b6879a5-56f1-8006-93b9-ea7495766449': 'Goals Database',
 	'3b6879a5-56f1-803d-bbbb-d2e1f896abe4': 'Habit Tracker Database',
+	// New 2026-09-24: Systolic BP / Diastolic BP / Heart Rate / Blood Glucose
+	// moved out of the Daily Log database into this one (migration 0019).
+	'3e3879a5-56f1-80af-a421-f50bbf3c5b2a': 'Health Measurements Database',
 	'3bf879a5-56f1-805f-bd26-fac6769ea5ca': 'Highlights & Significant Events Database',
 	'3c3879a5-56f1-80c6-9fc5-e2a24fa7a067': 'Important Dates Database',
 	'3d3879a5-56f1-80b9-8b18-d283ba9a94fb': 'Income Database',
@@ -1570,6 +1587,7 @@ const MAPPERS: Record<string, Mapper> = {
 	'Important Dates Database': upsertImportantDates,
 	'Habit Tracker Database': upsertHabits,
 	'Daily Log Database': upsertDailyLogs,
+	'Health Measurements Database': upsertHealthMeasurements,
 	'Symptoms Database': vocabularyMapper('symptom'),
 	'Mood Feelings Database': vocabularyMapper('mood', ['Type', 'What Helps?']),
 	'Vitamins Database': mapper('medications', upsertMedication),

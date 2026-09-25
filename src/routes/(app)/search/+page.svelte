@@ -23,7 +23,8 @@
 		habit: 'Habit',
 		wishlist_item: 'Wishlist',
 		bill: 'Bill',
-		health_term: 'Health'
+		health_term: 'Health',
+		health_measurement: 'Reading'
 	};
 
 	/**

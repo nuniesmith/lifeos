@@ -110,6 +110,17 @@ beforeAll(async () => {
 			insert into daily_log_health (daily_log_id, vocabulary_id)
 			values (${logs[0]!.id}::uuid, ${terms[0]!.id}::uuid)
 		`;
+		// migration 0019: a row that also exercises the optional link to a
+		// daily log, so a restore that dropped it would show up as null here
+		// rather than merely as a missing table.
+		await source`
+			insert into health_measurements (
+				household_id, owner_user_id, measured_at, systolic, diastolic, weight, daily_log_id
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, '2026-08-08T12:00:00Z'::timestamptz,
+				118, 76, 71.4, ${logs[0]!.id}::uuid
+			)
+		`;
 
 		const habits = await source<{ id: string }[]>`
 			insert into habits (household_id, owner_user_id, name, created_by, updated_by)
@@ -259,6 +270,7 @@ describe('everything household-scoped is portable', () => {
 		before('meal_plan_recipes', 'recipes');
 		before('daily_log_health', 'daily_logs');
 		before('daily_log_health', 'health_vocabulary');
+		before('health_measurements', 'daily_logs');
 
 		expect(listOf('TABLES').sort()).toEqual([...order].sort());
 	});
@@ -343,6 +355,20 @@ describe('portable data mobility', () => {
 				join health_vocabulary v on v.id = h.vocabulary_id
 			`;
 			expect(logged.map((r) => r.name)).toEqual(['Nausea']);
+
+			// The reading travels, and its link to the day it was logged near
+			// still resolves: ids are preserved verbatim by this restore (see
+			// insertRow), so the daily log it points at exists in the target
+			// under the same id rather than the link dangling.
+			const measurement = await restored<
+				{ systolic: number; weight: string; daily_log_id: string }[]
+			>`
+				select systolic, weight, daily_log_id::text as daily_log_id from health_measurements
+			`;
+			expect(measurement[0]).toMatchObject({ systolic: 118 });
+			expect(Number(measurement[0]?.weight)).toBe(71.4);
+			const [restoredLog] = await restored<{ id: string }[]>`select id from daily_logs`;
+			expect(measurement[0]?.daily_log_id).toBe(restoredLog?.id);
 
 			const logs = await restored`select user_id::text as user_id from habit_logs`;
 			expect(logs).toEqual([{ user_id: targetUser }]);

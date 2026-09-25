@@ -45,6 +45,7 @@ export * from './daily-logs';
 export * from './food';
 export * from './goals';
 export * from './health';
+export * from './health-measurements';
 export * from './habits';
 export * from './important-dates';
 export * from './labs-visits';

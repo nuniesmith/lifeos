@@ -166,29 +166,30 @@ describe('committed import', () => {
 		]);
 	});
 
-	it('carries the daily log readings, including the decimal one', async () => {
+	it('carries the daily log readings that still live there', async () => {
+		// Blood Glucose, Systolic BP and Heart Rate are also in this fixture's
+		// Daily Log CSV — the pre-2026-09-24 export shape — but migration 0019
+		// moved those three to health_measurements, and this export has no
+		// Health Measurements database for the importer to promote them from.
+		// `upsertDailyLogs` no longer reads any of the three, so they are staged
+		// (in source_records) and simply not promoted anywhere, which is the
+		// correct outcome for an export the app has out-evolved rather than a
+		// bug — see the "Health Measurements import" suite below for the
+		// current shape, and health.test.ts for the hand-over itself.
 		await run(false);
 		const log = one(
 			await sql<
 				{
-					blood_glucose: unknown;
-					systolic_bp: number | null;
-					heart_rate: number | null;
 					water: number | null;
 					caffeine: boolean | null;
 					intimacy: boolean | null;
 					head_space: string | null;
 				}[]
 			>`
-				select blood_glucose, systolic_bp, heart_rate, water, caffeine, intimacy, head_space
+				select water, caffeine, intimacy, head_space
 				from daily_logs where on_date = '2026-08-08'
 			`
 		);
-		// numeric arrives as a string so the driver cannot round it; 6.2 read
-		// with parseInt would have become 6.
-		expect(Number(log.blood_glucose)).toBe(6.2);
-		expect(log.systolic_bp).toBe(137);
-		expect(log.heart_rate).toBe(90);
 		expect(log.water).toBe(32);
 		expect(log.caffeine).toBe(true);
 		// No is a recorded No, not an absent value.
@@ -700,50 +701,57 @@ describe('exports whose shape changed between imports', () => {
 			uploadDir
 		});
 
-	const systolicOf = async (hex: string) =>
+	const waterOf = async (hex: string) =>
 		(
-			await sql<{ systolic_bp: number | null }[]>`
-				select systolic_bp from daily_logs where notion_page_id = ${uuid(hex)}
+			await sql<{ water: number | null }[]>`
+				select water from daily_logs where notion_page_id = ${uuid(hex)}
 			`
-		)[0]?.systolic_bp;
+		)[0]?.water;
 
 	afterAll(async () => {
 		for (const root of roots) await rm(root, { recursive: true, force: true });
 	});
 
 	it('keeps a value whose column left the export, and clears one that was emptied', async () => {
+		// Water, not Systolic BP: this is the GENERIC carryForwardRemovedColumns
+		// mechanism, exercised with a column that stays on daily_logs (a sync
+		// glitch that drops a column temporarily is the scenario it defends
+		// against). The specific, permanent case — Systolic BP and its three
+		// siblings actually leaving for good — is covered in the "Health
+		// Measurements import" suite below, which asserts the stronger claim:
+		// not just "unread", but "never resurrected onto daily_logs at all".
 		const day = page(1);
 		const withReading = (reading: string | null): Database => ({
 			...DAILY_LOG,
 			headers:
-				reading === null ? ['Day', 'Date', 'Caffeine'] : ['Day', 'Date', 'Systolic BP', 'Caffeine'],
+				reading === null ? ['Day', 'Date', 'Caffeine'] : ['Day', 'Date', 'Water', 'Caffeine'],
 			rows: [
 				{
 					page: day,
 					cells: {
 						Day: 'Aug 5',
 						Date: 'August 5, 2026',
-						...(reading === null ? {} : { 'Systolic BP': reading }),
+						...(reading === null ? {} : { Water: reading }),
 						Caffeine: 'No'
 					}
 				}
 			]
 		});
 
-		await importFrom(await exportOf([withReading('118')]));
-		expect(await systolicOf(day)).toBe(118);
+		await importFrom(await exportOf([withReading('32')]));
+		expect(await waterOf(day)).toBe(32);
 
-		// Notion moved the reading to another database: the column is gone.
+		// The export temporarily dropped the column — a paused sync, say.
 		const moved = await importFrom(await exportOf([withReading(null)]));
-		expect(await systolicOf(day)).toBe(118);
+		expect(await waterOf(day)).toBe(32);
 		expect(promotionOf(moved).carriedColumns).toContainEqual({
 			database: 'Daily Log Database',
-			columns: ['Systolic BP']
+			columns: ['Water']
 		});
 
 		// The column is back, and the cell is empty: that is a real edit.
 		await importFrom(await exportOf([withReading('')]));
-		expect(await systolicOf(day)).toBeNull();
+		expect(await waterOf(day)).toBeNull();
 	});
 
 	it('keeps importing a database that was renamed, found by its id', async () => {
@@ -1146,3 +1154,318 @@ describe('medications import (migration 0018)', () => {
 function uuidOf(hex: string): string {
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+describe('Health Measurements import', () => {
+	// New 2026-09-24: Systolic BP / Diastolic BP / Heart Rate / Blood Glucose
+	// moved out of the Daily Log database into this one (migration 0019). The
+	// id below is the real Notion database id (public metadata, not personal
+	// data); every reading value in this suite is invented.
+	const MEASUREMENTS = {
+		name: 'Health Measurements Database',
+		id: '3e3879a556f180afa421f50bbf3c5b2a'
+	};
+	const DAILY_LOG = { name: 'Daily Log Database', id: '3b7879a556f180788365fc81070ab3bf' };
+	const page = (n: number) => 'f'.repeat(28) + n.toString(16).padStart(4, '0');
+	const uuid = (hex: string) =>
+		`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+
+	interface Row {
+		page?: string;
+		cells: Record<string, string>;
+	}
+	interface Database {
+		name: string;
+		id: string;
+		headers: string[];
+		rows: Row[];
+	}
+
+	const cell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+	const roots: string[] = [];
+
+	async function exportOf(databases: Database[]): Promise<string> {
+		const root = await mkdtemp(join(tmpdir(), 'lifeos-measurements-'));
+		roots.push(root);
+		const dir = join(root, 'Life OS', 'System');
+		for (const db of databases) {
+			await mkdir(join(dir, db.name), { recursive: true });
+			const lines = [db.headers, ...db.rows.map((r) => db.headers.map((h) => r.cells[h] ?? ''))];
+			await writeFile(
+				join(dir, `${db.name} ${db.id}_all.csv`),
+				'﻿' + lines.map((l) => l.map(cell).join(',')).join('\n')
+			);
+			// A row's notion_page_id comes from matching it to a page file whose
+			// name embeds the 32-hex id — not from the CSV alone — so a row with
+			// no page file here would stage with no page id and never reach the
+			// mapper at all (see `skippedWithoutPageId` in promote.ts).
+			for (const r of db.rows) {
+				if (!r.page) continue;
+				const title = r.cells[db.headers[0]!] || 'Untitled';
+				const props = db.headers
+					.slice(1)
+					.filter((h) => r.cells[h])
+					.map((h) => `${h}: ${r.cells[h]}`);
+				await writeFile(
+					join(dir, db.name, `${title} ${r.page}.md`),
+					`# ${title}\n\n${props.join('\n')}\n`
+				);
+			}
+		}
+		return root;
+	}
+
+	const importFrom = (root: string) =>
+		runImport(sql, {
+			root,
+			householdId,
+			ownerUserId: userId,
+			startedBy: userId,
+			dryRun: false,
+			uploadDir
+		});
+
+	afterAll(async () => {
+		for (const root of roots) await rm(root, { recursive: true, force: true });
+	});
+
+	const HEADERS = [
+		'Name',
+		'BP Context',
+		'Blood Glucose',
+		'Daily Log',
+		'Date & Time',
+		'Diastolic BP',
+		'Glucose Context',
+		'Heart Rate',
+		'Measurement Summary',
+		'QT Interval',
+		'Symptoms',
+		'Systolic BP',
+		'Weight'
+	];
+
+	it('maps blood pressure, heart rate and their context, linked to a daily log', async () => {
+		const measurement = page(1);
+		const dailyLog = page(2);
+
+		await importFrom(
+			await exportOf([
+				{
+					...DAILY_LOG,
+					headers: ['Day', 'Date'],
+					rows: [{ page: dailyLog, cells: { Day: 'Sept 3', Date: 'September 3, 2026' } }]
+				},
+				{
+					...MEASUREMENTS,
+					headers: HEADERS,
+					rows: [
+						{
+							page: measurement,
+							cells: {
+								Name: 'September 3, 2026 7:15 AM - Morning check',
+								'BP Context': 'Resting',
+								'Daily Log': `Sept 3 (Daily%20Log%20Database/Sept%203%20${dailyLog}.md)`,
+								'Date & Time': 'September 3, 2026 7:15 AM',
+								'Diastolic BP': '76',
+								'Heart Rate': '64',
+								Symptoms: `Headache (Symptom%20Library%20Database/Headache%20${page(9)}.md)`,
+								'Systolic BP': '118'
+							}
+						}
+					]
+				}
+			])
+		);
+
+		const row = one(
+			await sql<
+				{
+					systolic: number;
+					diastolic: number;
+					bp_context: string | null;
+					heart_rate: number;
+					glucose: unknown;
+					weight: unknown;
+					daily_log_id: string | null;
+				}[]
+			>`
+				select systolic, diastolic, bp_context, heart_rate, glucose, weight, daily_log_id
+				from health_measurements where notion_page_id = ${uuid(measurement)}
+			`
+		);
+		expect(row).toMatchObject({
+			systolic: 118,
+			diastolic: 76,
+			bp_context: 'Resting',
+			heart_rate: 64
+		});
+		expect(row.glucose).toBeNull();
+		expect(row.weight).toBeNull();
+
+		// The Daily Log relation is resolved in pass two...
+		const [log] = await sql<
+			{ id: string }[]
+		>`select id from daily_logs where notion_page_id = ${uuid(dailyLog)}`;
+		expect(row.daily_log_id).toBe(log?.id);
+
+		// ...and the Symptoms relation deliberately is not (see promote.ts's
+		// applyRelation): no daily_log_health row exists for anything here, and
+		// no error was raised getting to this point either.
+		expect(await sql`select count(*)::int as n from daily_log_health`).toMatchObject([{ n: 0 }]);
+	});
+
+	it('maps glucose, its context and QT interval — none of which the real export happened to exercise', async () => {
+		const measurement = page(3);
+		await importFrom(
+			await exportOf([
+				{
+					...MEASUREMENTS,
+					headers: HEADERS,
+					rows: [
+						{
+							page: measurement,
+							cells: {
+								Name: 'September 5, 2026 - Glucose',
+								'Blood Glucose': '5.8',
+								'Glucose Context': 'Fasting',
+								'Date & Time': 'September 5, 2026 8:00 AM',
+								'QT Interval': '402'
+							}
+						}
+					]
+				}
+			])
+		);
+
+		const row = one(
+			await sql<{ glucose: unknown; glucose_context: string | null; qt_interval: number | null }[]>`
+				select glucose, glucose_context, qt_interval from health_measurements
+				where notion_page_id = ${uuid(measurement)}
+			`
+		);
+		expect(Number(row.glucose)).toBe(5.8);
+		expect(row.glucose_context).toBe('Fasting');
+		expect(row.qt_interval).toBe(402);
+	});
+
+	it('accepts a weight-only reading with no time of day and no daily log, like most of the real export', async () => {
+		const measurement = page(4);
+		await importFrom(
+			await exportOf([
+				{
+					...MEASUREMENTS,
+					headers: HEADERS,
+					rows: [
+						{
+							page: measurement,
+							cells: {
+								Name: 'September 6, 2026 - Weight',
+								'Date & Time': 'September 6, 2026',
+								Weight: '71.4'
+							}
+						}
+					]
+				}
+			])
+		);
+		const row = one(
+			await sql<{ weight: unknown; daily_log_id: string | null }[]>`
+				select weight, daily_log_id from health_measurements where notion_page_id = ${uuid(measurement)}
+			`
+		);
+		expect(Number(row.weight)).toBe(71.4);
+		expect(row.daily_log_id).toBeNull();
+	});
+
+	it('refuses a row with a timestamp but no reading, and one with neither', async () => {
+		const promoted = promotionOf(
+			await importFrom(
+				await exportOf([
+					{
+						...MEASUREMENTS,
+						headers: HEADERS,
+						rows: [
+							{
+								page: page(5),
+								cells: { Name: 'Empty but dated', 'Date & Time': 'September 7, 2026' }
+							},
+							// The real export's own "Add Health Measurements" template page:
+							// a title and nothing else at all.
+							{ page: page(6), cells: { Name: 'Add Health Measurements' } }
+						]
+					}
+				])
+			)
+		);
+		expect(promoted.refusedByMapper).toContainEqual({
+			database: 'Health Measurements Database',
+			rows: 2
+		});
+		expect(await sql`select count(*)::int as n from health_measurements`).toMatchObject([{ n: 0 }]);
+	});
+
+	it('does not duplicate on a re-import, and updates in place', async () => {
+		const measurement = page(7);
+		const build = (weight: string) => [
+			{
+				...MEASUREMENTS,
+				headers: HEADERS,
+				rows: [
+					{
+						page: measurement,
+						cells: { Name: 'September 8, 2026', 'Date & Time': 'September 8, 2026', Weight: weight }
+					}
+				]
+			}
+		];
+
+		await importFrom(await exportOf(build('70.0')));
+		await importFrom(await exportOf(build('69.5')));
+
+		const rows = await sql<{ weight: unknown }[]>`
+			select weight from health_measurements where notion_page_id = ${uuid(measurement)}
+		`;
+		expect(rows).toHaveLength(1);
+		expect(Number(rows[0]?.weight)).toBe(69.5);
+	});
+
+	it('does not resurrect a reading onto daily_logs when Systolic BP briefly reappears via carryForwardRemovedColumns', async () => {
+		// The exact hazard migration 0019 exists to close: an OLDER export still
+		// has Systolic BP on the Daily Log database; carryForwardRemovedColumns
+		// will still copy that value into a later staged row once the column is
+		// gone (it operates on column names, not on which table dropped which
+		// column) — the fix is that upsertDailyLogs never reads that key at all
+		// anymore, carried forward or not.
+		const day = page(8);
+		const withColumn = (present: boolean): Database => ({
+			...DAILY_LOG,
+			headers: present ? ['Day', 'Date', 'Systolic BP'] : ['Day', 'Date'],
+			rows: [
+				{
+					page: day,
+					cells: {
+						Day: 'Sept 9',
+						Date: 'September 9, 2026',
+						...(present ? { 'Systolic BP': '118' } : {})
+					}
+				}
+			]
+		});
+
+		await importFrom(await exportOf([withColumn(true)]));
+		const second = await importFrom(await exportOf([withColumn(false)]));
+
+		expect(promotionOf(second).carriedColumns).toContainEqual({
+			database: 'Daily Log Database',
+			columns: ['Systolic BP']
+		});
+		// daily_logs has had no systolic_bp column since this same migration;
+		// the assertion that matters is simply that importing this shape at all
+		// does not fail, and creates no row anywhere carrying that value.
+		const [log] = await sql<
+			{ id: string }[]
+		>`select id from daily_logs where notion_page_id = ${uuid(day)}`;
+		expect(log).toBeTruthy();
+		expect(await sql`select count(*)::int as n from health_measurements`).toMatchObject([{ n: 0 }]);
+	});
+});

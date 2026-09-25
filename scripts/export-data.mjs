@@ -57,6 +57,8 @@ const TABLES = [
 	// would not have caught its absence.
 	'medications',
 	'medication_doses',
+	// migration 0019: after daily_logs, whose id it optionally carries.
+	'health_measurements',
 	'ingredients',
 	'recipes',
 	'meal_plans',
@@ -154,6 +156,7 @@ async function rowsFor(db, table, id) {
 			return db`select r.* from goal_habits r join goals g on g.id = r.goal_id where g.household_id = ${id}::uuid order by r.goal_id, r.habit_id`;
 		case 'health_vocabulary':
 		case 'medications':
+		case 'health_measurements':
 		case 'ingredients':
 		case 'recipes':
 		case 'meal_plans':
