@@ -138,7 +138,7 @@ describe('the wheel of life', () => {
 describe('significant events', () => {
 	it('records something that happened on a day', async () => {
 		const event = ok(
-			await createEvent(sql, owner, { title: 'Moved to London', onDate: '2026-05-19' }),
+			await createEvent(sql, owner, { title: 'Adopted a greyhound', onDate: '2026-05-19' }),
 			'event'
 		).record;
 		expect(event.onDate).toBe('2026-05-19');
@@ -153,7 +153,10 @@ describe('significant events', () => {
 	});
 
 	it('is shared, unlike a self-rating', async () => {
-		ok(await createEvent(sql, owner, { title: 'Moved to London', onDate: '2026-05-19' }), 'event');
+		ok(
+			await createEvent(sql, owner, { title: 'Adopted a greyhound', onDate: '2026-05-19' }),
+			'event'
+		);
 		expect(await listEvents(sql, partner)).toHaveLength(1);
 	});
 });

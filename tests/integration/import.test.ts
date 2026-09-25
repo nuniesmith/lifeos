@@ -458,7 +458,7 @@ describe('committed import', () => {
 			`
 		);
 		expect(row).toEqual({
-			title: 'Moved to London',
+			title: 'Adopted a greyhound',
 			on_date: '2026-05-19',
 			area: 'Environment: House & Home'
 		});
