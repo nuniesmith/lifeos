@@ -118,6 +118,8 @@ async function contentProbes() {
 		                          where status = 'active' order by name limit 1`),
 		'/habits': await pick(sql`select name as value from habits order by name limit 1`),
 		'/food': await pick(sql`select name as value from recipes order by name limit 1`),
+		'/food/recipes': await pick(sql`select name as value from recipes
+		                                 where archived_at is null order by name limit 1`),
 		'/library': await pick(sql`select title as value from library_items order by title limit 1`),
 		'/people': await pick(sql`select name as value from people order by name limit 1`),
 		'/wishlist': await pick(sql`select name as value from wishlist_items order by name limit 1`),
@@ -196,6 +198,12 @@ async function detailProbes() {
 		),
 		'/library/[id]': await row(
 			sql`select id::text, title as label from library_items order by title limit 1`
+		),
+		// The recipe with the longest body, because the body is what this page
+		// renders and the likeliest thing in real data to break it.
+		'/food/recipes/[id]': await row(
+			sql`select id::text, name as label from recipes
+			    order by length(coalesce(notes, '')) desc, name limit 1`
 		),
 		'/journal/[date]': await row(sql`select on_date::text as id, on_date::text as label
 		                                  from daily_logs order by on_date desc limit 1`)

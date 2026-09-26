@@ -346,7 +346,10 @@
 			</section>
 
 			<section aria-labelledby="recipes-heading">
-				<h2 id="recipes-heading" class="section-title">Recipes</h2>
+				<div class="recipes-head">
+					<h2 id="recipes-heading" class="section-title">Recipes</h2>
+					<Button href="/food/recipes/new" icon="plus">New recipe</Button>
+				</div>
 				<Card flush>
 					{#if data.recipes.length === 0}
 						<EmptyState
@@ -359,6 +362,7 @@
 							{#each data.recipes.slice(0, 12) as recipe (recipe.id)}
 								<ListRow
 									title={recipe.name}
+									href={`/food/recipes/${recipe.id}`}
 									meta={[
 										recipe.totalMinutes !== null ? `${recipe.totalMinutes} min` : null,
 										recipe.servings !== null ? `serves ${recipe.servings}` : null,
@@ -384,7 +388,10 @@
 							{/each}
 						</List>
 						{#if data.recipes.length > 12}
-							<p class="footnote">{data.recipes.length - 12} more not shown.</p>
+							<p class="footnote">
+								{data.recipes.length - 12} more not shown.
+								<a href={resolve(appPath('/food/recipes'))}>All recipes</a>
+							</p>
 						{/if}
 					{/if}
 				</Card>
@@ -592,6 +599,23 @@
 		border-radius: var(--radius-pill);
 		color: var(--c-text-muted);
 		font-size: var(--fs-xs);
+	}
+
+	.recipes-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--sp-2);
+		margin-bottom: var(--sp-3);
+	}
+	.recipes-head .section-title {
+		margin: 0;
+	}
+	.footnote a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--tap);
 	}
 
 	.footnote {
