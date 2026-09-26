@@ -29,10 +29,21 @@
 	});
 </script>
 
+<!--
+	Escape closes the dialog at once but only queues its `close` event, and a
+	browser may run the next input before that task. Left to `onclose` alone,
+	a quick Escape then reopen reached the opener while `open` was still true —
+	a no-op — and the late event then shut the sheet for good. So `oncancel`,
+	which fires before the dialog closes, updates the state straight away, and
+	`onclose` only confirms a close that is still true when it arrives.
+-->
 <dialog
 	bind:this={dialog}
 	aria-labelledby={headingId}
-	onclose={() => (open = false)}
+	oncancel={() => (open = false)}
+	onclose={() => {
+		if (!dialog?.open) open = false;
+	}}
 	onmousedown={(event) => {
 		// Tap the backdrop to dismiss, which is the expectation on a phone.
 		// Bound to mousedown rather than click so a drag that starts inside
