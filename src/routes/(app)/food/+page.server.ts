@@ -1,6 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
 import {
+	MEAL_SLOTS,
+	addPlanToShoppingList,
 	coversForPages,
 	foodSummary,
 	householdToday,
@@ -12,8 +14,13 @@ import {
 	listPrepTasks,
 	listRecipes,
 	mealPlan,
+	planMeal,
 	setPrepTaskDone,
-	updateIngredient
+	undoPlanShopping,
+	unplanMeal,
+	updateIngredient,
+	type MealSlot,
+	type WriteFailure
 } from '$lib/server/repositories';
 import { requireViewer } from '$lib/server/viewer';
 import type { Actions, PageServerLoad } from './$types';
@@ -157,5 +164,86 @@ export const actions: Actions = {
 		);
 		if (!result.ok) return fail(400, { error: 'Could not update that prep task.' });
 		return { prepped: true };
+	},
+
+	/** Plans a recipe into one slot of one day, opening the day if it has no plan. */
+	plan: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const date = String(form.get('date') ?? '');
+		const slot = String(form.get('slot') ?? '');
+
+		if (!isDay(date)) return fail(400, { error: 'Pick a day to plan.' });
+		if (!isMealSlot(slot)) return fail(400, { error: 'Pick breakfast, lunch, dinner or a snack.' });
+
+		const result = await planMeal(sql, viewer, date, slot, String(form.get('recipeId') ?? ''));
+		if (!result.ok) {
+			return fail(statusFor(result.reason), {
+				error:
+					result.reason === 'forbidden'
+						? 'That day’s plan belongs to someone else, so it cannot be changed here.'
+						: result.reason === 'invalid' && result.message
+							? capitalise(result.message)
+							: 'Could not plan that recipe.'
+			});
+		}
+		return { planned: { date, slot, alreadyPlanned: result.record.alreadyPlanned } };
+	},
+
+	unplan: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const slot = String(form.get('slot') ?? '');
+		if (!isMealSlot(slot)) return fail(400, { error: 'Could not remove that meal.' });
+
+		const result = await unplanMeal(
+			sql,
+			viewer,
+			String(form.get('mealPlanId') ?? ''),
+			slot,
+			String(form.get('recipeId') ?? '')
+		);
+		if (!result.ok) return fail(statusFor(result.reason), { error: 'Could not remove that meal.' });
+		return { unplanned: true };
+	},
+
+	/**
+	 * Puts the ingredients of the week being viewed on the shopping list. The
+	 * week is recomputed from `from` rather than trusted as a range, so a
+	 * crafted form cannot sweep a year of plans into the list.
+	 */
+	shopWeek: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const requested = String(form.get('from') ?? '');
+		if (!isDay(requested)) return fail(400, { error: 'Which week? That is not a date.' });
+
+		const week = weekWindow(requested);
+		const result = await addPlanToShoppingList(sql, viewer, week.start, week.end);
+		if (!result.ok) {
+			return fail(statusFor(result.reason), { error: 'Could not add the week to the list.' });
+		}
+		return { shopped: { from: week.start, ...result.record } };
+	},
+
+	/** Takes back exactly what `shopWeek` added, while it is still on the list. */
+	undoShopWeek: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const ids = form.getAll('id').map(String);
+
+		const result = await undoPlanShopping(sql, viewer, ids);
+		if (!result.ok) return fail(statusFor(result.reason), { error: 'Could not undo that.' });
+		return { unshopped: result.record };
 	}
 };
+
+const isMealSlot = (value: string): value is MealSlot =>
+	(MEAL_SLOTS as readonly string[]).includes(value);
+
+/** A refusal's HTTP status; `not_found` also covers "not yours to see". */
+const statusFor = (reason: WriteFailure): number =>
+	reason === 'invalid' ? 400 : reason === 'forbidden' ? 403 : reason === 'conflict' ? 409 : 404;
+
+/** Repository messages are sentence fragments; the page shows sentences. */
+const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1) + '.';
