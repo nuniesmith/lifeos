@@ -17,10 +17,11 @@
 
 	type Kind = (typeof data.kinds)[number];
 
+	// No `vitamin`: vitamins are medications now (migration 0018), with a page
+	// of their own, and the repository never returns that kind to this page.
 	const LABELS: Record<Kind, string> = {
 		symptom: 'Symptoms',
 		mood: 'Mood',
-		vitamin: 'Vitamins',
 		energy: 'Energy',
 		activity: 'Activity',
 		exercise: 'Exercise'
@@ -30,7 +31,6 @@
 	const SINGULAR: Record<Kind, string> = {
 		symptom: 'symptom',
 		mood: 'mood',
-		vitamin: 'vitamin',
 		energy: 'energy level',
 		activity: 'activity',
 		exercise: 'exercise'
