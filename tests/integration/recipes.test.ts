@@ -17,6 +17,7 @@ import {
 	listArchived,
 	listRecipes,
 	restore,
+	search,
 	setRecipeArchived,
 	updateRecipe
 } from '$lib/server/repositories';
@@ -281,7 +282,7 @@ describe('editing a recipe', () => {
 		});
 	});
 
-	it('archives out of the live list and restores from the Archive', async () => {
+	it('archives out of the live list and restores from the Archive, linking back to the page', async () => {
 		const soup = await recipe('Soup');
 		ok(await setRecipeArchived(sql, owner, soup.id, true), 'archive');
 
@@ -290,10 +291,16 @@ describe('editing a recipe', () => {
 		expect((await getRecipe(sql, owner, soup.id))?.archivedAt).not.toBeNull();
 
 		const [entry] = await listArchived(sql, owner);
-		expect(entry).toMatchObject({ kind: 'recipe', id: soup.id });
+		expect(entry).toMatchObject({ kind: 'recipe', path: `/food/recipes/${soup.id}` });
 
 		ok(await restore(sql, owner, 'recipe', soup.id), 'restore');
 		expect((await listRecipes(sql, owner)).map((r) => r.name)).toEqual(['Soup']);
+	});
+
+	it('is found by search, which links to the page', async () => {
+		const soup = await recipe('Mulligatawny');
+		const [hit] = await search(sql, owner, 'mulligatawny');
+		expect(hit).toMatchObject({ kind: 'recipe', path: `/food/recipes/${soup.id}` });
 	});
 });
 
