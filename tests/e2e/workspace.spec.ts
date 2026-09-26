@@ -255,13 +255,15 @@ test('a health term can be added and starts showing up', async ({ page }) => {
 test('health leads to every page under it', async ({ page }) => {
 	await signIn(page);
 
-	// Nothing else in the navigation reaches these; if a link here breaks,
-	// the page behind it is simply lost.
+	// Nothing else in the navigation reaches these; if a tab here breaks,
+	// the page behind it is simply lost. The tabs are the health hub's own
+	// sub-navigation, shown on /health and on every page under it.
 	const pages: [string, string][] = [
-		['Medications & supplements', 'Medications & supplements'],
+		['Medications', 'Medications & supplements'],
 		['Measurements', 'Health Measurements'],
-		['Lab results', 'Lab markers'],
-		['Medical visits', 'Medical visits']
+		['Labs', 'Lab markers'],
+		['Visits', 'Medical visits'],
+		['Symptoms & mood', 'Symptoms & mood']
 	];
 
 	for (const [link, heading] of pages) {
