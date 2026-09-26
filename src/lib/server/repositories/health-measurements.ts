@@ -356,7 +356,8 @@ export function createHealthMeasurement(
 				bp_context, heart_rate, glucose, glucose_context, weight, qt_interval, notes,
 				daily_log_id, created_by, updated_by
 			) values (
-				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${measuredAt}::timestamptz,
+				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility},
+				${measuredAt.toISOString()}::timestamptz,
 				${readings.systolic}, ${readings.diastolic}, ${bpContext}, ${readings.heartRate},
 				${readings.glucose}, ${glucoseContext}, ${readings.weight}, ${readings.qtInterval},
 				${notes}, ${dailyLogId}::uuid, ${viewer.userId}::uuid, ${viewer.userId}::uuid
@@ -422,7 +423,7 @@ export function updateHealthMeasurement(
 			writeScope: writableScope(sql, viewer, TABLE),
 			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
 			assignments: sql`
-				measured_at = ${measuredAt}::timestamptz,
+				measured_at = ${measuredAt.toISOString()}::timestamptz,
 				systolic = ${readings.systolic}, diastolic = ${readings.diastolic},
 				bp_context = ${next.bpContext}, heart_rate = ${readings.heartRate},
 				glucose = ${readings.glucose}, glucose_context = ${next.glucoseContext},

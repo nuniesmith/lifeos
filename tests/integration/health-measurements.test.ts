@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { createMember } from '$lib/server/auth/admin';
@@ -346,5 +347,42 @@ describe('deleting a reading', () => {
 
 		ok(await setHealthMeasurementArchived(sql, owner, created.id, false), 'restore');
 		expect(await listHealthMeasurements(sql, owner)).toHaveLength(1);
+	});
+});
+
+describe('through a client configured the way the app’s is', () => {
+	it('adds and edits a reading', async () => {
+		// `$lib/server/db` also hands its client to drizzle(), which replaces
+		// the driver's timestamp serializers with pass-throughs. A JS Date sent
+		// as a parameter then reaches the wire unconverted and throws — which
+		// is how "Add a reading" failed in production while every test here
+		// passed: the client above is a plain one, and a plain client converts
+		// a Date without complaint. This one is set up the way the app's is.
+		const appLike = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		drizzle(appLike);
+		try {
+			const created = ok(
+				await createHealthMeasurement(appLike, owner, {
+					measuredAt: '2026-09-03T07:15',
+					systolic: 118,
+					diastolic: 76
+				}),
+				'add a reading through the app-like client'
+			).record;
+			const edited = ok(
+				await updateHealthMeasurement(
+					appLike,
+					owner,
+					created.id,
+					{ measuredAt: '2026-09-03T08:15', systolic: 121 },
+					created.updatedAt
+				),
+				'edit it through the app-like client'
+			).record;
+			expect(edited).toMatchObject({ systolic: 121, diastolic: 76 });
+			expect(edited.measuredAt.toISOString()).toBe('2026-09-03T12:15:00.000Z');
+		} finally {
+			await appLike.end({ timeout: 5 });
+		}
 	});
 });
