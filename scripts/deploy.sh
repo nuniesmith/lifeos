@@ -113,6 +113,23 @@ say "Pulling image"
 docker pull "$LIFEOS_IMAGE" || die "could not pull $LIFEOS_IMAGE"
 ok "image present"
 
+# nginx too, or its tag is whatever this host first pulled, forever: `up -d`
+# never re-pulls a tag it already has, which is how nginx sat on a 2025
+# image. Pulled here, before anything stops, for the same reason as above;
+# `up -d app nginx` below then recreates it only if the image changed.
+# PostgreSQL is deliberately not pulled: this script keeps it running
+# across a deploy, and a new image would restart it mid-deploy.
+#
+# A failed pull warns rather than stops the deploy. The host already has a
+# working nginx, and Docker Hub rate-limits anonymous pulls per public IP,
+# which this host shares with others: an nginx one patch behind is a far
+# smaller problem than an application update blocked for an hour.
+if LIFEOS_IMAGE="$LIFEOS_IMAGE" "${COMPOSE[@]}" pull nginx; then
+    ok "nginx image current"
+else
+    printf '\033[33m!\033[0m %s\n' "could not pull nginx; keeping the image this host already has"
+fi
+
 # ─── database up, and backed up before any migration ───────────────────────
 say "Ensuring the database is running"
 LIFEOS_IMAGE="$LIFEOS_IMAGE" "${COMPOSE[@]}" up -d db
