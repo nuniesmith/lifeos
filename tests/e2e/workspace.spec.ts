@@ -246,3 +246,22 @@ test('a health term can be added and starts showing up', async ({ page }) => {
 	const chip = page.getByRole('link', { name: /^Symptoms/ });
 	await expect(chip).toContainText(/[1-9]/);
 });
+
+test('health leads to every page under it', async ({ page }) => {
+	await signIn(page);
+
+	// Nothing else in the navigation reaches these; if a link here breaks,
+	// the page behind it is simply lost.
+	const pages: [string, string][] = [
+		['Medications & supplements', 'Medications & supplements'],
+		['Measurements', 'Health Measurements'],
+		['Lab results', 'Lab markers'],
+		['Medical visits', 'Medical visits']
+	];
+
+	for (const [link, heading] of pages) {
+		await page.goto('/health');
+		await page.getByRole('link', { name: link, exact: true }).click();
+		await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
+	}
+});

@@ -46,16 +46,31 @@ import { optionalText, patched, requiredText } from './validate';
  * about who used them.
  */
 
-export const HEALTH_KINDS = [
-	'symptom',
-	'mood',
-	'vitamin',
-	'energy',
-	'activity',
-	'exercise'
-] as const;
+/**
+ * The lists this module still offers.
+ *
+ * `vitamin` is gone: migration 0018 moved every vitamin into `medications`,
+ * which has somewhere to put a dose and a schedule. The table's CHECK still
+ * permits the word — narrowing it would buy nothing but a lock — so a row
+ * written by the old add form after 0018 deployed can still exist. Every read
+ * below that lists or counts terms is therefore limited to these kinds by
+ * {@link offeredKinds}, rather than trusting the table to hold nothing else;
+ * a leftover row stays in the database, just not on the page.
+ */
+export const HEALTH_KINDS = ['symptom', 'mood', 'energy', 'activity', 'exercise'] as const;
 
 export type HealthKind = (typeof HEALTH_KINDS)[number];
+
+/**
+ * `kind in (…)` for the kinds asked for, or for every offered kind when none
+ * were. Never "no filter": that would let a retired kind through with a
+ * `kind` the {@link HealthKind} type says cannot exist.
+ */
+const offeredKinds = (
+	sql: Queryable,
+	alias: string,
+	kinds: readonly HealthKind[] | null = null
+): Fragment => sql`${sql(alias)}.kind in ${sql([...(kinds ?? HEALTH_KINDS)])}`;
 
 export interface HealthTerm extends RecordBase {
 	kind: HealthKind;
@@ -117,7 +132,7 @@ export async function listHealthTerms(
 		select ${columns(sql)} from ${sql(TABLE)}
 		where ${readableScope(sql, viewer, TABLE)}
 		  and ${liveScope(sql, TABLE, filters.includeArchived)}
-		  ${kinds ? sql`and kind in ${sql([...kinds])}` : sql``}
+		  and ${offeredKinds(sql, TABLE, kinds)}
 		  ${filters.search ? sql`and name ilike ${'%' + filters.search.trim() + '%'}` : sql``}
 		order by kind asc, name asc
 		limit ${limit} offset ${offset}
@@ -304,6 +319,7 @@ export async function healthForLog(
 		where h.daily_log_id = ${dailyLogId}::uuid
 		  and l.household_id = ${viewer.householdId}::uuid
 		  and l.owner_user_id = ${viewer.userId}::uuid
+		  and ${offeredKinds(sql, 'v')}
 		order by v.kind asc, v.name asc
 	`;
 	return rows.map((row) => ({
@@ -423,7 +439,7 @@ export async function healthFrequencies(
 		where ${readableScope(sql, viewer, 'v')}
 		  and l.household_id = ${viewer.householdId}::uuid
 		  and l.owner_user_id = ${viewer.userId}::uuid
-		  ${kinds ? sql`and v.kind in ${sql([...kinds])}` : sql``}
+		  and ${offeredKinds(sql, 'v', kinds)}
 		  ${options.from ? sql`and l.on_date >= ${options.from}::date` : sql``}
 		  ${options.to ? sql`and l.on_date <= ${options.to}::date` : sql``}
 		group by v.id, v.kind, v.name
@@ -540,6 +556,7 @@ export async function healthTermCounts(
 		select kind, count(*)::int as total
 		from ${sql(TABLE)}
 		where ${householdScope(sql, viewer, TABLE)} and archived_at is null
+		  and ${offeredKinds(sql, TABLE)}
 		group by kind
 	`;
 	const counts = Object.fromEntries(HEALTH_KINDS.map((k) => [k, 0])) as Record<HealthKind, number>;
