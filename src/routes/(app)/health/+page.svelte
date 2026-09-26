@@ -1,5 +1,15 @@
 <script lang="ts">
-	import { Badge, Button, Card, EmptyState, List, ListRow, PageHeader } from '$lib/components';
+	import { resolve } from '$app/paths';
+	import {
+		appPath,
+		Badge,
+		Button,
+		Card,
+		EmptyState,
+		List,
+		ListRow,
+		PageHeader
+	} from '$lib/components';
 	import type { RangeStatus } from '$lib/server/repositories';
 	import DueMedicationRow from './DueMedicationRow.svelte';
 	import MeasurementChart from './measurements/MeasurementChart.svelte';
@@ -297,9 +307,13 @@
 		{#if vitalsRows.length === 0}
 			<EmptyState
 				title="No readings recorded"
-				description="Blood pressure, heart rate, sleep and water are recorded on the day itself."
+				description="Add a blood pressure, heart rate or glucose reading under Measurements and it shows up here, a row per day."
 				icon="today"
-			/>
+			>
+				{#snippet action()}
+					<Button href="/health/measurements" size="sm" icon="plus">Add a reading</Button>
+				{/snippet}
+			</EmptyState>
 		{:else}
 			<div class="scroll">
 				<table>
@@ -326,6 +340,9 @@
 					</tbody>
 				</table>
 			</div>
+			<p class="table-foot">
+				<a href={resolve(appPath('/health/measurements'))}>Add a reading</a>
+			</p>
 		{/if}
 	</Card>
 </section>
