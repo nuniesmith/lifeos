@@ -7,6 +7,7 @@ import {
 	recentVitals
 } from '$lib/server/repositories';
 import { requireViewer } from '$lib/server/viewer';
+import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
 /** Same window the symptoms & mood page itself uses for "how often". */
@@ -31,7 +32,13 @@ const PATTERN_WINDOW_DAYS = 90;
  * `/health/symptoms`: it already merges two tables into one view, which is
  * closer to "the whole picture" than to either single-purpose page.
  */
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, url }) => {
+	// The symptom and mood vocabulary used to live here, filtered with ?kind=.
+	// It moved to /health/symptoms when this page became the hub; an old link
+	// or bookmark carrying ?kind= lands there, query intact, not on the hub.
+	if (url.searchParams.has('kind')) {
+		redirect(308, `/health/symptoms${url.search}`);
+	}
 	const viewer = await requireViewer(locals.user);
 	const today = await householdToday(sql, viewer.householdId);
 
