@@ -1429,6 +1429,67 @@ describe('Health Measurements import', () => {
 		expect(Number(rows[0]?.weight)).toBe(69.5);
 	});
 
+	it('keeps a unit set in LifeOS through a re-import, and drops it along with its value', async () => {
+		// Notion's Weight and Blood Glucose are bare numbers (migration 0022):
+		// an import never sets a unit, so one someone chose in LifeOS must not
+		// be wiped by the next import that has nothing to say about it.
+		const measurement = page(10);
+		const build = (cells: Record<string, string>) => [
+			{
+				...MEASUREMENTS,
+				headers: HEADERS,
+				rows: [
+					{
+						page: measurement,
+						cells: { Name: 'September 10, 2026', 'Date & Time': 'September 10, 2026', ...cells }
+					}
+				]
+			}
+		];
+		const stored = async () =>
+			(
+				await sql<
+					{
+						glucose: unknown;
+						glucose_unit: string | null;
+						weight: unknown;
+						weight_unit: string | null;
+					}[]
+				>`
+					select glucose, glucose_unit, weight, weight_unit from health_measurements
+					where notion_page_id = ${uuid(measurement)}
+				`
+			).map((r) => ({
+				glucose: r.glucose === null ? null : Number(r.glucose),
+				glucoseUnit: r.glucose_unit,
+				weight: r.weight === null ? null : Number(r.weight),
+				weightUnit: r.weight_unit
+			}));
+
+		await importFrom(await exportOf(build({ Weight: '154.3', 'Blood Glucose': '6.2' })));
+		expect(await stored()).toEqual([
+			{ glucose: 6.2, glucoseUnit: null, weight: 154.3, weightUnit: null }
+		]);
+
+		await sql`
+			update health_measurements set glucose_unit = 'mmol/L', weight_unit = 'lb'
+			where notion_page_id = ${uuid(measurement)}
+		`;
+
+		// Both values still exported (the weight changed): both units survive.
+		await importFrom(await exportOf(build({ Weight: '155.0', 'Blood Glucose': '6.2' })));
+		expect(await stored()).toEqual([
+			{ glucose: 6.2, glucoseUnit: 'mmol/L', weight: 155, weightUnit: 'lb' }
+		]);
+
+		// The glucose cleared in Notion: its unit goes with it, as the table's
+		// CHECK requires — otherwise this import would fail outright.
+		await importFrom(await exportOf(build({ Weight: '155.0' })));
+		expect(await stored()).toEqual([
+			{ glucose: null, glucoseUnit: null, weight: 155, weightUnit: 'lb' }
+		]);
+	});
+
 	it('does not resurrect a reading onto daily_logs when Systolic BP briefly reappears via carryForwardRemovedColumns', async () => {
 		// The exact hazard migration 0019 exists to close: an OLDER export still
 		// has Systolic BP on the Daily Log database; carryForwardRemovedColumns

@@ -180,6 +180,9 @@ async function medicationsOverview(
 export interface LatestReading {
 	value: number;
 	measuredAt: Date;
+	/** For glucose and weight, the unit that reading was taken in, or null when
+	 *  it recorded none (migration 0022). Absent for kinds with only one unit. */
+	unit?: string | null;
 }
 
 export interface LatestBloodPressure {
@@ -210,11 +213,17 @@ export interface MeasurementsOverview {
  */
 export function latestReading(
 	rows: readonly HealthMeasurement[],
-	pick: (row: HealthMeasurement) => number | null
+	pick: (row: HealthMeasurement) => number | null,
+	pickUnit?: (row: HealthMeasurement) => string | null
 ): LatestReading | null {
 	for (const row of rows) {
 		const value = pick(row);
-		if (value !== null) return { value, measuredAt: row.measuredAt };
+		if (value === null) continue;
+		// The unit comes from the SAME row as the value, never from a later one:
+		// a 6.2 shown beside another reading's "mg/dL" would be a false reading.
+		return pickUnit
+			? { value, measuredAt: row.measuredAt, unit: pickUnit(row) }
+			: { value, measuredAt: row.measuredAt };
 	}
 	return null;
 }
@@ -244,8 +253,16 @@ async function measurementsOverview(sql: Queryable, viewer: Viewer): Promise<Mea
 	return {
 		bloodPressure: latestBloodPressure(rows),
 		heartRate: latestReading(rows, (r) => r.heartRate),
-		glucose: latestReading(rows, (r) => r.glucose),
-		weight: latestReading(rows, (r) => r.weight),
+		glucose: latestReading(
+			rows,
+			(r) => r.glucose,
+			(r) => r.glucoseUnit
+		),
+		weight: latestReading(
+			rows,
+			(r) => r.weight,
+			(r) => r.weightUnit
+		),
 		qtInterval: latestReading(rows, (r) => r.qtInterval),
 		latestOverall: rows[0] ?? null,
 		recentChronological: [...rows].reverse()

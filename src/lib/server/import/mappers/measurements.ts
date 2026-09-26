@@ -59,6 +59,12 @@ export const upsertHealthMeasurements = mapper('health_measurements', async (sql
 	//
 	// No `archived_at`: unlike most source databases, this one has no Archive
 	// checkbox to read, so a promoted row is always live.
+	//
+	// No units either (migration 0022): Notion's "Blood Glucose" and "Weight"
+	// are bare numbers, so a new row records none. On a re-import, a unit
+	// someone set in LifeOS is kept -- the export has nothing to say about it --
+	// unless the value itself is gone, when the unit goes with it, as the
+	// table's own CHECK requires.
 	const [r] = await sql<{ id: string }[]>`
 		insert into health_measurements (
 			household_id, owner_user_id, measured_at, systolic, diastolic, bp_context,
@@ -78,8 +84,12 @@ export const upsertHealthMeasurements = mapper('health_measurements', async (sql
 			bp_context = excluded.bp_context,
 			heart_rate = excluded.heart_rate,
 			glucose = excluded.glucose,
+			glucose_unit = case when excluded.glucose is null then null
+			                    else health_measurements.glucose_unit end,
 			glucose_context = excluded.glucose_context,
 			weight = excluded.weight,
+			weight_unit = case when excluded.weight is null then null
+			                   else health_measurements.weight_unit end,
 			qt_interval = excluded.qt_interval,
 			notes = excluded.notes,
 			source_record_id = excluded.source_record_id

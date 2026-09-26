@@ -85,7 +85,8 @@ describe('adding a reading', () => {
 		const created = ok(
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-09-03T07:15',
-				weight: 71.4
+				weight: 71.4,
+				weightUnit: 'kg'
 			}),
 			'save a weight-only reading'
 		).record;
@@ -131,7 +132,9 @@ describe('adding a reading', () => {
 	});
 
 	it('refuses a reading with no date and time', async () => {
-		expect(await createHealthMeasurement(sql, owner, { weight: 71.4 })).toMatchObject({
+		expect(
+			await createHealthMeasurement(sql, owner, { weight: 71.4, weightUnit: 'kg' })
+		).toMatchObject({
 			ok: false,
 			reason: 'invalid'
 		});
@@ -145,7 +148,11 @@ describe('adding a reading', () => {
 
 	it('rejects a glucose or weight of exactly zero, matching the table’s own CHECK', async () => {
 		expect(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 0 })
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 0,
+				weightUnit: 'kg'
+			})
 		).toMatchObject({ ok: false, reason: 'invalid' });
 	});
 
@@ -160,7 +167,11 @@ describe('adding a reading', () => {
 		await sql`update households set timezone = 'Asia/Tokyo' where id = ${owner.householdId}::uuid`;
 		// Noon in Tokyo (JST, UTC+9, no DST) is 03:00 UTC the same day.
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T12:00', weight: 71.4 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T12:00',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'save a reading'
 		).record;
 		expect(created.measuredAt.toISOString()).toBe('2026-09-03T03:00:00.000Z');
@@ -178,6 +189,7 @@ describe('adding a reading', () => {
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-09-03T07:15',
 				weight: 71.4,
+				weightUnit: 'kg',
 				dailyLogId: day.id
 			}),
 			'save a linked reading'
@@ -197,6 +209,7 @@ describe('adding a reading', () => {
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-09-03T07:15',
 				weight: 71.4,
+				weightUnit: 'kg',
 				dailyLogId: theirDay.id
 			})
 		).toMatchObject({ ok: false, reason: 'not_found' });
@@ -206,15 +219,27 @@ describe('adding a reading', () => {
 describe('the recent list', () => {
 	it('orders most recent first', async () => {
 		ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-01T08:00', weight: 70 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-01T08:00',
+				weight: 70,
+				weightUnit: 'kg'
+			}),
 			'a'
 		);
 		ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T08:00', weight: 71 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T08:00',
+				weight: 71,
+				weightUnit: 'kg'
+			}),
 			'b'
 		);
 		ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-02T08:00', weight: 69 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-02T08:00',
+				weight: 69,
+				weightUnit: 'kg'
+			}),
 			'c'
 		);
 
@@ -224,7 +249,11 @@ describe('the recent list', () => {
 
 	it('never lists the other member’s readings', async () => {
 		ok(
-			await createHealthMeasurement(sql, partner, { measuredAt: '2026-09-01T08:00', weight: 70 }),
+			await createHealthMeasurement(sql, partner, {
+				measuredAt: '2026-09-01T08:00',
+				weight: 70,
+				weightUnit: 'kg'
+			}),
 			'partner reading'
 		);
 		expect(await listHealthMeasurements(sql, owner)).toEqual([]);
@@ -233,7 +262,11 @@ describe('the recent list', () => {
 
 	it('leaves out an archived reading', async () => {
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-01T08:00', weight: 70 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-01T08:00',
+				weight: 70,
+				weightUnit: 'kg'
+			}),
 			'a reading'
 		).record;
 		ok(await setHealthMeasurementArchived(sql, owner, created.id, true), 'archive it');
@@ -250,7 +283,8 @@ describe('editing a reading', () => {
 				measuredAt: '2026-09-03T07:15',
 				systolic: 118,
 				diastolic: 76,
-				weight: 71.4
+				weight: 71.4,
+				weightUnit: 'kg'
 			}),
 			'create'
 		).record;
@@ -271,6 +305,7 @@ describe('editing a reading', () => {
 				measuredAt: '2026-09-03T07:15',
 				systolic: 118,
 				weight: 71.4,
+				weightUnit: 'kg',
 				bpContext: 'Resting'
 			}),
 			'create'
@@ -285,7 +320,11 @@ describe('editing a reading', () => {
 
 	it('refuses to clear every reading down to nothing', async () => {
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 71.4 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'create'
 		).record;
 
@@ -298,7 +337,11 @@ describe('editing a reading', () => {
 
 	it('refuses a stale write', async () => {
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 71.4 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'create'
 		).record;
 		ok(
@@ -313,7 +356,11 @@ describe('editing a reading', () => {
 
 	it('refuses to edit the other member’s reading', async () => {
 		const theirs = ok(
-			await createHealthMeasurement(sql, partner, { measuredAt: '2026-09-03T07:15', weight: 71.4 }),
+			await createHealthMeasurement(sql, partner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'their reading'
 		).record;
 
@@ -326,7 +373,11 @@ describe('editing a reading', () => {
 describe('deleting a reading', () => {
 	it('archives rather than removing the row — deletion is recoverable everywhere in LifeOS', async () => {
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 71.4 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'create'
 		).record;
 
@@ -340,13 +391,267 @@ describe('deleting a reading', () => {
 
 	it('un-deletes by clearing archived_at', async () => {
 		const created = ok(
-			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 71.4 }),
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 71.4,
+				weightUnit: 'kg'
+			}),
 			'create'
 		).record;
 		ok(await setHealthMeasurementArchived(sql, owner, created.id, true), 'delete');
 
 		ok(await setHealthMeasurementArchived(sql, owner, created.id, false), 'restore');
 		expect(await listHealthMeasurements(sql, owner)).toHaveLength(1);
+	});
+});
+
+describe('units for glucose and weight (migration 0022)', () => {
+	/** A reading as the importer leaves one: a value, and no unit recorded. */
+	async function imported(values: { glucose?: number; weight?: number }) {
+		const [row] = await sql<{ id: string }[]>`
+			insert into health_measurements (household_id, owner_user_id, measured_at, glucose, weight)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, now(),
+			        ${values.glucose ?? null}, ${values.weight ?? null})
+			returning id
+		`;
+		const reading = await getHealthMeasurement(sql, owner, row!.id);
+		if (!reading) throw new Error('could not read the imported reading back');
+		return reading;
+	}
+
+	it('stores each value in the unit it was taken in, not converted', async () => {
+		const created = ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				glucose: 112,
+				glucoseUnit: 'mg/dL',
+				weight: 154.3,
+				weightUnit: 'lb'
+			}),
+			'save a reading in mg/dL and lb'
+		).record;
+
+		const stored = await getHealthMeasurement(sql, owner, created.id);
+		expect(stored).toMatchObject({
+			glucose: 112,
+			glucoseUnit: 'mg/dL',
+			weight: 154.3,
+			weightUnit: 'lb'
+		});
+	});
+
+	it('refuses a new glucose or weight without a unit, rather than guessing one', async () => {
+		for (const glucoseUnit of [undefined, '', null]) {
+			const result = await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				glucose: 6.2,
+				...(glucoseUnit === undefined ? {} : { glucoseUnit })
+			});
+			expect(result).toMatchObject({
+				ok: false,
+				reason: 'invalid',
+				message: 'choose a unit for glucose'
+			});
+		}
+		expect(
+			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', weight: 70 })
+		).toMatchObject({ ok: false, reason: 'invalid', message: 'choose a unit for weight' });
+	});
+
+	it('refuses a unit it does not know, even a near miss', async () => {
+		expect(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				glucose: 6.2,
+				glucoseUnit: 'mmol/l'
+			})
+		).toMatchObject({
+			ok: false,
+			reason: 'invalid',
+			message: 'glucose unit must be mmol/L or mg/dL'
+		});
+		expect(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 11,
+				weightUnit: 'stone'
+			})
+		).toMatchObject({ ok: false, reason: 'invalid', message: 'weight unit must be kg or lb' });
+	});
+
+	it('catches a number typed against the wrong unit, and says which unit it fits', async () => {
+		const high = await createHealthMeasurement(sql, owner, {
+			measuredAt: '2026-09-03T07:15',
+			glucose: 112,
+			glucoseUnit: 'mmol/L'
+		});
+		expect(high).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(high.ok ? '' : high.message).toContain('did you mean mg/dL?');
+
+		const low = await createHealthMeasurement(sql, owner, {
+			measuredAt: '2026-09-03T07:15',
+			glucose: 6.2,
+			glucoseUnit: 'mg/dL'
+		});
+		expect(low).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(low.ok ? '' : low.message).toContain('did you mean mmol/L?');
+
+		const heavy = await createHealthMeasurement(sql, owner, {
+			measuredAt: '2026-09-03T07:15',
+			weight: 1500,
+			weightUnit: 'lb'
+		});
+		expect(heavy).toMatchObject({ ok: false, reason: 'invalid' });
+		// 1500 fits neither unit, so no other unit is suggested.
+		expect(heavy.ok ? '' : heavy.message).not.toContain('did you mean');
+	});
+
+	it('does not store the unit the form sends beside an empty value', async () => {
+		// The form's unit pickers always submit a value, filled in or not.
+		const created = ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				systolic: 118,
+				diastolic: 76,
+				glucose: '',
+				glucoseUnit: 'mmol/L',
+				weight: '',
+				weightUnit: 'kg'
+			}),
+			'save a blood pressure reading'
+		).record;
+		expect(created).toMatchObject({ glucoseUnit: null, weightUnit: null });
+	});
+
+	it('keeps the stored unit when an edit does not mention it', async () => {
+		const created = ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 154.3,
+				weightUnit: 'lb'
+			}),
+			'save a weight in lb'
+		).record;
+		const edited = ok(
+			await updateHealthMeasurement(sql, owner, created.id, { weight: 155 }, created.updatedAt),
+			'change the weight'
+		).record;
+		expect(edited).toMatchObject({ weight: 155, weightUnit: 'lb' });
+	});
+
+	it('changes only the unit when that is all an edit sends', async () => {
+		const created = ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				weight: 70,
+				weightUnit: 'lb'
+			}),
+			'save a weight recorded against the wrong unit'
+		).record;
+		const edited = ok(
+			await updateHealthMeasurement(
+				sql,
+				owner,
+				created.id,
+				{ weightUnit: 'kg' },
+				created.updatedAt
+			),
+			'correct the unit'
+		).record;
+		expect(edited).toMatchObject({ weight: 70, weightUnit: 'kg' });
+	});
+
+	it('clears a unit together with its value', async () => {
+		const created = ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-09-03T07:15',
+				heartRate: 64,
+				glucose: 6.2,
+				glucoseUnit: 'mmol/L'
+			}),
+			'save a glucose'
+		).record;
+		const edited = ok(
+			await updateHealthMeasurement(
+				sql,
+				owner,
+				created.id,
+				{ glucose: '', glucoseUnit: 'mmol/L' },
+				created.updatedAt
+			),
+			'clear the glucose'
+		).record;
+		expect(edited).toMatchObject({ glucose: null, glucoseUnit: null, heartRate: 64 });
+	});
+
+	it('wants a unit for a value an edit adds to a reading that had none', async () => {
+		const created = ok(
+			await createHealthMeasurement(sql, owner, { measuredAt: '2026-09-03T07:15', heartRate: 64 }),
+			'save a heart rate'
+		).record;
+		for (const patch of [{ glucose: 6.2 }, { glucose: 6.2, glucoseUnit: '' }]) {
+			expect(
+				await updateHealthMeasurement(sql, owner, created.id, patch, created.updatedAt)
+			).toMatchObject({ ok: false, reason: 'invalid', message: 'choose a unit for glucose' });
+		}
+		const edited = ok(
+			await updateHealthMeasurement(
+				sql,
+				owner,
+				created.id,
+				{ glucose: 6.2, glucoseUnit: 'mmol/L' },
+				created.updatedAt
+			),
+			'add a glucose with its unit'
+		).record;
+		expect(edited).toMatchObject({ glucose: 6.2, glucoseUnit: 'mmol/L' });
+	});
+
+	it('leaves an imported reading without a unit until someone chooses one', async () => {
+		const reading = await imported({ glucose: 6.2, weight: 154.3 });
+		expect(reading).toMatchObject({ glucoseUnit: null, weightUnit: null });
+
+		// Saving an unrelated change sends the pickers empty ("Not recorded"):
+		// that must not quietly assign a unit the reading never had.
+		const noted = ok(
+			await updateHealthMeasurement(
+				sql,
+				owner,
+				reading.id,
+				{ notes: 'After breakfast.', glucoseUnit: '', weightUnit: '' },
+				reading.updatedAt
+			),
+			'add a note'
+		).record;
+		expect(noted).toMatchObject({ glucoseUnit: null, weightUnit: null, notes: 'After breakfast.' });
+
+		const set = ok(
+			await updateHealthMeasurement(
+				sql,
+				owner,
+				reading.id,
+				{ glucoseUnit: 'mmol/L', weightUnit: 'lb' },
+				noted.updatedAt
+			),
+			'set the units'
+		).record;
+		expect(set).toMatchObject({
+			glucose: 6.2,
+			glucoseUnit: 'mmol/L',
+			weight: 154.3,
+			weightUnit: 'lb'
+		});
+	});
+
+	it('is enforced by the table itself, not only by this module', async () => {
+		const insert = (glucose: number | null, unit: string) => sql`
+			insert into health_measurements (household_id, owner_user_id, measured_at, heart_rate, glucose, glucose_unit)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, now(), 64, ${glucose}, ${unit})
+		`;
+		// A unit with no value to describe.
+		await expect(insert(null, 'mmol/L')).rejects.toThrow(/glucose_unit_needs_value/);
+		// A unit the table does not know.
+		await expect(insert(6.2, 'mmol/l')).rejects.toThrow(/glucose_unit_check/);
 	});
 });
 

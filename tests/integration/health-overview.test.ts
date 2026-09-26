@@ -203,7 +203,8 @@ describe('measurements: the latest of each kind', () => {
 				measuredAt: '2026-01-05T08:00',
 				systolic: 118,
 				diastolic: 76,
-				weight: 70
+				weight: 70,
+				weightUnit: 'kg'
 			}),
 			'earlier reading'
 		);
@@ -211,7 +212,8 @@ describe('measurements: the latest of each kind', () => {
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-01-10T08:00',
 				heartRate: 64,
-				glucose: 5.4
+				glucose: 5.4,
+				glucoseUnit: 'mmol/L'
 			}),
 			'later reading, different fields'
 		);
@@ -228,8 +230,20 @@ describe('measurements: the latest of each kind', () => {
 	});
 
 	it('orders the trend window chronologically, oldest first', async () => {
-		ok(await createHealthMeasurement(sql, owner, { measuredAt: '2026-01-10T08:00', weight: 71 }));
-		ok(await createHealthMeasurement(sql, owner, { measuredAt: '2026-01-05T08:00', weight: 70 }));
+		ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-01-10T08:00',
+				weight: 71,
+				weightUnit: 'kg'
+			})
+		);
+		ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-01-05T08:00',
+				weight: 70,
+				weightUnit: 'kg'
+			})
+		);
 
 		const overview = await healthOverview(sql, owner, today);
 		expect(overview.measurements.recentChronological.map((r) => r.weight)).toEqual([70, 71]);
@@ -365,6 +379,7 @@ describe('privacy: a private reading never crosses to another viewer', () => {
 			await createHealthMeasurement(sql, partner, {
 				measuredAt: '2026-01-05T08:00',
 				weight: 61,
+				weightUnit: 'kg',
 				heartRate: 58
 			}),
 			"partner's reading"
@@ -383,7 +398,11 @@ describe('privacy: a private reading never crosses to another viewer', () => {
 
 	it('never shows the owner the partner’s private measurement through the Today page panel either', async () => {
 		ok(
-			await createHealthMeasurement(sql, partner, { measuredAt: '2026-01-05T08:00', weight: 61 }),
+			await createHealthMeasurement(sql, partner, {
+				measuredAt: '2026-01-05T08:00',
+				weight: 61,
+				weightUnit: 'kg'
+			}),
 			"partner's reading"
 		);
 

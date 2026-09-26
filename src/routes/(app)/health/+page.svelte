@@ -13,6 +13,7 @@
 	import type { RangeStatus } from '$lib/server/repositories';
 	import DueMedicationRow from './DueMedicationRow.svelte';
 	import MeasurementChart from './measurements/MeasurementChart.svelte';
+	import { withUnit } from '$lib/units';
 	import type { ChartSeries } from './measurements/chart';
 
 	let { data } = $props();
@@ -185,7 +186,8 @@
 					<div class="reading">
 						<dt>Glucose</dt>
 						<dd>
-							{glucose.value} <span class="reading-date">{shortDate(glucose.measuredAt)}</span>
+							{withUnit(glucose.value, glucose.unit)}
+							<span class="reading-date">{shortDate(glucose.measuredAt)}</span>
 						</dd>
 					</div>
 				{/if}
@@ -193,7 +195,10 @@
 					{@const weight = data.health.measurements.weight}
 					<div class="reading">
 						<dt>Weight</dt>
-						<dd>{weight.value} <span class="reading-date">{shortDate(weight.measuredAt)}</span></dd>
+						<dd>
+							{withUnit(weight.value, weight.unit)}
+							<span class="reading-date">{shortDate(weight.measuredAt)}</span>
+						</dd>
 					</div>
 				{/if}
 				{#if data.health.measurements.qtInterval}
