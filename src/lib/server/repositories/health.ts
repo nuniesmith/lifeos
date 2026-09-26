@@ -64,13 +64,20 @@ export type HealthKind = (typeof HEALTH_KINDS)[number];
 /**
  * `kind in (…)` for the kinds asked for, or for every offered kind when none
  * were. Never "no filter": that would let a retired kind through with a
- * `kind` the {@link HealthKind} type says cannot exist.
+ * `kind` the {@link HealthKind} type says cannot exist. The kinds asked for are
+ * intersected with {@link HEALTH_KINDS} rather than trusted, because the type
+ * is erased by the time a form value reaches here. What is left being empty
+ * means no kinds and so matches nothing — `in ()` is not SQL, and widening it
+ * to "all" would turn a caller's narrowing into its opposite.
  */
 const offeredKinds = (
 	sql: Queryable,
 	alias: string,
 	kinds: readonly HealthKind[] | null = null
-): Fragment => sql`${sql(alias)}.kind in ${sql([...(kinds ?? HEALTH_KINDS)])}`;
+): Fragment => {
+	const wanted = (kinds ?? HEALTH_KINDS).filter((kind) => HEALTH_KINDS.includes(kind));
+	return wanted.length === 0 ? sql`false` : sql`${sql(alias)}.kind in ${sql(wanted)}`;
+};
 
 export interface HealthTerm extends RecordBase {
 	kind: HealthKind;
@@ -194,6 +201,11 @@ export function createHealthTerm(
 
 		// See migration 0016 for why this is a condition rather than a unique
 		// index: a duplicated label must not be able to abort an import.
+		//
+		// Only words the viewer can read count as a duplicate. Another member's
+		// private word must not be able to refuse this one: "that is already on
+		// the list", about a word nowhere on the list they can see, would tell
+		// them it exists — and in a two-person household, whose it is.
 		const rows = await sql<HealthTermRow[]>`
 			insert into ${sql(TABLE)} (
 				household_id, owner_user_id, visibility, kind, name, notes, attributes,
@@ -208,7 +220,7 @@ export function createHealthTerm(
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			where not exists (
 				select 1 from ${sql(TABLE)} existing
-				where existing.household_id = ${viewer.householdId}::uuid
+				where ${readableScope(sql, viewer, 'existing')}
 				  and existing.kind = ${kind}
 				  and lower(trim(existing.name)) = lower(trim(${name}))
 				  and existing.archived_at is null
@@ -333,17 +345,33 @@ export async function healthForLog(
 /**
  * Records a term against a day, or updates its detail.
  *
- * Both sides are checked in SQL: the log must be the viewer's own, and the
- * term must be one they can read. A caller cannot attach an arbitrary uuid.
+ * Every side is checked in the INSERT itself, so a refused attach writes
+ * nothing rather than being caught afterwards:
+ *
+ *  - the log must be the viewer's OWN, whatever its visibility. A journal is
+ *    its author's (search and the archive treat it the same way), so a
+ *    household-visible day of the other member's is still not theirs to tag;
+ *  - the term must be one they can read, in their household, and live;
+ *  - the term's kind must be an offered one — never a retired kind such as
+ *    `vitamin`, which {@link offeredKinds} already hides from every read. A
+ *    caller may narrow that further with `kinds`; the journal does, to the
+ *    lists its picker offers.
+ *
+ * A caller cannot attach an arbitrary uuid. `detail` left undefined keeps
+ * whatever detail the day already had, so tapping a word that is already
+ * tagged — a double tap, a stale page — does not wipe a note written against
+ * it; pass `null` to clear it.
  */
 export async function logHealthTerm(
 	sql: Queryable,
 	viewer: Viewer,
 	dailyLogId: string,
 	vocabularyId: string,
-	detail?: string | null
+	detail?: string | null,
+	kinds?: readonly HealthKind[]
 ): Promise<WriteResult<{ dailyLogId: string; vocabularyId: string }>> {
 	if (!isUuid(dailyLogId) || !isUuid(vocabularyId)) return { ok: false, reason: 'not_found' };
+	const keepDetail = detail === undefined;
 
 	const rows = await sql<{ daily_log_id: string }[]>`
 		insert into daily_log_health (daily_log_id, vocabulary_id, detail)
@@ -355,7 +383,9 @@ export async function logHealthTerm(
 		  and v.id = ${vocabularyId}::uuid
 		  and ${readableScope(sql, viewer, 'v')}
 		  and v.archived_at is null
-		on conflict (daily_log_id, vocabulary_id) do update set detail = excluded.detail
+		  and ${offeredKinds(sql, 'v', kinds ?? null)}
+		on conflict (daily_log_id, vocabulary_id) do update set detail =
+			case when ${keepDetail}::boolean then daily_log_health.detail else excluded.detail end
 		returning daily_log_id
 	`;
 
@@ -363,22 +393,33 @@ export async function logHealthTerm(
 	return { ok: true, record: { dailyLogId, vocabularyId } };
 }
 
+/**
+ * Takes a term off a day.
+ *
+ * Owner-only, like {@link logHealthTerm}. Limited to offered kinds (or the
+ * narrower `kinds` a caller passes) for the reason the reads are: what a page
+ * cannot show, it must not be able to remove. A leftover vitamin link stays
+ * where 0018 left it rather than vanishing through a hand-built request.
+ */
 export async function unlogHealthTerm(
 	sql: Queryable,
 	viewer: Viewer,
 	dailyLogId: string,
-	vocabularyId: string
+	vocabularyId: string,
+	kinds?: readonly HealthKind[]
 ): Promise<WriteResult<{ dailyLogId: string }>> {
 	if (!isUuid(dailyLogId) || !isUuid(vocabularyId)) return { ok: false, reason: 'not_found' };
 
 	const rows = await sql<{ daily_log_id: string }[]>`
 		delete from daily_log_health h
-		using daily_logs l
+		using daily_logs l, health_vocabulary v
 		where h.daily_log_id = l.id
+		  and v.id = h.vocabulary_id
 		  and h.daily_log_id = ${dailyLogId}::uuid
 		  and h.vocabulary_id = ${vocabularyId}::uuid
 		  and l.household_id = ${viewer.householdId}::uuid
 		  and l.owner_user_id = ${viewer.userId}::uuid
+		  and ${offeredKinds(sql, 'v', kinds ?? null)}
 		returning h.daily_log_id
 	`;
 
