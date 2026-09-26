@@ -44,6 +44,18 @@
 	);
 
 	// ─── measurements ─────────────────────────────────────────────────────
+	// A lab result date is a calendar day ("2026-09-01"). Built from its parts,
+	// not `new Date(day)`: that is UTC midnight, which west of Greenwich shows
+	// as the day before.
+	const dayDate = (day: string) => {
+		const [year = 0, month = 1, date = 1] = day.split('-').map(Number);
+		return new Date(year, month - 1, date).toLocaleDateString(undefined, {
+			day: 'numeric',
+			month: 'short',
+			year: 'numeric'
+		});
+	};
+
 	const shortDate = (d: Date) =>
 		d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
@@ -77,6 +89,13 @@
 	// ─── the old vitals table (blood pressure/HR/sleep/water by day) ──────
 	const bp = (v: { systolicBp: number | null; diastolicBp: number | null }): string | null =>
 		v.systolicBp !== null && v.diastolicBp !== null ? `${v.systolicBp}/${v.diastolicBp}` : null;
+	// A day with a daily log but none of these four values would be a row of
+	// dashes; the table only lists days that recorded something it shows.
+	const vitalsRows = $derived(
+		data.vitals.filter(
+			(v) => bp(v) !== null || v.heartRate !== null || v.sleepScore !== null || v.water !== null
+		)
+	);
 </script>
 
 <svelte:head><title>Health &amp; Fitness · LifeOS</title></svelte:head>
@@ -205,7 +224,7 @@
 				{#each data.health.labs as item (item.markerId)}
 					<ListRow
 						title={item.markerName}
-						meta={`${item.value}${item.units ? ` ${item.units}` : ''} · ${item.resultDate}`}
+						meta={`${item.value}${item.units ? ` ${item.units}` : ''} · ${dayDate(item.resultDate)}`}
 					>
 						{#snippet trail()}
 							<Badge tone={STATUS_TONE[item.status]}>{STATUS_LABEL[item.status]}</Badge>
@@ -256,7 +275,7 @@
 		{#if data.topSymptoms.length === 0}
 			<EmptyState
 				title="Nothing logged yet"
-				description="Symptoms, mood, vitamins and more — tracked and counted over time."
+				description="Symptoms and mood — tracked and counted over time."
 				icon="journal"
 			/>
 		{:else}
@@ -275,7 +294,7 @@
 <section class="vitals-section" aria-labelledby="vitals-heading">
 	<h2 id="vitals-heading" class="section-title">Recent readings</h2>
 	<Card flush>
-		{#if data.vitals.length === 0}
+		{#if vitalsRows.length === 0}
 			<EmptyState
 				title="No readings recorded"
 				description="Blood pressure, heart rate, sleep and water are recorded on the day itself."
@@ -295,7 +314,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each data.vitals as v (v.onDate)}
+						{#each vitalsRows as v (v.onDate)}
 							<tr>
 								<th scope="row">{v.onDate}</th>
 								<td>{bp(v) ?? '—'}</td>

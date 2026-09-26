@@ -155,6 +155,26 @@ describe('layoutChart', () => {
 		expect(new Set(xs).size).toBe(2);
 	});
 
+	it('labels ticks as whole numbers when every reading is one, like blood pressure', () => {
+		const points: ChartPoint[] = [
+			{ at: '2026-01-01T12:00:00.000Z', values: { systolic: 131, diastolic: 83 } },
+			{ at: '2026-01-08T12:00:00.000Z', values: { systolic: 118, diastolic: 76 } }
+		];
+		const labels = layoutChart(points, series, 320, 140).yTicks.map((t) => t.label);
+		expect(labels).toHaveLength(3);
+		for (const label of labels) expect(label).toMatch(/^\d+$/);
+	});
+
+	it('keeps one decimal on the ticks when the readings have decimals, like glucose', () => {
+		const glucose: ChartSeries[] = [{ key: 'glucose', label: 'Glucose', color: 'var(--c-accent)' }];
+		const points: ChartPoint[] = [
+			{ at: '2026-01-01T12:00:00.000Z', values: { glucose: 5.4 } },
+			{ at: '2026-01-08T12:00:00.000Z', values: { glucose: 6.1 } }
+		];
+		const labels = layoutChart(points, glucose, 320, 140).yTicks.map((t) => t.label);
+		expect(labels.some((label) => label.includes('.'))).toBe(true);
+	});
+
 	it('bands a flat series around its one value instead of a zero-height range', () => {
 		const points: ChartPoint[] = [
 			{ at: '2026-01-01T12:00:00.000Z', values: { systolic: 120, diastolic: null } },

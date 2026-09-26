@@ -54,7 +54,11 @@ const PAD = { top: 10, right: 10, bottom: 8, left: 4 };
  * Formats an axis label: whole numbers stay whole (a heart rate of "72", not
  * "72.0"), and one decimal place otherwise (a weight of "154.2").
  */
-function formatTick(value: number): string {
+function formatTick(value: number, wholeNumbers: boolean): string {
+	// Ticks sit on the padded bounds, which are rarely round. When every
+	// reading is a whole number (blood pressure, heart rate, QT), label the
+	// ticks the same way: "135", not "135.2".
+	if (wholeNumbers) return String(Math.round(value));
 	return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
@@ -133,7 +137,7 @@ export function layoutChart(
 
 	const yTicks: Tick[] = [domainMax, (domainMin + domainMax) / 2, domainMin].map((value) => ({
 		y: yOf(value),
-		label: formatTick(value)
+		label: formatTick(value, allValues.every(Number.isInteger))
 	}));
 
 	return { width, height, series, yTicks, isEmpty: false };
