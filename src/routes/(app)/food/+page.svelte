@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import {
 		Badge,
 		Button,
@@ -12,6 +13,8 @@
 		PageHeader
 	} from '$lib/components';
 	import { appPath } from '$lib/components/nav';
+	import PlanMealSheet from './PlanMealSheet.svelte';
+	import { describePlanShopping, describeUndo } from './shopping-summary';
 
 	let { data, form } = $props();
 
@@ -59,6 +62,61 @@
 		});
 
 	const mealsIn = (day: Day, slot: Slot) => day.day?.meals.filter((m) => m.slot === slot) ?? [];
+
+	// ─── planning ─────────────────────────────────────────────────────────────
+
+	/** "Monday 28 September", for the names of the controls on a day. */
+	const longDay = (date: string): string =>
+		new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, {
+			weekday: 'long',
+			day: 'numeric',
+			month: 'long',
+			timeZone: 'UTC'
+		});
+
+	let planOpen = $state(false);
+	let planDate = $state<string | null>(null);
+
+	function planFor(date: string) {
+		planDate = date;
+		planOpen = true;
+	}
+
+	const planning = $derived(data.days.find((d) => d.date === planDate)?.day ?? null);
+	const pickable = $derived(
+		data.recipes.map((r) => ({
+			id: r.id,
+			name: r.name,
+			courses: r.courses,
+			totalMinutes: r.totalMinutes
+		}))
+	);
+
+	const plannedThisWeek = $derived(
+		data.days.reduce((total, d) => total + (d.day?.meals.length ?? 0), 0)
+	);
+
+	/**
+	 * Removing a meal removes the button that did it, which would drop a
+	 * keyboard user's focus to the top of the document. It goes to the day's
+	 * own "plan a meal" button instead.
+	 */
+	const unplanned =
+		(date: string): SubmitFunction =>
+		() =>
+		async ({ update }) => {
+			await update();
+			document.getElementById(`plan-${date}`)?.focus();
+		};
+
+	// The report belongs to the week it was made for; moving to another week
+	// must not leave it describing this one.
+	const shopped = $derived(form?.shopped && form.shopped.from === data.from ? form.shopped : null);
+	const shopLabel = $derived(
+		data.isThisWeek
+			? 'Add this week’s ingredients to the shopping list'
+			: `Add the ingredients for ${weekLabel(data.from)} to the shopping list`
+	);
 
 	/**
 	 * The shopping list walked in shop order, which is what an aisle is for.
@@ -120,18 +178,46 @@
 		{/if}
 		<div class="week">
 			{#each data.days as { date, day } (date)}
-				<article class="day" class:today={date === data.today}>
+				<article
+					class="day"
+					class:today={date === data.today}
+					aria-labelledby={`day-${date}`}
+					aria-current={date === data.today ? 'date' : undefined}
+				>
 					<header>
-						<span class="weekday">{weekday(date)}</span>
-						<span class="date">{dayNumber(date)}</span>
+						<h3 class="when" id={`day-${date}`}>
+							<span class="weekday">{weekday(date)}</span>
+							<span class="date">{dayNumber(date)}</span>
+							<!-- Today is said in words; the border is only a second cue. -->
+							{#if date === data.today}<span class="today-mark">Today</span>{/if}
+						</h3>
+						<Button
+							id={`plan-${date}`}
+							icon="plus"
+							iconOnly
+							variant="secondary"
+							onclick={() => planFor(date)}
+						>
+							Plan a meal for {longDay(date)}
+						</Button>
 					</header>
 					{#if day && day.meals.length > 0}
 						<ul>
 							{#each SLOTS as slot (slot)}
 								{#each mealsIn({ date, day }, slot) as meal (slot + meal.recipeId)}
 									<li>
-										<span class="slot">{SLOT_LABELS[slot]}</span>
-										<span class="meal">{meal.recipeName}</span>
+										<div class="meal-text">
+											<span class="slot">{SLOT_LABELS[slot]}</span>
+											<span class="meal">{meal.recipeName}</span>
+										</div>
+										<form method="POST" action="?/unplan" use:enhance={unplanned(date)}>
+											<input type="hidden" name="mealPlanId" value={day.id} />
+											<input type="hidden" name="slot" value={slot} />
+											<input type="hidden" name="recipeId" value={meal.recipeId} />
+											<Button type="submit" icon="close" iconOnly variant="ghost">
+												{`Remove ${meal.recipeName} from ${SLOT_LABELS[slot].toLowerCase()} on ${longDay(date)}`}
+											</Button>
+										</form>
 									</li>
 								{/each}
 							{/each}
@@ -143,7 +229,44 @@
 				</article>
 			{/each}
 		</div>
+
+		{#if plannedThisWeek > 0}
+			<form method="POST" action="?/shopWeek" class="shop-week" use:enhance>
+				<input type="hidden" name="from" value={data.from} />
+				<Button type="submit" icon="plus">{shopLabel}</Button>
+			</form>
+		{/if}
+		<!--
+			Always in the document, so a screen reader announces the report when
+			it arrives; empty, it takes no space.
+		-->
+		<p class="shop-report" role="status">
+			{#if shopped}
+				{describePlanShopping(shopped)}
+			{:else if form?.unshopped}
+				{describeUndo(form.unshopped)}
+			{/if}
+		</p>
+		{#if shopped && shopped.added.length > 0}
+			<div class="shop-added">
+				<p class="added-names">{shopped.added.map((item) => item.name).join(', ')}</p>
+				<!-- Undo carries back exactly what was moved, nothing else. -->
+				<form method="POST" action="?/undoShopWeek" use:enhance>
+					{#each shopped.added as item (item.id)}
+						<input type="hidden" name="id" value={item.id} />
+					{/each}
+					<Button type="submit" variant="secondary">Undo</Button>
+				</form>
+			</div>
+		{/if}
 	</section>
+
+	<PlanMealSheet
+		bind:open={planOpen}
+		date={planDate}
+		planned={planning?.meals ?? []}
+		recipes={pickable}
+	/>
 
 	<div class="columns">
 		<section aria-labelledby="shopping-heading">
@@ -152,7 +275,7 @@
 				{#if data.shopping.length === 0}
 					<EmptyState
 						title="Nothing to buy"
-						description="Mark an ingredient as needed and it appears here, grouped by aisle."
+						description="Add a week’s planned ingredients from the meal plan and they appear here, grouped by aisle."
 						icon="check"
 					/>
 				{:else}
@@ -168,9 +291,9 @@
 												<form method="POST" action="?/setStatus" use:enhance>
 													<input type="hidden" name="id" value={item.id} />
 													<input type="hidden" name="status" value="in_stock" />
+													<!-- Full size: a thumb target in a shop aisle. -->
 													<Button
 														type="submit"
-														size="sm"
 														variant="ghost"
 														aria-label={`Mark ${item.name} as bought`}
 													>
@@ -327,8 +450,20 @@
 	.day header {
 		display: flex;
 		gap: var(--sp-1);
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
+	}
+	/* A heading so each day is a landmark to a screen reader; it keeps the
+	   look of the plain label it replaced, and wraps in a narrow column. */
+	.when {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		column-gap: var(--sp-2);
+		min-width: 0;
+		margin: 0;
+		font-size: inherit;
+		font-weight: inherit;
 	}
 	.weekday {
 		font-size: var(--fs-sm);
@@ -338,6 +473,11 @@
 		color: var(--c-text-muted);
 		font-size: var(--fs-xs);
 	}
+	.today-mark {
+		color: var(--c-accent);
+		font-size: var(--fs-xs);
+		font-weight: 650;
+	}
 	.day ul {
 		display: grid;
 		gap: var(--sp-2);
@@ -346,8 +486,21 @@
 		list-style: none;
 	}
 	.day li {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-1);
+	}
+	.meal-text {
 		display: grid;
+		flex: 1;
 		gap: 0.05rem;
+		min-width: 0;
+	}
+	.day li form {
+		flex: none;
+		/* The remove button keeps its full 44px target; pulling it into the
+		   card's padding gives the recipe name that much more room. */
+		margin-right: calc(-1 * var(--sp-2));
 	}
 	.slot {
 		color: var(--c-text-muted);
@@ -358,6 +511,35 @@
 	.meal {
 		font-size: var(--fs-sm);
 		line-height: 1.25;
+		/* Seven columns leave a desktop day narrow; a long word breaks at a
+		   hyphen rather than at an arbitrary letter. */
+		overflow-wrap: anywhere;
+		hyphens: auto;
+	}
+
+	.shop-week {
+		margin-top: var(--sp-4);
+	}
+	.shop-report {
+		margin: 0;
+	}
+	.shop-report:not(:empty) {
+		margin-top: var(--sp-3);
+	}
+	.shop-added {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--sp-2) var(--sp-4);
+		margin-top: var(--sp-2);
+	}
+	.added-names {
+		flex: 1 1 14rem;
+		margin: 0;
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
+		overflow-wrap: anywhere;
 	}
 	.nothing {
 		margin: auto 0;
@@ -441,9 +623,15 @@
 			grid-template-columns: 1fr;
 		}
 	}
+	/* One day per row on a phone. Two columns left each day about 150px, and
+	   with a 44px control beside every meal the recipe names were squeezed
+	   into a word per line. */
 	@media (max-width: 40rem) {
 		.week {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.day {
+			min-height: 0;
 		}
 	}
 </style>

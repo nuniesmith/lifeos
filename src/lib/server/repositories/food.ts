@@ -1,5 +1,6 @@
 import type { Fragment } from 'postgres';
 import type { Viewer } from '../auth/authz';
+import { isDay } from './dates';
 import {
 	InvalidInput,
 	baseColumns,
@@ -573,7 +574,10 @@ export async function mealPlan(
 		       m.slot, m.recipe_id, r.name as recipe_name
 		from meal_plans p
 		left join meal_plan_recipes m on m.meal_plan_id = p.id
-		left join recipes r on r.id = m.recipe_id
+		-- The recipe is scoped as well as the day: a member's private recipe
+		-- planned onto a shared day must not show the other member its name.
+		-- An unreadable one comes back null and is skipped below.
+		left join recipes r on r.id = m.recipe_id and ${readableScope(sql, viewer, 'r')}
 		where ${readableScope(sql, viewer, 'p')}
 		  and p.archived_at is null
 		  and p.on_date between ${from}::date and ${to}::date
@@ -604,47 +608,95 @@ export async function mealPlan(
 	return [...byDay.values()];
 }
 
+/** Which day a meal went on, and whether it was already there. */
+export interface MealPlanned {
+	mealPlanId: string;
+	alreadyPlanned: boolean;
+}
+
 export async function planMeal(
 	sql: Queryable,
 	viewer: Viewer,
 	onDate: string,
 	slot: MealSlot,
 	recipeId: string
-): Promise<WriteResult<{ mealPlanId: string }>> {
+): Promise<WriteResult<MealPlanned>> {
 	if (!isUuid(recipeId)) return { ok: false, reason: 'not_found' };
 	if (!MEAL_SLOTS.includes(slot)) return { ok: false, reason: 'invalid', message: 'unknown slot' };
+	// Checked here rather than left to the cast: a malformed date would
+	// otherwise be a database error, and a 500, instead of a refusal.
+	if (!isDay(onDate)) return { ok: false, reason: 'invalid', message: 'that is not a date' };
 
-	return guarded(async () => {
-		// The day is created on demand: planning a dinner should not require
-		// first creating an empty menu for the date.
-		const [plan] = await sql<{ id: string }[]>`
-			insert into meal_plans (household_id, on_date, created_by, updated_by)
-			values (${viewer.householdId}::uuid, ${onDate}::date, ${viewer.userId}::uuid,
-			        ${viewer.userId}::uuid)
-			on conflict (household_id, on_date) do update set updated_at = now()
-			returning id
-		`;
-		if (!plan) return { ok: false, reason: 'invalid', message: 'could not open that day' };
-
-		const rows = await sql<{ meal_plan_id: string }[]>`
-			insert into meal_plan_recipes (meal_plan_id, recipe_id, slot)
-			select ${plan.id}::uuid, r.id, ${slot}
-			from recipes r
-			where r.id = ${recipeId}::uuid and ${readableScope(sql, viewer, 'r')}
-			on conflict do nothing
-			returning meal_plan_id
-		`;
-		// No row means either the recipe is unreachable or it was already
-		// planned; the second is not a failure.
-		if (!rows[0]) {
-			const [existing] = await sql<{ count: number }[]>`
-				select count(*)::int as count from meal_plan_recipes
-				where meal_plan_id = ${plan.id}::uuid and recipe_id = ${recipeId}::uuid and slot = ${slot}
+	// One transaction, and the recipe checked before the day is touched, so a
+	// refusal leaves nothing behind — not even an empty day.
+	return guarded(() =>
+		atomically(sql, async (tx): Promise<WriteResult<MealPlanned>> => {
+			// Readable is enough: planning a recipe cooks it, it does not change
+			// it. An archived one is in the bin and is not offered.
+			const [recipe] = await tx<{ id: string }[]>`
+				select r.id from recipes r
+				where r.id = ${recipeId}::uuid and ${readableScope(tx, viewer, 'r')}
+				  and r.archived_at is null
 			`;
-			if (!existing?.count) return { ok: false, reason: 'not_found' };
-		}
-		return { ok: true, record: { mealPlanId: plan.id } };
-	});
+			if (!recipe) return { ok: false, reason: 'not_found' };
+
+			// The day is created on demand: planning a dinner should not require
+			// first creating an empty menu for the date.
+			//
+			// An existing day is only taken if the viewer may write it. The
+			// unique key is (household, date), so without the WHERE on the
+			// conflict arm this would hand a member the other member's private
+			// day — or an archived one, where the meal would vanish from view.
+			const [plan] = await tx<{ id: string }[]>`
+				insert into meal_plans (household_id, on_date, created_by, updated_by)
+				values (${viewer.householdId}::uuid, ${onDate}::date, ${viewer.userId}::uuid,
+				        ${viewer.userId}::uuid)
+				on conflict (household_id, on_date) do update
+					set updated_at = now(), updated_by = ${viewer.userId}::uuid
+					where ${writableScope(tx, viewer, 'meal_plans')}
+					  and meal_plans.archived_at is null
+				returning id
+			`;
+			if (!plan) return refusedDay(tx, viewer, onDate);
+
+			// Planning the same recipe into the same slot twice is harmless: the
+			// key is (day, recipe, slot) and the second insert does nothing.
+			const added = await tx<{ meal_plan_id: string }[]>`
+				insert into meal_plan_recipes (meal_plan_id, recipe_id, slot)
+				values (${plan.id}::uuid, ${recipe.id}::uuid, ${slot})
+				on conflict do nothing
+				returning meal_plan_id
+			`;
+			return { ok: true, record: { mealPlanId: plan.id, alreadyPlanned: added.length === 0 } };
+		})
+	);
+}
+
+/**
+ * Why a day could not be planned onto. Presentation only: the refusal itself
+ * already happened in the statement above.
+ *
+ * A day the viewer cannot read is `not_found`, the same as no day at all —
+ * saying that the other member has a private plan for Tuesday is itself a
+ * disclosure.
+ */
+async function refusedDay(
+	sql: Queryable,
+	viewer: Viewer,
+	onDate: string
+): Promise<WriteResult<never>> {
+	const [row] = await sql<BaseRow[]>`
+		select ${baseColumns(sql)} from meal_plans
+		where on_date = ${onDate}::date and ${readableScope(sql, viewer, 'meal_plans')}
+	`;
+	if (!row) return { ok: false, reason: 'not_found' };
+	const day = mapBase(row);
+	if (!writableBy(viewer)(day)) return { ok: false, reason: 'forbidden' };
+	return {
+		ok: false,
+		reason: 'invalid',
+		message: 'that day’s plan is archived — restore it from the Archive to plan onto it'
+	};
 }
 
 export async function unplanMeal(
@@ -668,6 +720,181 @@ export async function unplanMeal(
 	`;
 	if (!rows[0]) return { ok: false, reason: 'not_found' };
 	return { ok: true, record: { mealPlanId } };
+}
+
+// ─── from the plan to the shopping list ────────────────────────────────────
+//
+// The shopping list is a status on the pantry, so "shop for this week" is a
+// status change on the ingredients the week's recipes call for — nothing is
+// copied, and nothing can drift.
+//
+// Which statuses it moves, and why only one:
+//
+//   not_needed    → shopping_list. The four statuses have no "out of stock":
+//                   `not_needed` ("❌ Don't Need" in the source) is the only
+//                   one that means "not in the house", and "not needed" held
+//                   only until a planned meal called for it. Leaving these
+//                   alone would make the action a no-op for everything not
+//                   already on the list.
+//   in_stock      → left alone. It is in the house.
+//   use_up        → left alone. It is in the house and meant to be eaten
+//                   first; a plan that uses it is what the status asks for,
+//                   and buying more would defeat it.
+//   shopping_list → left alone. Already on it — which is also what makes a
+//                   second run change nothing.
+//
+// `is_staple` changes nothing. A staple is "re-bought without thinking about
+// it" (migration 0012), which is exactly what putting one on the list does,
+// and a staple in the cupboard says so with `in_stock` like anything else.
+// Exempting staples would leave a planned meal short of the one thing the
+// household always expects to have, with nothing on the page to say so.
+//
+// Moving `not_needed` does overwrite a status somebody chose, so it is never
+// silent and never final: the result names every ingredient moved, and
+// {@link undoPlanShopping} puts exactly those back — only while they are
+// still on the list, so an undo after "Got it" cannot un-buy anything.
+
+/**
+ * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
+ * transaction — so the writes are all-or-nothing on their own and still
+ * compose inside a caller's transaction (base.ts, rule 3).
+ */
+function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+	// The driver types the result as UnwrapPromiseArray<T>, which is T for
+	// anything that is not an array of promises — and nothing here is.
+	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
+}
+
+/** What adding a stretch of the plan to the shopping list did. */
+export interface PlanShopping {
+	/** Moved onto the list by this call: names to say so, ids to undo it. */
+	added: { id: string; name: string }[];
+	/** Already on the list, and left there. */
+	alreadyListed: number;
+	/** In the house. */
+	inStock: number;
+	/** In the house, and to be eaten first. */
+	useUp: number;
+	/** Not in the house, but another member's to change, so left alone. */
+	notYours: number;
+	/** Every ingredient the planned recipes call for that the viewer can see. */
+	needed: number;
+}
+
+/**
+ * Puts the ingredients of every recipe planned between `from` and `to`
+ * (inclusive) on the shopping list, by the rules at the head of this section.
+ * Idempotent, and one transaction.
+ */
+export function addPlanToShoppingList(
+	sql: Queryable,
+	viewer: Viewer,
+	from: string,
+	to: string
+): Promise<WriteResult<PlanShopping>> {
+	if (!isDay(from) || !isDay(to) || from > to) {
+		return Promise.resolve({ ok: false, reason: 'invalid', message: 'that is not a date range' });
+	}
+
+	return guarded(() =>
+		atomically(sql, async (tx): Promise<WriteResult<PlanShopping>> => {
+			// Each ingredient once, however many meals call for it. The day, the
+			// recipe and the ingredient must all be readable: what the viewer
+			// cannot see is not theirs to count, and a private recipe on a shared
+			// day must not give away what is in it. The recipe is not required
+			// to be live, matching the week view, which still shows a planned
+			// recipe after it is archived.
+			//
+			// Locked, so the counts reported are the ones the update acted on
+			// rather than whatever a concurrent "Got it" left behind.
+			const week = await tx<{ id: string; status: string }[]>`
+				select i.id, i.status
+				from ingredients i
+				where ${readableScope(tx, viewer, 'i')}
+				  and i.archived_at is null
+				  and exists (
+					select 1
+					from recipe_ingredients ri
+					join meal_plan_recipes m on m.recipe_id = ri.recipe_id
+					join meal_plans p on p.id = m.meal_plan_id
+					join recipes r on r.id = m.recipe_id
+					where ri.ingredient_id = i.id
+					  and p.on_date between ${from}::date and ${to}::date
+					  and p.archived_at is null
+					  and ${readableScope(tx, viewer, 'p')}
+					  and ${readableScope(tx, viewer, 'r')}
+				  )
+				for update of i
+			`;
+
+			const count = (status: IngredientStatus) => week.filter((w) => w.status === status).length;
+			const outOfTheHouse = week.filter((w) => w.status === 'not_needed').map((w) => w.id);
+
+			// Only what the viewer may write, and only `not_needed` — the scope
+			// and the rule are both in the statement, not in a filter after it.
+			const moved = await tx<{ id: string; name: string }[]>`
+				update ingredients i
+				set status = 'shopping_list', updated_at = now(), updated_by = ${viewer.userId}::uuid
+				where i.id = any(${outOfTheHouse}::uuid[])
+				  and i.status = 'not_needed'
+				  and ${writableScope(tx, viewer, 'i')}
+				returning i.id, i.name
+			`;
+
+			return {
+				ok: true,
+				record: {
+					added: moved
+						.map((row) => ({ id: row.id, name: toText(row.name) }))
+						.sort((a, b) => a.name.localeCompare(b.name)),
+					alreadyListed: count('shopping_list'),
+					inStock: count('in_stock'),
+					useUp: count('use_up'),
+					notYours: outOfTheHouse.length - moved.length,
+					needed: week.length
+				}
+			};
+		})
+	);
+}
+
+/** Enough for any real week, and a bound on what one request can name. */
+const MAX_UNDO = 500;
+
+/**
+ * Takes back what {@link addPlanToShoppingList} added: each named ingredient
+ * returns to `not_needed` — the only status that call ever moves — but only
+ * while it is still on the list. One bought in the meantime stays bought.
+ *
+ * The ids come back from the page, so nothing here trusts them beyond what
+ * the viewer could already do one at a time with a status change: the same
+ * write scope applies, and a stranger's id matches nothing.
+ */
+export function undoPlanShopping(
+	sql: Queryable,
+	viewer: Viewer,
+	ids: readonly string[]
+): Promise<WriteResult<{ restored: number; leftAlone: number }>> {
+	const wanted = [...new Set(ids)].filter(isUuid);
+	if (wanted.length > MAX_UNDO) {
+		return Promise.resolve({ ok: false, reason: 'invalid', message: 'too many to undo at once' });
+	}
+
+	return guarded(async () => {
+		const rows = await sql<{ id: string }[]>`
+			update ingredients i
+			set status = 'not_needed', updated_at = now(), updated_by = ${viewer.userId}::uuid
+			where i.id = any(${wanted}::uuid[])
+			  and i.status = 'shopping_list'
+			  and i.archived_at is null
+			  and ${writableScope(sql, viewer, 'i')}
+			returning i.id
+		`;
+		return {
+			ok: true,
+			record: { restored: rows.length, leftAlone: wanted.length - rows.length }
+		};
+	});
 }
 
 // ─── prep ──────────────────────────────────────────────────────────────────
