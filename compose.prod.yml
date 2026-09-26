@@ -62,7 +62,14 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:1.27-alpine
+    # nginx's current STABLE branch, which receives patch releases and
+    # rebuilds (Alpine fixes) until the next stable branch replaces it each
+    # spring. 1.27 had stopped: its last image was built in April 2025, so
+    # this ran seventeen months without a fix. deploy.sh pulls this tag on
+    # every deploy, so patches arrive with the next deploy. When nginx
+    # declares a new stable branch (1.32 in 2027), bump this line; the old
+    # branch's tag simply stops updating and nothing else would say so.
+    image: nginx:1.30-alpine
     ports:
       # Defaults to loopback, where Tailscale Serve forwards to it. A host
       # whose reverse proxy lives on another machine sets LIFEOS_BIND_ADDR to
