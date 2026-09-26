@@ -1,5 +1,6 @@
 import type { Viewer } from '../auth/authz';
 import { readableScope, type Queryable } from './base';
+import { HEALTH_KINDS } from './health';
 
 /**
  * Household-scoped full-text search (UI-010).
@@ -36,7 +37,13 @@ export const SEARCH_KINDS = [
 	'wishlist_item',
 	'bill',
 	'health_term',
-	'health_measurement'
+	'health_measurement',
+	// The health records that have a name of their own. A lab *result* is a
+	// number on a day and is found through its marker; a dose is not a record
+	// anyone would type a word to find.
+	'medication',
+	'lab_marker',
+	'medical_visit'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -144,7 +151,7 @@ export async function search(
 			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.notes,'')) as doc,
 			       coalesce(t.notes, '') as body,
 			       (t.archived_at is not null) as archived,
-			       '/areas' as path
+			       '/calendar' as path
 			from important_dates t
 			where ${readableScope(sql, viewer, 't')}
 		`);
@@ -257,6 +264,9 @@ export async function search(
 	}
 
 	if (wanted('health_term')) {
+		// Only the kinds /health still lists. A retired kind (vitamin, now a
+		// medication) can survive in the table, and a hit for it would link to a
+		// page that no longer shows it.
 		branches.push(sql`
 			select 'health_term' as kind, t.id, t.name as title,
 			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
@@ -265,13 +275,64 @@ export async function search(
 			       '/health/symptoms' as path
 			from health_vocabulary t
 			where ${readableScope(sql, viewer, 't')}
+			  and t.kind in ${sql([...HEALTH_KINDS])}
+		`);
+	}
+
+	// Medications, markers and visits scope like any shared record — their own
+	// repositories read them through `readableScope` — rather than by author
+	// like the journal: they default to household-shared (migrations 0018 and
+	// 0020) because a partner helping to manage an illness needs them, and one
+	// marked private is excluded by the same predicate as a private task.
+	if (wanted('medication')) {
+		branches.push(sql`
+			select 'medication' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.brand,'')
+			           || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.dose, t.unit, t.brand, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/health/medications' as path
+			from medications t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('lab_marker')) {
+		branches.push(sql`
+			select 'lab_marker' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.units, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/health/labs/' || t.id as path
+			from lab_markers t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('medical_visit')) {
+		// Titled with the day as well as the reason: "Follow up" is most visits'
+		// reason, and a list of identical titles is no help. The day is the
+		// household's, like everywhere else a visit is shown.
+		branches.push(sql`
+			select 'medical_visit' as kind, t.id,
+			       t.reason || ' — ' || to_char(t.visit_at at time zone h.timezone, 'FMDD Mon YYYY') as title,
+			       to_tsvector('english',
+			           coalesce(t.reason,'') || ' ' || coalesce(t.visit_type,'') || ' ' ||
+			           coalesce(t.provider,'') || ' ' || coalesce(t.location,'') || ' ' ||
+			           coalesce(t.family_member,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.provider, t.location, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/health/visits/' || t.id as path
+			from medical_visits t
+			join households h on h.id = t.household_id
+			where ${readableScope(sql, viewer, 't')}
 		`);
 	}
 
 	if (wanted('daily_log')) {
 		// Deliberately owner-scoped, not visibility-scoped. See the header.
 		branches.push(sql`
-			select 'daily_log' as kind, t.id, to_char(t.on_date, 'FMDay D Mon YYYY') as title,
+			select 'daily_log' as kind, t.id, to_char(t.on_date, 'FMDay FMDD Mon YYYY') as title,
 			       to_tsvector('english',
 			           coalesce(t.note,'') || ' ' || coalesce(t.gratitude,'') || ' ' ||
 			           coalesce(t.highlight,'') || ' ' || coalesce(t.mood,'')) as doc,
@@ -291,7 +352,7 @@ export async function search(
 		// as it does for daily_log above.
 		branches.push(sql`
 			select 'health_measurement' as kind, t.id,
-			       'Reading — ' || to_char(t.measured_at at time zone h.timezone, 'FMDay D Mon YYYY') as title,
+			       'Reading — ' || to_char(t.measured_at at time zone h.timezone, 'FMDay FMDD Mon YYYY') as title,
 			       to_tsvector('english',
 			           coalesce(t.bp_context,'') || ' ' || coalesce(t.glucose_context,'') || ' ' ||
 			           coalesce(t.notes,'')) as doc,

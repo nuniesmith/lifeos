@@ -286,17 +286,26 @@ const main = async () => {
 	// source database becomes a `kind`, and every row in it must survive as a
 	// term of that kind — a database silently mapping to nothing looks exactly
 	// like a database that was empty.
+	//
+	// Vitamins are the exception: since migration 0018 they import into
+	// `medications`, and 'vitamin' is no longer a vocabulary kind at all, so
+	// they are looked for there — under the stand-in kind 'medication' —
+	// rather than reported missing from a table they were never meant to reach.
 	{
 		const KINDS = {
 			'Symptoms Database': 'symptom',
-			'Vitamins Database': 'vitamin',
+			'Vitamins Database': 'medication',
 			'Energy Level Database': 'energy',
 			'Mood Feelings Database': 'mood',
 			'Exercise Database': 'exercise',
 			'Activity Database': 'activity'
 		};
 		const stored = new Map();
-		for (const row of await sql`select kind, lower(trim(name)) as name from health_vocabulary`) {
+		for (const row of await sql`
+			select kind, lower(trim(name)) as name from health_vocabulary
+			union all
+			select 'medication', lower(trim(name)) from medications
+		`) {
 			if (!stored.has(row.kind)) stored.set(row.kind, new Set());
 			stored.get(row.kind).add(row.name);
 		}
@@ -416,14 +425,10 @@ const main = async () => {
 		// Matched loosely on purpose, because of the trailing spaces above.
 		const columnFor = (label) =>
 			header.find((key) => key.trim().toLowerCase() === label.toLowerCase());
-		const RELATIONS = [
-			'Physical Symptoms',
-			'Vitamins',
-			'Energy',
-			'Mood/Feelings',
-			'Activity',
-			'Workout'
-		];
+		// No 'Vitamins': a day's vitamins import as `medication_doses` since
+		// migration 0018, not as terms, so counting them here would expect
+		// daily_log_health rows the importer deliberately no longer writes.
+		const RELATIONS = ['Physical Symptoms', 'Energy', 'Mood/Feelings', 'Activity', 'Workout'];
 
 		const stored = new Map();
 		for (const row of await sql`

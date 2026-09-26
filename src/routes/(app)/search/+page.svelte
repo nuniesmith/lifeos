@@ -24,7 +24,10 @@
 		wishlist_item: 'Wishlist',
 		bill: 'Bill',
 		health_term: 'Health',
-		health_measurement: 'Reading'
+		health_measurement: 'Reading',
+		medication: 'Medication',
+		lab_marker: 'Lab marker',
+		medical_visit: 'Visit'
 	};
 
 	/**

@@ -641,3 +641,67 @@ export function computeDueStatus(
 	// this applies to at import time.
 	return { lastTakenOn, nextDueOn: null, isDueToday: false };
 }
+
+// ─── at a glance (the Health landing page) ────────────────────────────────
+
+export interface MedicationGlance {
+	/** Live medications the viewer can see, paused ones included — the same
+	 *  "tracked" the medications page's own header counts. */
+	tracked: number;
+	/** Due today and not yet logged today, by {@link computeDueStatus}. */
+	dueToday: number;
+	runningLow: number;
+}
+
+/**
+ * The three numbers `/health` shows for this list, in one query.
+ *
+ * "Due today" is not a column, so it cannot be a SQL `count`: it is
+ * {@link computeDueStatus}, applied here exactly as the medications page
+ * applies it, so the two pages cannot disagree. What that rule needs from the
+ * dose history is only the most recent day, so SQL hands back `max(on_date)`
+ * per medication — one narrow row per medication, never the doses
+ * themselves. Scoped exactly as {@link listMedications} and
+ * {@link recentDosesFor} are: readable, and not archived.
+ */
+export async function medicationGlance(
+	sql: Queryable,
+	viewer: Viewer,
+	today: string
+): Promise<MedicationGlance> {
+	const rows = await sql<
+		{
+			schedule_kind: string;
+			scheduled_weekday: unknown;
+			interval_days: unknown;
+			running_low: unknown;
+			last_taken_on: string | null;
+		}[]
+	>`
+		select m.schedule_kind, m.scheduled_weekday, m.interval_days, m.running_low,
+		       (select max(d.on_date) from medication_doses d where d.medication_id = m.id)::text
+		           as last_taken_on
+		from ${sql(TABLE)} m
+		where ${readableScope(sql, viewer, 'm')}
+		  and m.archived_at is null
+	`;
+
+	let dueToday = 0;
+	let runningLow = 0;
+	for (const row of rows) {
+		const status = computeDueStatus(
+			{
+				scheduleKind: row.schedule_kind as ScheduleKind,
+				scheduledWeekday: toIntOrNull(row.scheduled_weekday),
+				intervalDays: toIntOrNull(row.interval_days)
+			},
+			row.last_taken_on ? [toDay(row.last_taken_on)] : [],
+			today
+		);
+		// The page's own header test, "due and not taken today", spelled out
+		// rather than trusting `isDueToday` to imply the second half.
+		if (status.isDueToday && status.lastTakenOn !== today) dueToday++;
+		if (toBool(row.running_low)) runningLow++;
+	}
+	return { tracked: rows.length, dueToday, runningLow };
+}

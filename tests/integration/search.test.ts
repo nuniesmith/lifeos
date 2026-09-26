@@ -1,5 +1,3 @@
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
@@ -15,6 +13,9 @@ import {
 	createHealthMeasurement,
 	createHealthTerm,
 	createIngredient,
+	createLabMarker,
+	createMedicalVisit,
+	createMedication,
 	createPerson,
 	createRecipe,
 	createWishlistItem,
@@ -26,6 +27,7 @@ import {
 	setTaskArchived
 } from '$lib/server/repositories';
 import type { Viewer } from '$lib/server/auth/authz';
+import { routeMatchers } from './route-matchers';
 
 /**
  * Search reaches across every table at once, which makes it the easiest place
@@ -96,37 +98,6 @@ const ok = <T extends { ok: boolean }>(result: T, what: string) => {
 
 const titles = (hits: { title: string }[]) => hits.map((h) => h.title);
 
-/**
- * The application's real routes, as matchers.
- *
- * Read from disk rather than listed by hand: a hand-written list is a second
- * copy of the route tree and drifts from it silently, which is the exact
- * failure this guards against.
- */
-function routeMatchers(): RegExp[] {
-	const root = 'src/routes/(app)';
-	const out: RegExp[] = [];
-	const walk = (dir: string, prefix: string) => {
-		for (const entry of readdirSync(dir)) {
-			const full = join(dir, entry);
-			if (!statSync(full).isDirectory()) continue;
-			// Route groups like (app) do not appear in the URL.
-			const segment = entry.startsWith('(') && entry.endsWith(')') ? '' : `/${entry}`;
-			const path = prefix + segment;
-			try {
-				statSync(join(full, '+page.svelte'));
-				// [id] and [date] match one non-slash segment.
-				out.push(new RegExp(`^${path.replace(/\[[^\]]+\]/g, '[^/]+')}$`));
-			} catch {
-				// A directory without a page is just a container.
-			}
-			walk(full, path);
-		}
-	};
-	walk(root, '');
-	return out;
-}
-
 describe('every search result links somewhere real', () => {
 	it('generates a path that matches an existing route, for every kind', async () => {
 		// One record of each searchable kind, all sharing a word.
@@ -162,6 +133,22 @@ describe('every search result links somewhere real', () => {
 			}),
 			'health measurement'
 		);
+		ok(
+			await createMedication(sql, owner, { name: `${word} oil`, type: 'supplement' }),
+			'medication'
+		);
+		const marker = ok(
+			await createLabMarker(sql, owner, { name: `${word} index` }),
+			'lab marker'
+		).record;
+		const visit = ok(
+			await createMedicalVisit(sql, owner, {
+				reason: `${word} check`,
+				visitDate: '2026-04-04',
+				visitTime: '10:00'
+			}),
+			'medical visit'
+		).record;
 		// Media items are import-only — there is no create path — so this one is
 		// inserted directly rather than skipped, which would leave its branch
 		// unchecked.
@@ -185,6 +172,14 @@ describe('every search result links somewhere real', () => {
 			// looked right went to a 404.
 			expect(matched, `${hit.kind} -> ${hit.path} matches no route`).toBe(true);
 		}
+
+		// A detail route has to be given the record's own id, not merely exist.
+		const pathOf = (kind: string) => hits.find((h) => h.kind === kind)?.path;
+		expect(pathOf('lab_marker')).toBe(`/health/labs/${marker.id}`);
+		expect(pathOf('medical_visit')).toBe(`/health/visits/${visit.id}`);
+		expect(pathOf('medication')).toBe('/health/medications');
+		// Important dates are shown on the calendar; /areas never lists them.
+		expect(pathOf('important_date')).toBe('/calendar');
 	});
 });
 
@@ -247,6 +242,40 @@ describe('search', () => {
 		expect(hits[1]?.archived).toBe(true);
 	});
 
+	it('titles a journal day and a reading with the day of the month', async () => {
+		// 17 April 2026 is a Friday. `D` in to_char is the day of the *week*, so
+		// the old format printed "Friday 6 Apr 2026" — plausible enough to pass
+		// by eye, and exactly right on the one date in four weeks where the two
+		// numbers happen to agree, which is the date the privacy case below uses.
+		ok(await createDailyLog(sql, owner, { onDate: '2026-04-17', note: 'Tidal pools' }), 'log');
+		ok(
+			await createHealthMeasurement(sql, owner, {
+				measuredAt: '2026-04-17T07:15',
+				weight: 70,
+				notes: 'Tidal pools, then weighed'
+			}),
+			'reading'
+		);
+
+		expect(titles(await search(sql, owner, 'tidal')).sort()).toEqual([
+			'Friday 17 Apr 2026',
+			'Reading — Friday 17 Apr 2026'
+		]);
+	});
+
+	it('does not find a health word of a kind /health no longer lists', async () => {
+		// Written as the old add form did before vitamins became medications
+		// (migration 0018); the table's CHECK still permits the kind.
+		await sql`
+			insert into health_vocabulary (household_id, owner_user_id, kind, name, created_by)
+			values (${owner.householdId}::uuid, ${owner.userId}::uuid, 'vitamin', 'Wombat drops',
+			        ${owner.userId}::uuid)
+		`;
+		ok(await createHealthTerm(sql, owner, { kind: 'symptom', name: 'Wombat ache' }), 'term');
+
+		expect(titles(await search(sql, owner, 'wombat'))).toEqual(['Wombat ache']);
+	});
+
 	it('restricts to the kinds asked for, and reads no other table', async () => {
 		ok(await createTask(sql, owner, { title: 'Anemone planting' }), 'task');
 		ok(await createProject(sql, owner, { name: 'Anemone bed' }), 'project');
@@ -303,6 +332,61 @@ describe('search', () => {
 			expect(owner.role).toBe('admin');
 			expect(await search(sql, owner, 'hangover')).toEqual([]);
 			expect(titles(await search(sql, partner, 'hangover'))).toEqual(['Hangover cure']);
+		});
+
+		it('never returns another member’s private medication, marker or visit', async () => {
+			// Each is checked on its own branch: they are three separate predicates,
+			// and one passing says nothing about the other two.
+			const privately = { visibility: 'private' as const, ownerUserId: partner.userId };
+			ok(
+				await createMedication(sql, partner, {
+					name: 'Sertraline',
+					type: 'prescription',
+					...privately
+				}),
+				'private medication'
+			);
+			ok(await createLabMarker(sql, partner, { name: 'Prolactin', ...privately }), 'marker');
+			ok(
+				await createMedicalVisit(sql, partner, {
+					reason: 'Dermatology referral',
+					visitDate: '2026-05-06',
+					visitTime: '14:40',
+					...privately
+				}),
+				'private visit'
+			);
+
+			expect(owner.role).toBe('admin');
+			for (const term of ['sertraline', 'prolactin', 'dermatology']) {
+				expect(await search(sql, owner, term), term).toEqual([]);
+			}
+			expect(titles(await search(sql, partner, 'sertraline'))).toEqual(['Sertraline']);
+			expect(titles(await search(sql, partner, 'prolactin'))).toEqual(['Prolactin']);
+			expect(titles(await search(sql, partner, 'dermatology'))).toEqual([
+				'Dermatology referral — 6 May 2026'
+			]);
+		});
+
+		it('returns household-shared health records to both members', async () => {
+			// These default to shared (migrations 0018 and 0020): a partner helping
+			// to manage an illness is expected to find the other's medication.
+			ok(
+				await createMedication(sql, partner, { name: 'Magnesium glycinate', type: 'supplement' }),
+				'medication'
+			);
+			ok(
+				await createMedicalVisit(sql, partner, {
+					reason: 'Physiotherapy',
+					visitDate: '2026-05-06',
+					visitTime: '08:15'
+				}),
+				'visit'
+			);
+			expect(titles(await search(sql, owner, 'magnesium'))).toEqual(['Magnesium glycinate']);
+			expect(titles(await search(sql, owner, 'physiotherapy'))).toEqual([
+				'Physiotherapy — 6 May 2026'
+			]);
 		});
 
 		it('returns a household record to both members', async () => {

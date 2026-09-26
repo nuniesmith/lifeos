@@ -94,19 +94,18 @@ const log = async (viewer: Viewer, onDate: string) =>
 	ok(await createDailyLog(sql, viewer, { onDate }), `create log ${onDate}`).record;
 
 describe('the health vocabulary', () => {
-	it('keeps six lists in one table, separated by kind', async () => {
+	it('keeps five lists in one table, separated by kind', async () => {
 		await term(owner, 'symptom', 'Nausea');
 		await term(owner, 'mood', 'Content');
-		await term(owner, 'vitamin', 'Vitamin D');
+		await term(owner, 'energy', 'Balanced');
 
 		expect((await listHealthTerms(sql, owner, { kind: 'symptom' })).map((t) => t.name)).toEqual([
 			'Nausea'
 		]);
-		expect(await healthTermCounts(sql, owner)).toMatchObject({
+		expect(await healthTermCounts(sql, owner)).toEqual({
 			symptom: 1,
 			mood: 1,
-			vitamin: 1,
-			energy: 0,
+			energy: 1,
 			activity: 0,
 			exercise: 0
 		});
@@ -170,6 +169,52 @@ describe('the health vocabulary', () => {
 		const day = await log(owner, '2026-08-09');
 
 		expect(await logHealthTerm(sql, owner, day.id, gone.id)).toMatchObject({ ok: false });
+	});
+});
+
+describe('vitamins, which are medications now', () => {
+	it('refuses to add a vitamin as a word', async () => {
+		expect(
+			await createHealthTerm(sql, owner, { kind: 'vitamin', name: 'Vitamin Q' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('keeps a leftover vitamin row out of every list and count /health reads', async () => {
+		// Migration 0018 moved every vitamin row into `medications`, but the
+		// CHECK still allows the word, so the old add form could have written
+		// one after it deployed. Written directly here for the same reason: the
+		// repository no longer will.
+		const [leftover] = await sql<{ id: string }[]>`
+			insert into health_vocabulary (household_id, visibility, kind, name)
+			values (${owner.householdId}::uuid, 'household', 'vitamin', 'Vitamin Q')
+			returning id
+		`;
+		const nausea = await term(owner, 'symptom', 'Nausea');
+		const day = await log(owner, '2026-08-08');
+		// logHealthTerm does not look at kind, so the leftover can still be on a
+		// day — which is exactly the row that would reach the frequency list
+		// with a label the page has no entry for.
+		ok(await logHealthTerm(sql, owner, day.id, leftover!.id), 'log the leftover');
+		ok(await logHealthTerm(sql, owner, day.id, nausea.id), 'log a symptom');
+
+		// Each read still returns the live symptom, so an empty answer cannot
+		// pass for a filtered one.
+		expect((await listHealthTerms(sql, owner)).map((t) => t.name)).toEqual(['Nausea']);
+		expect(await healthTermCounts(sql, owner)).toEqual({
+			symptom: 1,
+			mood: 0,
+			energy: 0,
+			activity: 0,
+			exercise: 0
+		});
+		expect((await healthFrequencies(sql, owner)).map((f) => f.name)).toEqual(['Nausea']);
+		expect((await healthForLog(sql, owner, day.id)).map((t) => t.name)).toEqual(['Nausea']);
+
+		// Hidden, not deleted: the row is still there for anyone who looks.
+		const [kept] = await sql<{ kind: string }[]>`
+			select kind from health_vocabulary where id = ${leftover!.id}::uuid
+		`;
+		expect(kept?.kind).toBe('vitamin');
 	});
 });
 

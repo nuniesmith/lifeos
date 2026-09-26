@@ -465,6 +465,18 @@
 	tbody tr + tr td {
 		border-top: 1px solid var(--c-border);
 	}
+	.table-foot {
+		margin: 0;
+		padding: 0 var(--sp-3);
+		border-top: 1px solid var(--c-border);
+		font-size: var(--fs-sm);
+	}
+	/* A thumb-sized target, not just the height of a line of small text. */
+	.table-foot a {
+		display: inline-flex;
+		align-items: center;
+		min-height: var(--tap);
+	}
 
 	.visually-hidden {
 		position: absolute;
