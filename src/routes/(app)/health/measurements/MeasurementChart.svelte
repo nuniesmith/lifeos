@@ -42,7 +42,13 @@
 						style:stroke={plotted.color}
 					/>
 				{/if}
-				{#each plotted.points as point (point.at)}
+				<!--
+					Keyed by position, not by `point.at`: two readings can share an
+					instant (the form defaults to the current minute), and a duplicate
+					key makes Svelte throw, which stopped the whole page updating.
+					The circles hold no state, so position is a sufficient key.
+				-->
+				{#each plotted.points as point, index (index)}
 					<circle cx={point.x} cy={point.y} r={2.75} style:fill={plotted.color}>
 						<title
 							>{`${dateLabel(point.at)}: ${point.value}${unit ? ` ${unit}` : ''} (${plotted.label})`}</title
