@@ -201,7 +201,12 @@ async function oneOfEach(
 			'lab_result'
 		),
 		health_measurement: await made(
-			createHealthMeasurement(sql, viewer, { measuredAt: '2026-04-17T07:15', weight: 70, ...own }),
+			createHealthMeasurement(sql, viewer, {
+				measuredAt: '2026-04-17T07:15',
+				weight: 70,
+				weightUnit: 'kg',
+				...own
+			}),
 			'health_measurement'
 		),
 		health_term: await made(

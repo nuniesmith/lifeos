@@ -55,8 +55,10 @@ function measurement(overrides: Partial<HealthMeasurement> = {}): HealthMeasurem
 		bpContext: null,
 		heartRate: null,
 		glucose: null,
+		glucoseUnit: null,
 		glucoseContext: null,
 		weight: null,
+		weightUnit: null,
 		qtInterval: null,
 		notes: null,
 		dailyLogId: null,
@@ -241,6 +243,41 @@ describe('groupDueMedications', () => {
 });
 
 describe('latestReading', () => {
+	it('takes the unit from the same row as the value, never from a later one', () => {
+		const rows = [
+			measurement({
+				measuredAt: new Date('2026-09-20T00:00:00Z'),
+				weight: 154.3,
+				weightUnit: null
+			}),
+			measurement({ measuredAt: new Date('2026-09-10T00:00:00Z'), weight: 70, weightUnit: 'kg' })
+		];
+		// The newest weight recorded no unit: it is shown without one, not with
+		// the older row's "kg", which would state a reading that never happened.
+		expect(
+			latestReading(
+				rows,
+				(r) => r.weight,
+				(r) => r.weightUnit
+			)
+		).toEqual({
+			value: 154.3,
+			measuredAt: new Date('2026-09-20T00:00:00Z'),
+			unit: null
+		});
+		expect(
+			latestReading(
+				rows.slice(1),
+				(r) => r.weight,
+				(r) => r.weightUnit
+			)
+		).toEqual({
+			value: 70,
+			measuredAt: new Date('2026-09-10T00:00:00Z'),
+			unit: 'kg'
+		});
+	});
+
 	it('returns the first row (most-recent-first) where the picked field is set', () => {
 		const rows = [
 			measurement({ measuredAt: new Date('2026-09-20T00:00:00Z'), heartRate: null }),

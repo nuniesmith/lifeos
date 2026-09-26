@@ -129,6 +129,7 @@ describe('every search result links somewhere real', () => {
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-04-03T08:00',
 				weight: 70,
+				weightUnit: 'kg',
 				notes: `${word} reading`
 			}),
 			'health measurement'
@@ -255,6 +256,7 @@ describe('search', () => {
 			await createHealthMeasurement(sql, owner, {
 				measuredAt: '2026-04-17T07:15',
 				weight: 70,
+				weightUnit: 'kg',
 				notes: 'Tidal pools, then weighed'
 			}),
 			'reading'

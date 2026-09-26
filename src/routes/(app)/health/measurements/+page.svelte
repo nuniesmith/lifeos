@@ -9,18 +9,36 @@
 		List,
 		ListRow,
 		PageHeader,
+		Select,
 		Sheet,
 		Textarea
 	} from '$lib/components';
+	import {
+		GLUCOSE_UNITS,
+		WEIGHT_UNITS,
+		chartUnit,
+		convertGlucose,
+		convertWeight,
+		valueIn
+	} from '$lib/units';
 	import type { ChartSeries } from './chart';
-	import { summaryOf } from './format';
+	import { summaryOf, unitlessNote } from './format';
 	import MeasurementChart from './MeasurementChart.svelte';
 
 	let { data, form } = $props();
 
 	type Reading = (typeof data.readings)[number];
 
-	let addFormEl = $state<HTMLFormElement>();
+	/*
+	 * Bumped after a successful save to draw the add form afresh. It used to be
+	 * reset instead, which is wrong for the unit pickers: a reset puts each
+	 * one back on the option the page was first SERVED with, after the save's
+	 * refresh had already moved it to the unit just used. The next reading
+	 * then went in the served unit, with nothing on screen to say so — seen in
+	 * the e2e suite as mmol/L after a reading saved in mg/dL. Drawn afresh,
+	 * the form starts from `data.defaultUnits` and a current date and time.
+	 */
+	let addFormKey = $state(0);
 	let editing = $state<Reading | null>(null);
 	let editOpen = $state(false);
 
@@ -32,6 +50,15 @@
 	const displayDate = (d: Date) =>
 		d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
+	const glucoseOf = (r: Reading) => ({ value: r.glucose, unit: r.glucoseUnit });
+	const weightOf = (r: Reading) => ({ value: r.weight, unit: r.weightUnit });
+
+	// Each chart is drawn in the unit of the most recent reading that has one,
+	// with every other reading converted to it, so a switch from lb to kg part
+	// way through the history is still one continuous line.
+	const glucoseUnit = $derived(chartUnit(data.readings.map(glucoseOf)));
+	const weightUnit = $derived(chartUnit(data.readings.map(weightOf)));
+
 	// Oldest first for the charts — a trend reads left to right — while the
 	// list above stays most-recent-first, which is what "recent" means there.
 	const chartPoints = $derived(
@@ -41,11 +68,26 @@
 				systolic: r.systolic,
 				diastolic: r.diastolic,
 				heartRate: r.heartRate,
-				glucose: r.glucose,
-				weight: r.weight
+				glucose: valueIn(glucoseOf(r), glucoseUnit, convertGlucose),
+				weight: valueIn(weightOf(r), weightUnit, convertWeight)
 			}
 		}))
 	);
+
+	// What `valueIn` had to leave off: a reading with no unit, on a chart that
+	// has one.
+	const chartNote = $derived(
+		unitlessNote(
+			glucoseUnit === null
+				? 0
+				: data.readings.filter((r) => r.glucose !== null && r.glucoseUnit === null).length,
+			weightUnit === null
+				? 0
+				: data.readings.filter((r) => r.weight !== null && r.weightUnit === null).length
+		)
+	);
+
+	const unitOptions = (units: readonly string[]) => units.map((u) => ({ value: u, label: u }));
 
 	const BP_SERIES: ChartSeries[] = [
 		{ key: 'systolic', label: 'Systolic', color: 'var(--c-accent)' },
@@ -77,91 +119,108 @@
 			{#if form?.action === 'create' && form.error}
 				<p class="notice error" role="alert">{form.error}</p>
 			{/if}
-			<form
-				bind:this={addFormEl}
-				method="POST"
-				action="?/create"
-				use:enhance={() => {
-					return async ({ result, update }) => {
-						await update();
-						if (result.type === 'success') addFormEl?.reset();
-					};
-				}}
-			>
-				<div class="grid">
-					<Field label="Date and time" required>
-						{#snippet children(field)}
-							<input
-								id={field.id}
-								type="datetime-local"
-								name="measuredAt"
-								required
-								value={data.defaultMeasuredAt}
-								aria-describedby={field.describedBy}
-								aria-invalid={field.invalid || undefined}
-							/>
-						{/snippet}
-					</Field>
-					<Input
-						label="Systolic"
-						name="systolic"
-						type="number"
-						inputmode="numeric"
-						min="40"
-						max="300"
-						hint="mmHg"
-					/>
-					<Input
-						label="Diastolic"
-						name="diastolic"
-						type="number"
-						inputmode="numeric"
-						min="20"
-						max="200"
-						hint="mmHg"
-					/>
-					<Input label="BP context" name="bpContext" placeholder="Resting, after exercise…" />
-					<Input
-						label="Heart rate"
-						name="heartRate"
-						type="number"
-						inputmode="numeric"
-						min="20"
-						max="250"
-						hint="bpm"
-					/>
-					<Input
-						label="Blood glucose"
-						name="glucose"
-						type="number"
-						inputmode="decimal"
-						step="0.1"
-						min="0"
-					/>
-					<Input label="Glucose context" name="glucoseContext" placeholder="Fasting, post-meal…" />
-					<Input
-						label="Weight"
-						name="weight"
-						type="number"
-						inputmode="decimal"
-						step="0.1"
-						min="0"
-					/>
-					<Input
-						label="QT interval"
-						name="qtInterval"
-						type="number"
-						inputmode="numeric"
-						min="200"
-						max="800"
-						hint="ms"
-					/>
-				</div>
-				<Textarea label="Notes" name="notes" rows={2} hint="Optional." />
-				<div class="actions">
-					<Button type="submit" variant="primary">Save reading</Button>
-				</div>
-			</form>
+			{#key addFormKey}
+				<form
+					method="POST"
+					action="?/create"
+					use:enhance={() => {
+						return async ({ result, update }) => {
+							await update();
+							if (result.type === 'success') addFormKey += 1;
+						};
+					}}
+				>
+					<div class="grid">
+						<Field label="Date and time" required>
+							{#snippet children(field)}
+								<input
+									id={field.id}
+									type="datetime-local"
+									name="measuredAt"
+									required
+									value={data.defaultMeasuredAt}
+									aria-describedby={field.describedBy}
+									aria-invalid={field.invalid || undefined}
+								/>
+							{/snippet}
+						</Field>
+						<Input
+							label="Systolic"
+							name="systolic"
+							type="number"
+							inputmode="numeric"
+							min="40"
+							max="300"
+							hint="mmHg"
+						/>
+						<Input
+							label="Diastolic"
+							name="diastolic"
+							type="number"
+							inputmode="numeric"
+							min="20"
+							max="200"
+							hint="mmHg"
+						/>
+						<Input label="BP context" name="bpContext" placeholder="Resting, after exercise…" />
+						<Input
+							label="Heart rate"
+							name="heartRate"
+							type="number"
+							inputmode="numeric"
+							min="20"
+							max="250"
+							hint="bpm"
+						/>
+						<Input
+							label="Blood glucose"
+							name="glucose"
+							type="number"
+							inputmode="decimal"
+							step="0.1"
+							min="0"
+						/>
+						<Select
+							label="Glucose unit"
+							name="glucoseUnit"
+							options={unitOptions(GLUCOSE_UNITS)}
+							value={data.defaultUnits.glucose}
+						/>
+						<Input
+							label="Glucose context"
+							name="glucoseContext"
+							placeholder="Fasting, post-meal…"
+						/>
+						<Input
+							label="Weight"
+							name="weight"
+							type="number"
+							inputmode="decimal"
+							step="0.1"
+							min="0"
+						/>
+						<Select
+							label="Weight unit"
+							name="weightUnit"
+							options={unitOptions(WEIGHT_UNITS)}
+							value={data.defaultUnits.weight}
+						/>
+						<Input
+							label="QT interval"
+							name="qtInterval"
+							type="number"
+							inputmode="numeric"
+							min="200"
+							max="800"
+							hint="ms"
+						/>
+					</div>
+					<Textarea label="Notes" name="notes" rows={2} hint="Optional." />
+					<div class="actions">
+						<Button type="submit" variant="primary">Save reading</Button>
+					</div>
+				</form>
+			{/key}
 		</Card>
 	</section>
 
@@ -176,9 +235,20 @@
 					unit="mmHg"
 				/>
 				<MeasurementChart title="Heart rate" points={chartPoints} series={HR_SERIES} unit="bpm" />
-				<MeasurementChart title="Weight" points={chartPoints} series={WEIGHT_SERIES} />
-				<MeasurementChart title="Glucose" points={chartPoints} series={GLUCOSE_SERIES} />
+				<MeasurementChart
+					title={weightUnit ? `Weight (${weightUnit})` : 'Weight'}
+					points={chartPoints}
+					series={WEIGHT_SERIES}
+					unit={weightUnit ?? ''}
+				/>
+				<MeasurementChart
+					title={glucoseUnit ? `Glucose (${glucoseUnit})` : 'Glucose'}
+					points={chartPoints}
+					series={GLUCOSE_SERIES}
+					unit={glucoseUnit ?? ''}
+				/>
 			</div>
+			{#if chartNote}<p class="chart-note">{chartNote}</p>{/if}
 		</Card>
 	</section>
 
@@ -297,6 +367,19 @@
 					min="0"
 					value={e.glucose?.toString() ?? ''}
 				/>
+				<!--
+					A reading imported without a unit opens on "Not recorded" rather
+					than on a unit it never had: saving an unrelated change must not
+					quietly assign one. A reading with no glucose at all opens on the
+					unit this person uses, ready for one to be added.
+				-->
+				<Select
+					label="Glucose unit"
+					name="glucoseUnit"
+					options={unitOptions(GLUCOSE_UNITS)}
+					placeholder={e.glucose !== null && e.glucoseUnit === null ? 'Not recorded' : undefined}
+					value={e.glucoseUnit ?? (e.glucose !== null ? '' : data.defaultUnits.glucose)}
+				/>
 				<Input label="Glucose context" name="glucoseContext" value={e.glucoseContext ?? ''} />
 				<Input
 					label="Weight"
@@ -306,6 +389,13 @@
 					step="0.1"
 					min="0"
 					value={e.weight?.toString() ?? ''}
+				/>
+				<Select
+					label="Weight unit"
+					name="weightUnit"
+					options={unitOptions(WEIGHT_UNITS)}
+					placeholder={e.weight !== null && e.weightUnit === null ? 'Not recorded' : undefined}
+					value={e.weightUnit ?? (e.weight !== null ? '' : data.defaultUnits.weight)}
 				/>
 				<Input
 					label="QT interval"
@@ -364,6 +454,13 @@
 		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
 		gap: var(--sp-5);
 		padding: var(--sp-4);
+	}
+
+	.chart-note {
+		margin: 0;
+		padding: 0 var(--sp-4) var(--sp-4);
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
 	}
 
 	.row-actions {

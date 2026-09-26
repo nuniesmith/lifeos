@@ -1,4 +1,14 @@
 import type { Fragment } from 'postgres';
+import {
+	GLUCOSE_UNITS,
+	PLAUSIBLE,
+	WEIGHT_UNITS,
+	isGlucoseUnit,
+	isWeightUnit,
+	type GlucoseUnit,
+	type MeasurementUnit,
+	type WeightUnit
+} from '../../units';
 import type { Viewer } from '../auth/authz';
 import { toDate } from '../db/coerce';
 import {
@@ -38,7 +48,8 @@ import {
  * Health Measurements (MODEL-002; migration 0019).
  *
  * Blood pressure, heart rate, blood glucose, weight and QT interval — every
- * spot reading someone takes and writes down, in one table. Notion moved the
+ * spot reading someone takes and writes down, in one table. Glucose and weight
+ * each carry the unit they were taken in (migration 0022; `$lib/units`). Notion moved the
  * first four out of its Daily Log database and gave them a home of their own
  * alongside the last two; this module is that home on the LifeOS side. See
  * the migration for the data that already lived on `daily_logs` and why it
@@ -60,8 +71,12 @@ export interface HealthMeasurement extends RecordBase {
 	bpContext: string | null;
 	heartRate: number | null;
 	glucose: number | null;
+	/** Null when the reading recorded none: everything imported from Notion,
+	 *  until someone sets it (migration 0022). */
+	glucoseUnit: GlucoseUnit | null;
 	glucoseContext: string | null;
 	weight: number | null;
+	weightUnit: WeightUnit | null;
 	qtInterval: number | null;
 	notes: string | null;
 	dailyLogId: string | null;
@@ -74,8 +89,10 @@ interface HealthMeasurementRow extends BaseRow {
 	bp_context: string | null;
 	heart_rate: unknown;
 	glucose: unknown;
+	glucose_unit: string | null;
 	glucose_context: string | null;
 	weight: unknown;
+	weight_unit: string | null;
 	qt_interval: unknown;
 	notes: string | null;
 	daily_log_id: string | null;
@@ -85,8 +102,8 @@ const TABLE = 'health_measurements';
 
 const columns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
-	measured_at, systolic, diastolic, bp_context, heart_rate, glucose, glucose_context,
-	weight, qt_interval, notes, daily_log_id`;
+	measured_at, systolic, diastolic, bp_context, heart_rate, glucose, glucose_unit,
+	glucose_context, weight, weight_unit, qt_interval, notes, daily_log_id`;
 
 function mapMeasurement(row: HealthMeasurementRow): HealthMeasurement {
 	const base = mapBase(row);
@@ -100,8 +117,10 @@ function mapMeasurement(row: HealthMeasurementRow): HealthMeasurement {
 		bpContext: toTextOrNull(row.bp_context),
 		heartRate: toIntOrNull(row.heart_rate),
 		glucose: toNumberOrNull(row.glucose),
+		glucoseUnit: isGlucoseUnit(row.glucose_unit) ? row.glucose_unit : null,
 		glucoseContext: toTextOrNull(row.glucose_context),
 		weight: toNumberOrNull(row.weight),
+		weightUnit: isWeightUnit(row.weight_unit) ? row.weight_unit : null,
 		qtInterval: toIntOrNull(row.qt_interval),
 		notes: toTextOrNull(row.notes),
 		dailyLogId: row.daily_log_id
@@ -156,8 +175,12 @@ export interface HealthMeasurementInput extends OwnershipInput {
 	bpContext?: unknown;
 	heartRate?: unknown;
 	glucose?: unknown;
+	/** `mmol/L` or `mg/dL`. Required with a new glucose; see {@link unitsOf}. */
+	glucoseUnit?: unknown;
 	glucoseContext?: unknown;
 	weight?: unknown;
+	/** `kg` or `lb`. Required with a new weight; see {@link unitsOf}. */
+	weightUnit?: unknown;
 	qtInterval?: unknown;
 	notes?: unknown;
 	dailyLogId?: unknown;
@@ -211,6 +234,107 @@ function requireAtLeastOneReading(readings: Readings): void {
 	if (Object.values(readings).every((v) => v === null)) {
 		throw new InvalidInput('enter at least one reading');
 	}
+}
+
+interface Units {
+	glucoseUnit: GlucoseUnit | null;
+	weightUnit: WeightUnit | null;
+}
+
+/**
+ * One reading's unit, from what the caller sent and what is stored.
+ *
+ *  - No number, no unit. A unit cannot outlive the value it describes (the
+ *    table enforces the same), so clearing a weight clears its unit, and the
+ *    unit the form always sends beside an empty field is simply not stored.
+ *  - A new value must say its unit. The form always sends one; a caller that
+ *    sends a glucose without one is refused rather than guessed for.
+ *  - An edit that does not mention the unit keeps the stored one, and an edit
+ *    that sends it empty stores "not recorded". That is how a reading
+ *    imported from Notion without a unit stays that way until someone
+ *    chooses one, rather than taking whatever the form's picker defaulted to.
+ */
+function unitOf<U extends MeasurementUnit>(
+	input: HealthMeasurementInput,
+	key: 'glucoseUnit' | 'weightUnit',
+	value: number | null,
+	current: { value: number | null; unit: U | null } | null,
+	allowed: readonly U[],
+	isUnit: (candidate: unknown) => candidate is U,
+	field: string
+): U | null {
+	if (value === null) return null;
+	// The stored value this one replaces, if any. A value that is new — on a new
+	// reading, or added to an existing reading by this edit — has no stored
+	// unit to fall back on, and must bring its own.
+	const existing = current !== null && current.value !== null ? current : null;
+	const given: unknown = key in input ? input[key] : undefined;
+	if (given === undefined) {
+		if (existing) return existing.unit;
+		throw new InvalidInput(`choose a unit for ${field}`);
+	}
+	if (given === null || given === '') {
+		if (existing) return null;
+		throw new InvalidInput(`choose a unit for ${field}`);
+	}
+	if (!isUnit(given)) throw new InvalidInput(`${field} unit must be ${allowed.join(' or ')}`);
+	return given;
+}
+
+function unitsOf(
+	input: HealthMeasurementInput,
+	readings: Readings,
+	current?: HealthMeasurement
+): Units {
+	const units: Units = {
+		glucoseUnit: unitOf(
+			input,
+			'glucoseUnit',
+			readings.glucose,
+			current ? { value: current.glucose, unit: current.glucoseUnit } : null,
+			GLUCOSE_UNITS,
+			isGlucoseUnit,
+			'glucose'
+		),
+		weightUnit: unitOf(
+			input,
+			'weightUnit',
+			readings.weight,
+			current ? { value: current.weight, unit: current.weightUnit } : null,
+			WEIGHT_UNITS,
+			isWeightUnit,
+			'weight'
+		)
+	};
+	requirePlausible(readings.glucose, units.glucoseUnit, 'glucose', GLUCOSE_UNITS);
+	requirePlausible(readings.weight, units.weightUnit, 'weight', WEIGHT_UNITS);
+	return units;
+}
+
+/**
+ * Refuses a value outside what its unit can plausibly hold (`PLAUSIBLE` in
+ * `$lib/units`). Almost every such value is the other unit typed against the
+ * wrong choice — 112 with mmol/L selected — so when the number fits the other
+ * unit, the message says so, rather than making someone work out why a real
+ * reading was refused. A reading with no unit keeps the plain `> 0` check
+ * `readingsOf` already applied: with no unit, there is no range to hold it to.
+ */
+function requirePlausible<U extends MeasurementUnit>(
+	value: number | null,
+	unit: U | null,
+	field: string,
+	units: readonly U[]
+): void {
+	if (value === null || unit === null) return;
+	const { min, max } = PLAUSIBLE[unit];
+	if (value >= min && value <= max) return;
+	const other = units.find(
+		(u) => u !== unit && value >= PLAUSIBLE[u].min && value <= PLAUSIBLE[u].max
+	);
+	throw new InvalidInput(
+		`a ${field} of ${value} ${unit} is outside ${min}–${max} ${unit}` +
+			(other ? `; did you mean ${other}?` : '')
+	);
 }
 
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
@@ -328,6 +452,7 @@ export function createHealthMeasurement(
 		const measuredAtLocal = requiredLocalDateTime(input.measuredAt, 'date and time');
 		const readings = readingsOf(input);
 		requireAtLeastOneReading(readings);
+		const units = unitsOf(input, readings);
 
 		const bpContext = optionalText(input.bpContext, 'BP context', 200);
 		const glucoseContext = optionalText(input.glucoseContext, 'glucose context', 200);
@@ -353,13 +478,15 @@ export function createHealthMeasurement(
 		const rows = await sql<HealthMeasurementRow[]>`
 			insert into ${sql(TABLE)} (
 				household_id, owner_user_id, visibility, measured_at, systolic, diastolic,
-				bp_context, heart_rate, glucose, glucose_context, weight, qt_interval, notes,
-				daily_log_id, created_by, updated_by
+				bp_context, heart_rate, glucose, glucose_unit, glucose_context, weight, weight_unit,
+				qt_interval, notes, daily_log_id, created_by, updated_by
 			) values (
-				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${measuredAt}::timestamptz,
+				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility},
+				${measuredAt.toISOString()}::timestamptz,
 				${readings.systolic}, ${readings.diastolic}, ${bpContext}, ${readings.heartRate},
-				${readings.glucose}, ${glucoseContext}, ${readings.weight}, ${readings.qtInterval},
-				${notes}, ${dailyLogId}::uuid, ${viewer.userId}::uuid, ${viewer.userId}::uuid
+				${readings.glucose}, ${units.glucoseUnit}, ${glucoseContext}, ${readings.weight},
+				${units.weightUnit}, ${readings.qtInterval}, ${notes}, ${dailyLogId}::uuid,
+				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			)
 			returning ${columns(sql)}
 		`;
@@ -382,6 +509,7 @@ export function updateHealthMeasurement(
 
 		const readings = readingsOf(patch, current);
 		requireAtLeastOneReading(readings);
+		const units = unitsOf(patch, readings, current);
 
 		const next = {
 			bpContext: patched(patch, 'bpContext', current.bpContext, (v) =>
@@ -422,11 +550,13 @@ export function updateHealthMeasurement(
 			writeScope: writableScope(sql, viewer, TABLE),
 			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
 			assignments: sql`
-				measured_at = ${measuredAt}::timestamptz,
+				measured_at = ${measuredAt.toISOString()}::timestamptz,
 				systolic = ${readings.systolic}, diastolic = ${readings.diastolic},
 				bp_context = ${next.bpContext}, heart_rate = ${readings.heartRate},
-				glucose = ${readings.glucose}, glucose_context = ${next.glucoseContext},
-				weight = ${readings.weight}, qt_interval = ${readings.qtInterval},
+				glucose = ${readings.glucose}, glucose_unit = ${units.glucoseUnit},
+				glucose_context = ${next.glucoseContext},
+				weight = ${readings.weight}, weight_unit = ${units.weightUnit},
+				qt_interval = ${readings.qtInterval},
 				notes = ${next.notes}, daily_log_id = ${dailyLogId}::uuid,
 				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
 				updated_at = now(), updated_by = ${viewer.userId}::uuid`,

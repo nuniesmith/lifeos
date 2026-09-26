@@ -1,3 +1,5 @@
+import { withUnit } from '$lib/units';
+
 /**
  * Presentation-only formatting for the measurements page.
  *
@@ -37,18 +39,21 @@ export interface MeasurementLike {
 	diastolic: number | null;
 	heartRate: number | null;
 	glucose: number | null;
+	glucoseUnit?: string | null;
 	weight: number | null;
+	weightUnit?: string | null;
 	qtInterval: number | null;
 }
 
 /**
- * "128/76 · 64 bpm · glucose 6.2 · weight 71.4" — whichever readings a row
- * actually has, in a fixed order, for the recent-readings list.
+ * "128/76 mmHg · 64 bpm · glucose 6.2 mmol/L · weight 71.4 kg" — whichever
+ * readings a row actually has, in a fixed order, for the recent-readings list.
  *
- * Glucose and weight carry no unit: the source records neither (Notion's
- * "Blood Glucose" and "Weight" properties are bare numbers), and a household
- * in Canada is plausibly using mmol/L rather than mg/dL — guessing a unit
- * here would risk stating something false rather than just something plain.
+ * Glucose and weight show the unit each reading was taken in (migration 0022).
+ * A reading that recorded none — everything imported from Notion, whose
+ * "Blood Glucose" and "Weight" are bare numbers — shows the number alone:
+ * guessing mmol/L or kg would risk stating something false rather than just
+ * something plain.
  */
 export function summaryOf(reading: MeasurementLike): string {
 	const parts: string[] = [];
@@ -60,8 +65,29 @@ export function summaryOf(reading: MeasurementLike): string {
 		parts.push(`${reading.diastolic} mmHg (diastolic)`);
 	}
 	if (reading.heartRate !== null) parts.push(`${reading.heartRate} bpm`);
-	if (reading.glucose !== null) parts.push(`glucose ${reading.glucose}`);
-	if (reading.weight !== null) parts.push(`weight ${reading.weight}`);
+	if (reading.glucose !== null)
+		parts.push(`glucose ${withUnit(reading.glucose, reading.glucoseUnit)}`);
+	if (reading.weight !== null) parts.push(`weight ${withUnit(reading.weight, reading.weightUnit)}`);
 	if (reading.qtInterval !== null) parts.push(`QT ${reading.qtInterval}ms`);
 	return parts.join(' · ') || 'No readings recorded';
+}
+
+/**
+ * The line under the charts when some readings could not be drawn: a glucose
+ * or weight with no unit recorded cannot go on an axis that has one (see
+ * `valueIn` in `$lib/units`), and leaving it off without a word would make
+ * the chart look like the whole history. Null when nothing was left off.
+ */
+export function unitlessNote(glucose: number, weight: number): string | null {
+	const kinds = [
+		glucose > 0 ? `${glucose} glucose` : null,
+		weight > 0 ? `${weight} weight` : null
+	].filter((kind): kind is string => kind !== null);
+	if (kinds.length === 0) return null;
+	const one = glucose + weight === 1;
+	return (
+		`${kinds.join(' and ')} ${one ? 'reading has' : 'readings have'} no unit recorded, ` +
+		`so the ${kinds.length > 1 ? 'charts leave' : 'chart leaves'} ${one ? 'it' : 'them'} out. ` +
+		`Edit ${one ? 'it' : 'them'} below to set ${one ? 'its unit' : 'their units'}.`
+	);
 }

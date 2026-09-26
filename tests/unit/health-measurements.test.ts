@@ -6,7 +6,11 @@ import {
 	type ChartPoint,
 	type ChartSeries
 } from '../../src/routes/(app)/health/measurements/chart';
-import { summaryOf, toLocalInput } from '../../src/routes/(app)/health/measurements/format';
+import {
+	summaryOf,
+	toLocalInput,
+	unitlessNote
+} from '../../src/routes/(app)/health/measurements/format';
 
 /**
  * The pure math behind the measurements page (MODEL-002): placing a stored
@@ -90,9 +94,21 @@ describe('summaryOf', () => {
 		expect(summaryOf({ ...empty, diastolic: 76 })).toBe('76 mmHg (diastolic)');
 	});
 
-	it('carries no unit for glucose or weight, which the source does not record either', () => {
+	it('shows glucose and weight in the unit each was taken in', () => {
+		const text = summaryOf({
+			...empty,
+			glucose: 112,
+			glucoseUnit: 'mg/dL',
+			weight: 154.3,
+			weightUnit: 'lb'
+		});
+		expect(text).toBe('glucose 112 mg/dL · weight 154.3 lb');
+	});
+
+	it('shows the bare number for a reading that recorded no unit, like an imported one', () => {
 		const text = summaryOf({ ...empty, glucose: 6.2, weight: 71.4 });
 		expect(text).toBe('glucose 6.2 · weight 71.4');
+		expect(summaryOf({ ...empty, glucose: 6.2, glucoseUnit: null })).toBe('glucose 6.2');
 	});
 
 	it('combines every reading present, in a fixed order', () => {
@@ -208,5 +224,29 @@ describe('polylineOf', () => {
 			{ x: 3, y: 4, value: 2, at: '2026-01-02T00:00:00.000Z' }
 		];
 		expect(polylineOf(points)).toBe('1,2 3,4');
+	});
+});
+
+describe('unitlessNote', () => {
+	it('says nothing when every charted reading had a unit', () => {
+		expect(unitlessNote(0, 0)).toBeNull();
+	});
+
+	it('names what was left off, in the singular', () => {
+		expect(unitlessNote(1, 0)).toBe(
+			'1 glucose reading has no unit recorded, so the chart leaves it out. Edit it below to set its unit.'
+		);
+	});
+
+	it('names what was left off, in the plural', () => {
+		expect(unitlessNote(0, 4)).toBe(
+			'4 weight readings have no unit recorded, so the chart leaves them out. Edit them below to set their units.'
+		);
+	});
+
+	it('covers both charts in one sentence when both left readings off', () => {
+		expect(unitlessNote(2, 1)).toBe(
+			'2 glucose and 1 weight readings have no unit recorded, so the charts leave them out. Edit them below to set their units.'
+		);
 	});
 });

@@ -7,6 +7,7 @@ import {
 	updateHealthMeasurement
 } from '$lib/server/repositories';
 import { requireViewer } from '$lib/server/viewer';
+import { DEFAULT_GLUCOSE_UNIT, DEFAULT_WEIGHT_UNIT } from '$lib/units';
 import type { Actions, PageServerLoad } from './$types';
 import { toLocalInput } from './format';
 
@@ -28,8 +29,10 @@ const readingFields = (form: FormData) => ({
 	bpContext: form.get('bpContext'),
 	heartRate: form.get('heartRate'),
 	glucose: form.get('glucose'),
+	glucoseUnit: form.get('glucoseUnit'),
 	glucoseContext: form.get('glucoseContext'),
 	weight: form.get('weight'),
+	weightUnit: form.get('weightUnit'),
 	qtInterval: form.get('qtInterval'),
 	notes: form.get('notes')
 });
@@ -44,6 +47,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		`
 	]);
 	const timezone = household[0]?.timezone ?? 'America/Toronto';
+	const own = readings.filter((r) => r.ownerUserId === viewer.userId);
 
 	return {
 		// The datetime-local input needs the household's own wall clock, not
@@ -52,7 +56,17 @@ export const load: PageServerLoad = async ({ locals }) => {
 			...r,
 			measuredAtLocal: toLocalInput(r.measuredAt, timezone)
 		})),
-		defaultMeasuredAt: toLocalInput(new Date(), timezone)
+		defaultMeasuredAt: toLocalInput(new Date(), timezone),
+		// A new reading is offered in the unit this person used last, so someone
+		// who weighs in lb is never quietly defaulted back to kg between two
+		// readings. `readings` is most recent first. Only the viewer's own rows
+		// that recorded a unit count: a reading the other member shared says
+		// nothing about which unit this person uses, and neither does one
+		// imported without a unit.
+		defaultUnits: {
+			glucose: own.find((r) => r.glucoseUnit !== null)?.glucoseUnit ?? DEFAULT_GLUCOSE_UNIT,
+			weight: own.find((r) => r.weightUnit !== null)?.weightUnit ?? DEFAULT_WEIGHT_UNIT
+		}
 	};
 };
 
