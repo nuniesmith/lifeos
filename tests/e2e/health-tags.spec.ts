@@ -3,7 +3,7 @@ import postgres, { type Sql } from 'postgres';
 import { hashPassword } from '../../src/lib/server/auth/password';
 
 /**
- * Tagging a journal day with what you noticed, and finding it on /health
+ * Tagging a journal day with what you noticed, and finding it on /health/symptoms
  * (PACK3-001), on the phone the journal is used on.
  *
  * Seeds an account of its own for the reason journal-habits.spec.ts does:
@@ -91,7 +91,9 @@ async function symptoms(page: Page) {
 test.describe('tagging a journal day', () => {
 	test.use({ viewport: PHONE });
 
-	test('tags today with a new symptom, and /health Patterns counts it', async ({ page }) => {
+	test('tags today with a new symptom, and the Patterns on /health/symptoms count it', async ({
+		page
+	}) => {
 		const word = attempt('Tingling toes');
 		await signIn(page);
 		await page.goto('/journal');
@@ -115,7 +117,7 @@ test.describe('tagging a journal day', () => {
 			(await symptoms(page)).getByRole('button', { name: word, exact: true })
 		).toHaveAttribute('aria-pressed', 'true');
 
-		await page.goto('/health');
+		await page.goto('/health/symptoms');
 		const patterns = page.getByRole('list', { name: 'How often each has come up' });
 		const row = patterns.getByRole('listitem').filter({ hasText: word });
 		await expect(row).toHaveCount(1);

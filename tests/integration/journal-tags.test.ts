@@ -24,7 +24,7 @@ import type { JournalData } from '../../src/routes/(app)/journal/entry';
  * page's path over them — that the form names a day rather than an entry, so
  * it can only ever reach the viewer's own; that a day with no entry is started
  * by a tag and never by a look; that the picker offers symptoms, activity and
- * exercise and nothing else; and that what it writes is what `/health`
+ * exercise and nothing else; and that what it writes is what `/health/symptoms`
  * Patterns counts.
  */
 
@@ -158,7 +158,7 @@ describe('tagging a day from the journal', () => {
 		expect(await healthForLog(sql, owner, day!.id)).toEqual([]);
 	});
 
-	it('shows a tag on /health Patterns, which is the point', async () => {
+	it('shows a tag in the Patterns on /health/symptoms, which is the point', async () => {
 		const walk = await word('activity', 'Long walk');
 		await tag(ownerUser, walk.id, true, '2026-08-01');
 		await tag(ownerUser, walk.id, true, '2026-08-02');

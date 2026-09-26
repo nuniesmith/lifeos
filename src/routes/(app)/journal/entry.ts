@@ -326,7 +326,7 @@ export async function tagDay(locals: App.Locals, request: Request) {
  * A word that is already on the list is tagged rather than refused: typing
  * "headache" when "Headache" exists means the person wants Headache on the
  * day, and an error telling them it exists would only send them looking for
- * it. A new word joins the shared list the way one added on `/health` does —
+ * it. A new word joins the shared list the way one added on `/health/symptoms` does —
  * the list is the household's, what a person tags with it stays their own.
  */
 export async function addTag(locals: App.Locals, request: Request) {

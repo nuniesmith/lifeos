@@ -10,7 +10,7 @@ import {
 /**
  * The health words a journal day can be tagged with (PACK3-001).
  *
- * `/health` counts how often each word came up; this is what lets a person
+ * `/health/symptoms` counts how often each word came up; this is what lets a person
  * give it something to count without a Notion import. The words are the
  * household's `health_vocabulary`, the link is `daily_log_health`, and both
  * are written through `logHealthTerm` / `unlogHealthTerm`, which check in SQL
@@ -39,7 +39,7 @@ import {
  * energy on a day, and the picker does not offer those lists. What an
  * imported day already carries is still shown (see `alsoLogged`), read-only,
  * so the day never hides what is recorded against it, and it still counts on
- * `/health` and in the year's dominant mood. Which of the two shapes should
+ * `/health/symptoms` and in the year's dominant mood. Which of the two shapes should
  * win in the long run — the source's named lists, or the journal's scale and
  * line — is a data decision for the household, not one a picker should make
  * by quietly offering both.

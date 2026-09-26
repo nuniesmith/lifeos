@@ -36,7 +36,7 @@
 		exercise: 'exercise'
 	};
 
-	/** The lists shown read-only, as `/health` names them. */
+	/** The lists shown read-only, as `/health/symptoms` names them. */
 	const ELSEWHERE: Record<string, string> = { mood: 'Mood', energy: 'Energy' };
 
 	/** The word the last action touched, looked up in the data it reloaded. */
