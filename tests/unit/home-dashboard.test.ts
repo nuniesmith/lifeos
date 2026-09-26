@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
 	listProjects: vi.fn(),
 	listTasks: vi.fn(),
 	upcomingImportantDates: vi.fn(),
-	getWeather: vi.fn()
+	getWeather: vi.fn(),
+	healthOverview: vi.fn()
 }));
 
 vi.mock('$lib/server/db', () => ({ sql: mocks.sql }));
@@ -61,6 +62,20 @@ beforeEach(() => {
 		current: null,
 		updatedAt: null
 	});
+	mocks.healthOverview.mockResolvedValue({
+		medications: { am: [], pm: [], other: [], dueCount: 0, takenCount: 0, runningLowCount: 0 },
+		measurements: {
+			bloodPressure: null,
+			heartRate: null,
+			glucose: null,
+			weight: null,
+			qtInterval: null,
+			latestOverall: null,
+			recentChronological: []
+		},
+		labs: [],
+		visits: { mostRecent: null, next: null }
+	});
 });
 
 describe('home dashboard load', () => {
@@ -82,6 +97,10 @@ describe('home dashboard load', () => {
 			today: '2026-09-05',
 			assignee: 'me'
 		});
+		// The Today panel and the /health hub read the same helper, so they
+		// cannot quietly disagree about what "today" or "due" means.
+		expect(mocks.healthOverview).toHaveBeenCalledWith(mocks.sql, viewer, '2026-09-05');
+		expect(data).toMatchObject({ health: { visits: { mostRecent: null, next: null } } });
 	});
 
 	it('leaves today empty when only an earlier journal entry exists', async () => {

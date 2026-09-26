@@ -262,7 +262,7 @@ export async function search(
 			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
 			       concat_ws(' ', t.kind, t.notes) as body,
 			       (t.archived_at is not null) as archived,
-			       '/health' as path
+			       '/health/symptoms' as path
 			from health_vocabulary t
 			where ${readableScope(sql, viewer, 't')}
 		`);

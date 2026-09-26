@@ -7,11 +7,33 @@
 	import { appPath } from '$lib/components/nav';
 	import { WORKSPACE_GROUPS } from '$lib/components/workspace-nav';
 	import type { IconName } from '$lib/components/icons';
+	import DueMedicationRow from './health/DueMedicationRow.svelte';
+	import { summaryOf } from './health/measurements/format';
 
 	let { data, form } = $props();
 	const isDone = (status: string) => status === 'done' || status === 'dropped';
 	const openToday = $derived(data.dueToday.filter((task) => !isDone(task.status)).length);
 	const habitsDone = $derived(data.habits.filter((habit) => habit.doneToday).length);
+
+	// ─── today's health panel ────────────────────────────────────────────
+	const dueMedications = $derived([
+		...data.health.medications.am,
+		...data.health.medications.pm,
+		...data.health.medications.other
+	]);
+	// Compact means it can also be ABSENT: a fresh household with nothing due,
+	// no reading ever taken and no visit on the calendar gets no panel at all,
+	// rather than three empty-state prompts stacked under Habits.
+	const hasHealthSignal = $derived(
+		dueMedications.length > 0 ||
+			data.health.visits.next !== null ||
+			data.health.measurements.latestOverall !== null
+	);
+	const visitWhen = (at: Date): string =>
+		`${at.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}, ${at.toLocaleTimeString(
+			undefined,
+			{ hour: 'numeric', minute: '2-digit' }
+		)}`;
 	const quickCaptures: {
 		label: string;
 		icon: IconName;
@@ -315,6 +337,40 @@
 						</ul>{/if}
 					<a class="new-page" href={resolve('/habits')}>＋ New habit</a>
 				</div>
+
+				{#if hasHealthSignal}
+					<div class="health-panel">
+						<div class="habits-heading">
+							<a class="view-label" href={resolve(appPath('/health'))}
+								><Icon name="habits" size={14} /> Today's health</a
+							>
+						</div>
+
+						{#if dueMedications.length > 0}
+							<ul class="health-med-list" aria-label="Medications due today">
+								{#each dueMedications as medication (medication.id)}
+									<DueMedicationRow {medication} />
+								{/each}
+							</ul>
+						{/if}
+
+						<p class="health-line">
+							{#if data.health.measurements.latestOverall}
+								<span>{summaryOf(data.health.measurements.latestOverall)}</span>
+							{:else}
+								<span class="muted">No readings yet</span>
+							{/if}
+							<a href={resolve(appPath('/health/measurements'))}>Add a reading ↗</a>
+						</p>
+
+						{#if data.health.visits.next}
+							<p class="health-line">
+								<span>Next visit: {data.health.visits.next.reason}</span>
+								<span class="health-visit-when">{visitWhen(data.health.visits.next.visitAt)}</span>
+							</p>
+						{/if}
+					</div>
+				{/if}
 			</section>
 		</div>
 
@@ -954,6 +1010,47 @@
 	}
 	.empty-habits a {
 		color: var(--c-text);
+	}
+	.health-panel {
+		margin-top: 14px;
+		padding: 16px;
+		border-radius: 9px;
+		background: var(--c-surface-alt);
+	}
+	.health-med-list {
+		margin: 0 0 10px;
+		padding: 0;
+		list-style: none;
+	}
+	.health-med-list :global(li + li) {
+		border-top: 1px solid var(--c-border);
+	}
+	.health-line {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		margin: 8px 0 0;
+		font-size: 0.82rem;
+	}
+	.health-line a {
+		flex: none;
+		color: var(--c-accent);
+		font-size: 0.74rem;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.health-line a:hover {
+		text-decoration: underline;
+	}
+	.health-line .muted {
+		color: var(--home-muted);
+	}
+	.health-visit-when {
+		flex: none;
+		color: var(--home-muted);
+		font-size: 0.74rem;
+		white-space: nowrap;
 	}
 	.home-section {
 		margin-top: 58px;
