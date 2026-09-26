@@ -4,6 +4,7 @@ import {
 	countTasks,
 	daysBetween,
 	habitSummaries,
+	healthOverview,
 	listDailyLogs,
 	listGoals,
 	listHabits,
@@ -58,7 +59,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		waitingCount,
 		calendarRows,
 		calendarDateRows,
-		weather
+		weather,
+		health
 	] = await Promise.all([
 		agenda(sql, viewer, { today, assignee: 'me' }),
 		listHabits(sql, viewer, { activeOnly: true }),
@@ -92,7 +94,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 			days: daysBetween(calendarRange.from, calendarRange.to),
 			limit: 200
 		}),
-		getWeather(timezone)
+		getWeather(timezone),
+		// Feeds the compact "Today's health" panel below. Same helper the
+		// `/health` hub reads, so the two surfaces cannot disagree about what
+		// "due today" or "the latest reading" means.
+		healthOverview(sql, viewer, today)
 	]);
 
 	const summaryFor = new Map(summaries.map((s) => [s.habitId, s]));
@@ -118,6 +124,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 			day: item.nextOn
 		})),
 		weather,
+		health,
 		week: board.week,
 		overdue: board.overdue,
 		dueToday: board.dueToday,

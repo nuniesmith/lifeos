@@ -236,14 +236,19 @@ test('a health term can be added and starts showing up', async ({ page }) => {
 	await signIn(page);
 	const name = unique('Wobbliness');
 
+	// The vocabulary lives at /health/symptoms since /health became the hub;
+	// the old address still lands here, which is worth proving on the way in.
 	await page.goto('/health?kind=symptom');
+	await expect(page).toHaveURL(/\/health\/symptoms\?kind=symptom$/);
 	await page.getByLabel('New symptom').fill(name);
 	await page.getByRole('button', { name: 'Add', exact: true }).click();
 	await expect(page.getByText(name, { exact: true })).toBeVisible();
 
 	// The chip count is derived, so it moving is what proves the write landed
 	// rather than the word merely being echoed back into the form.
-	const chip = page.getByRole('link', { name: /^Symptoms/ });
+	// "Symptoms" followed by its count: the filter chip, not the
+	// "Symptoms & mood" tab in the health sub-navigation.
+	const chip = page.getByRole('link', { name: /^Symptoms \d/ });
 	await expect(chip).toContainText(/[1-9]/);
 });
 
