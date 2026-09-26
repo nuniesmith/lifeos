@@ -718,6 +718,37 @@ export interface MealPlanDay {
 	meals: PlannedMeal[];
 }
 
+/**
+ * The planned day nearest to `from`, for an empty week to point at, or null.
+ *
+ * "Planned" means what the week view would show: a live day the viewer can
+ * read, with at least one recipe the viewer can read on it. Without the
+ * scopes this was a household-wide query in the page, which told a member the
+ * date of the other member's private plan — and pointed at weeks that would
+ * then open empty.
+ */
+export async function nearestPlannedDay(
+	sql: Queryable,
+	viewer: Viewer,
+	from: string
+): Promise<string | null> {
+	const [row] = await sql<{ on_date: string }[]>`
+		select p.on_date::text as on_date
+		from meal_plans p
+		where ${readableScope(sql, viewer, 'p')}
+		  and p.archived_at is null
+		  and exists (
+			select 1
+			from meal_plan_recipes m
+			join recipes r on r.id = m.recipe_id
+			where m.meal_plan_id = p.id and ${readableScope(sql, viewer, 'r')}
+		  )
+		order by abs(p.on_date - ${from}::date), p.on_date
+		limit 1
+	`;
+	return row ? toDay(row.on_date) : null;
+}
+
 /** The plan across a date window, with what is on each day. */
 export async function mealPlan(
 	sql: Queryable,
