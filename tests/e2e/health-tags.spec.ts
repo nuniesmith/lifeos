@@ -172,6 +172,22 @@ test.describe('tagging a journal day', () => {
 		);
 		expect(overflow).toBeLessThanOrEqual(0);
 	});
+
+	test('the Mood filter says where its words come from, instead of pointing at the journal', async ({
+		page
+	}) => {
+		await signIn(page);
+		await page.goto('/health/symptoms?kind=mood');
+
+		// The journal records mood in its own field and cannot tag a mood word,
+		// so "tag a day in your journal" would send someone looking for a
+		// control that does not exist.
+		const patterns = page.locator('section', {
+			has: page.getByRole('heading', { name: 'Patterns' })
+		});
+		await expect(patterns).toContainText('Mood words come only from days imported from Notion.');
+		await expect(patterns).not.toContainText('Tag a day in your journal');
+	});
 });
 
 test.describe('without JavaScript', () => {
