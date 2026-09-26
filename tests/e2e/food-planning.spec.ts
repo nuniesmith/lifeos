@@ -226,3 +226,34 @@ test('the planning sheet works from the keyboard, with thumb-sized targets', asy
 	const remove = friday.getByRole('button', { name: /Remove Rye porridge/ });
 	expect((await remove.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 });
+
+test('a sheet closed with Escape opens again at once', async ({ page }) => {
+	await signIn(page);
+	await page.goto(`/food?from=${WEEK}`);
+
+	const friday = page.getByRole('article', { name: /Fri/ });
+	const plus = friday.getByRole('button', { name: /Plan a meal for Friday/ });
+	const sheet = page.getByRole('dialog', { name: /Plan Friday/ });
+
+	await plus.click();
+	await expect(sheet).toBeVisible();
+
+	// Escape closes a <dialog> at once but only queues its `close` event, and a
+	// browser may run the next input before that task. So a quick Escape, "+"
+	// used to reach "+" while the sheet still believed it was open — the tap
+	// did nothing, and the late `close` then shut it for good. This is that
+	// order, made deterministic: close as Escape does, press "+" in the same
+	// task, and only then let the queued event run.
+	await page.evaluate(() => {
+		const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
+		const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+			/Plan a meal for Friday/.test(b.getAttribute('aria-label') ?? b.textContent ?? '')
+		);
+		if (!dialog || !button) throw new Error('sheet or button missing');
+		dialog.requestClose();
+		button.click();
+	});
+
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('radio', { name: 'Breakfast' })).toBeVisible();
+});

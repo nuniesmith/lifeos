@@ -249,7 +249,12 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		path: listPage('/health')
 	},
 
-	recipe: { table: 'recipes', scope: 'visibility', title: column('name'), path: listPage('/food') },
+	recipe: {
+		table: 'recipes',
+		scope: 'visibility',
+		title: column('name'),
+		path: detailPage('/food/recipes/')
+	},
 	ingredient: {
 		table: 'ingredients',
 		scope: 'visibility',

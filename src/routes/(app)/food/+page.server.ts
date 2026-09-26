@@ -14,6 +14,7 @@ import {
 	listPrepTasks,
 	listRecipes,
 	mealPlan,
+	nearestPlannedDay,
 	planMeal,
 	setPrepTaskDone,
 	undoPlanShopping,
@@ -79,16 +80,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	// correct and looks like the feature does not work. Only asked when the
 	// window is empty, so the common case costs nothing.
 	const empty = plan.every((day) => day.meals.length === 0);
-	const [nearest] = empty
-		? await sql<{ on_date: string }[]>`
-				select mp.on_date::text as on_date
-				from meal_plans mp
-				join meal_plan_recipes mpr on mpr.meal_plan_id = mp.id
-				where mp.household_id = ${viewer.householdId}::uuid
-				order by abs(mp.on_date - ${from}::date)
-				limit 1
-			`
-		: [];
+	const nearest = empty ? await nearestPlannedDay(sql, viewer, from) : null;
 
 	// Covers for the recipe list, in one query rather than one per card.
 	const covers = await coversForPages(
@@ -112,7 +104,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		from,
 		// The week to offer when this one is empty, or null when there is
 		// genuinely nothing planned anywhere.
-		nearestPlan: nearest ? weekWindow(nearest.on_date).start : null,
+		nearestPlan: nearest ? weekWindow(nearest).start : null,
 		previous: addDays(from, -PLAN_DAYS),
 		next: addDays(from, PLAN_DAYS),
 		// Whether the window is the one containing today, so the page can offer

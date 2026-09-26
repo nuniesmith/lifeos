@@ -49,6 +49,7 @@ import {
 	setMedicalVisitArchived,
 	setMedicationArchived,
 	setProjectArchived,
+	setRecipeArchived,
 	setTagArchived,
 	setTaskArchived,
 	type ArchiveKind,
@@ -295,7 +296,8 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	lab_marker: setLabMarkerArchived,
 	lab_result: setLabResultArchived,
 	health_measurement: setHealthMeasurementArchived,
-	health_term: setHealthTermArchived
+	health_term: setHealthTermArchived,
+	recipe: setRecipeArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {
@@ -507,6 +509,7 @@ describe('every kind the archive holds', () => {
 		expect(paths.lab_marker).toBe(`/health/labs/${ids.lab_marker}`);
 		expect(paths.lab_result).toBe(`/health/labs/${ids.lab_marker}`);
 		expect(paths.library_item).toBe(`/library/${ids.library_item}`);
+		expect(paths.recipe).toBe(`/food/recipes/${ids.recipe}`);
 		expect(paths.daily_log).toBe('/journal/2026-04-17');
 	});
 

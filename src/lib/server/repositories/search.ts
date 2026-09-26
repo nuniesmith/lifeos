@@ -171,8 +171,9 @@ export async function search(
 	}
 
 	// Each of these carries a name and some prose, and lands on the page that
-	// lists its kind. Only habits have a detail route of their own; the rest go
-	// to the list, because that is where the record is actually shown.
+	// shows it. Habits and recipes have detail routes of their own — a recipe's
+	// method is only readable on its page — and the rest go to the list,
+	// because that is where the record is actually shown.
 	if (wanted('recipe')) {
 		branches.push(sql`
 			select 'recipe' as kind, t.id, t.name as title,
@@ -180,7 +181,7 @@ export async function search(
 			           || ' ' || coalesce(t.cuisine,'') || ' ' || coalesce(t.occasion,'')) as doc,
 			       concat_ws(' ', t.cuisine, t.notes) as body,
 			       (t.archived_at is not null) as archived,
-			       '/food' as path
+			       '/food/recipes/' || t.id as path
 			from recipes t
 			where ${readableScope(sql, viewer, 't')}
 		`);

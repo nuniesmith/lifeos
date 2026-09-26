@@ -2,15 +2,30 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import {
 	addDays,
 	createDailyLog,
+	createHealthTerm,
 	getDailyLogForDate,
+	getHealthTerm,
 	imagesForPage,
 	householdToday,
 	isDay,
 	listDailyLogs,
-	updateDailyLog
+	logHealthTerm,
+	unlogHealthTerm,
+	updateDailyLog,
+	type DailyLogInput,
+	type DailyLogRecord,
+	type Viewer
 } from '$lib/server/repositories';
 import { sql } from '$lib/server/db';
 import { requireViewer } from '$lib/server/viewer';
+import {
+	JOURNAL_TAG_KINDS,
+	isJournalTagKind,
+	liveWordNamed,
+	loadTags,
+	type JournalTagKind,
+	type JournalTags
+} from './health-tags';
 
 /**
  * The journal, shared by `/journal` (today) and `/journal/[date]` (any day).
@@ -65,6 +80,8 @@ export interface JournalData {
 	 * twenty-five imported days have one.
 	 */
 	images: { id: string; width: number | null; height: number | null; alt: string }[];
+	/** The health words on this day, and the household's words to add. */
+	tags: JournalTags;
 	previous: string;
 	/** Null on today: a journal is written after the day, not before it. */
 	next: string | null;
@@ -113,8 +130,12 @@ export async function loadJournal(
 	]);
 
 	// Sequenced after the entry rather than beside it: the images hang off the
-	// entry's own page id, so there is nothing to ask for until it is known.
-	const images = await imagesForPage(sql, viewer, entry?.notionPageId ?? null);
+	// entry's own page id, and the tags off its id, so there is nothing to ask
+	// for until it is known.
+	const [images, tags] = await Promise.all([
+		imagesForPage(sql, viewer, entry?.notionPageId ?? null),
+		loadTags(viewer, entry?.id ?? null)
+	]);
 
 	return {
 		today,
@@ -138,6 +159,7 @@ export async function loadJournal(
 					highlight: entry.highlight ?? ''
 				}
 			: null,
+		tags,
 		previous: addDays(date, -1),
 		next: date < today ? addDays(date, 1) : null,
 		history: history.map((row) => ({
@@ -195,18 +217,162 @@ export async function saveJournal(locals: App.Locals, request: Request) {
 		return { saved: true, date };
 	}
 
-	const result = await createDailyLog(sql, viewer, { ...fields, onDate: date });
-	if (!result.ok) {
-		// The unique index is the only thing that can refuse a create the
-		// existence check just cleared, and that means another tab won the
-		// race. Say so, rather than reporting "already exists" as a fault.
-		if (result.reason === 'invalid' && (await getDailyLogForDate(sql, viewer, date))) {
-			return fail(409, { error: RELOAD });
-		}
-		if (result.reason === 'invalid') return fail(400, { error: result.message });
-		return fail(403, { error: 'You cannot write an entry for that day.' });
+	const started = await startDay(viewer, date, fields);
+	if (!started.ok) {
+		// Another tab created the day between the check above and this write.
+		// Its text has not been seen here, so this save must not land on it.
+		if ('raced' in started) return fail(409, { error: RELOAD });
+		return fail(started.status, { error: started.error });
 	}
 	return { saved: true, date };
+}
+
+type Started =
+	| { ok: true; entry: DailyLogRecord }
+	| { ok: false; raced: DailyLogRecord }
+	| { ok: false; status: 400 | 403; error: string };
+
+/**
+ * Writes a day's entry for the first time.
+ *
+ * The one way a journal day comes into existence, whether the person saved
+ * the editor or tagged the day before writing a word of it: both are
+ * `createDailyLog` with the day's date, owned by the viewer and private by
+ * its default, so a day that began as a tag is exactly the row a save would
+ * have made and the editor simply edits it next.
+ *
+ * `raced` is the unique index refusing a create the caller's existence check
+ * had just cleared — another tab won. What that means is the caller's call: a
+ * save must not overwrite text it has not seen, while a tag can use the day.
+ */
+async function startDay(
+	viewer: Viewer,
+	date: string,
+	fields: DailyLogInput = {}
+): Promise<Started> {
+	const result = await createDailyLog(sql, viewer, { ...fields, onDate: date });
+	if (result.ok) return { ok: true, entry: result.record };
+
+	if (result.reason === 'invalid') {
+		const raced = await getDailyLogForDate(sql, viewer, date);
+		if (raced) return { ok: false, raced };
+		return { ok: false, status: 400, error: result.message ?? 'That entry is not valid.' };
+	}
+	return { ok: false, status: 403, error: 'You cannot write an entry for that day.' };
+}
+
+/**
+ * The viewer's own entry for a day, started empty if there is none yet.
+ *
+ * For an action that needs the day to exist — tagging it — and never for a
+ * load: opening a day must not create one, or every day a person merely
+ * looked at would count as logged.
+ */
+async function openDay(
+	viewer: Viewer,
+	date: string
+): Promise<{ ok: true; entry: DailyLogRecord } | { ok: false; status: 400 | 403; error: string }> {
+	const existing = await getDailyLogForDate(sql, viewer, date);
+	if (existing) return { ok: true, entry: existing };
+
+	const started = await startDay(viewer, date);
+	if (started.ok) return started;
+	if ('raced' in started) return { ok: true, entry: started.raced };
+	return started;
+}
+
+const WORD_GONE = 'That word is no longer on the list. Reload to see the current one.';
+
+/**
+ * Tags the day with one of the household's words, or takes it off (PACK3-001).
+ *
+ * The form names the day, never an entry id: the day is resolved to the
+ * viewer's OWN entry here, so no field could point this at another member's
+ * journal. The repository checks the same thing again in SQL, along with the
+ * word being theirs to use and in a list the picker offers.
+ *
+ * Idempotent in both directions, like the habit check-in: `on` is the state
+ * asked for rather than a flip, so a double tap lands on the row that is
+ * already there, and removing a word that is not on the day leaves the day
+ * as asked. Removing from a day with no entry touches nothing — it must not
+ * create one. Adding to such a day starts the entry through the same path a
+ * save does, but only once the word is known to be one that can be added, so
+ * a stale or hand-built request does not leave an empty day behind it.
+ */
+export async function tagDay(locals: App.Locals, request: Request) {
+	const viewer = await requireViewer(locals.user);
+	const form = await request.formData();
+
+	const date = String(form.get('date') ?? '');
+	if (!isDay(date)) return fail(400, { tagError: 'That is not a date.' });
+	const id = String(form.get('id') ?? '');
+
+	if (form.get('on') !== 'true') {
+		const entry = await getDailyLogForDate(sql, viewer, date);
+		if (entry) await unlogHealthTerm(sql, viewer, entry.id, id, JOURNAL_TAG_KINDS);
+		return { tag: { id, on: false, added: false } };
+	}
+
+	const word = await getHealthTerm(sql, viewer, id);
+	if (!word || word.archivedAt || !isJournalTagKind(word.kind)) {
+		return fail(404, { tagError: WORD_GONE });
+	}
+	return tagWith(viewer, date, word.id, word.kind, false);
+}
+
+/**
+ * Adds a word to the household's list and tags the day with it, in one step.
+ *
+ * A word that is already on the list is tagged rather than refused: typing
+ * "headache" when "Headache" exists means the person wants Headache on the
+ * day, and an error telling them it exists would only send them looking for
+ * it. A new word joins the shared list the way one added on `/health/symptoms` does —
+ * the list is the household's, what a person tags with it stays their own.
+ */
+export async function addTag(locals: App.Locals, request: Request) {
+	const viewer = await requireViewer(locals.user);
+	const form = await request.formData();
+
+	const date = String(form.get('date') ?? '');
+	if (!isDay(date)) return fail(400, { tagError: 'That is not a date.' });
+	const kind = form.get('kind');
+	if (!isJournalTagKind(kind)) {
+		return fail(400, { tagError: 'Add a symptom, an activity or an exercise.' });
+	}
+	const name = form.get('name');
+
+	const existing = typeof name === 'string' ? await liveWordNamed(viewer, kind, name) : null;
+	if (existing) return tagWith(viewer, date, existing, kind, false);
+
+	const created = await createHealthTerm(sql, viewer, { kind, name });
+	if (!created.ok) {
+		// The repository names its field; the person typed a word.
+		const message = (created.message ?? 'that word could not be added').replace(
+			/^name\b/,
+			'the word'
+		);
+		return fail(created.reason === 'invalid' ? 400 : 403, {
+			tagError: `${message.charAt(0).toUpperCase()}${message.slice(1)}.`,
+			tagKind: kind
+		});
+	}
+	return tagWith(viewer, date, created.record.id, kind, true);
+}
+
+/** Starts the day if need be, then links the word; shared by both actions. */
+async function tagWith(
+	viewer: Viewer,
+	date: string,
+	id: string,
+	kind: JournalTagKind,
+	added: boolean
+) {
+	const day = await openDay(viewer, date);
+	if (!day.ok) return fail(day.status, { tagError: day.error, tagKind: kind });
+
+	const result = await logHealthTerm(sql, viewer, day.entry.id, id, undefined, JOURNAL_TAG_KINDS);
+	if (!result.ok) return fail(404, { tagError: WORD_GONE, tagKind: kind });
+	return { tag: { id, on: true, added } };
 }
 
 /** The jump-to-a-day control. A redirect, so the URL matches what is shown. */

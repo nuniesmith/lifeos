@@ -3,6 +3,7 @@ import type { Viewer } from '../auth/authz';
 import { isDay } from './dates';
 import {
 	InvalidInput,
+	archiveScoped,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -30,7 +31,7 @@ import {
 	type RecordBase,
 	type WriteResult
 } from './base';
-import { optionalText, patched, requiredText } from './validate';
+import { optionalDay, optionalInt, optionalText, patched, requiredText } from './validate';
 
 /**
  * Food HQ (MODEL-002, feature pack 2).
@@ -465,11 +466,11 @@ export function createRecipe(
 				cuisine, is_favourite, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
-				${optionalText(input.notes, 'notes')}, ${optionalText(input.url, 'url')},
-				${toIntOrNull(input.servings ?? null)}::int,
-				${toIntOrNull(input.prepMinutes ?? null)}::int,
-				${toIntOrNull(input.cookMinutes ?? null)}::int,
-				${toIntOrNull(input.additionalMinutes ?? null)}::int,
+				${recipeNotes(input.notes)}, ${recipeUrl(input.url, null)},
+				${recipeServings(input.servings)}::int,
+				${recipeMinutes(input.prepMinutes, 'prep time')}::int,
+				${recipeMinutes(input.cookMinutes, 'cook time')}::int,
+				${recipeMinutes(input.additionalMinutes, 'additional time')}::int,
 				${toArrayInput(input.courses)}::text[], ${toArrayInput(input.seasons)}::text[],
 				${optionalText(input.cuisine, 'cuisine')},
 				${input.isFavourite === true || input.isFavourite === 'on'}::boolean,
@@ -533,6 +534,171 @@ export async function addRecipeIngredient(
 	return { ok: true, record: { recipeId, ingredientId } };
 }
 
+// ─── recipes: detail and editing ───────────────────────────────────────────
+
+/**
+ * Everything the recipe page can change.
+ *
+ * `lastMadeOn` is a day the caller supplies rather than one computed here:
+ * "made today" means today on the household's clock, which the route asks for
+ * with `householdToday`, and a repository that guessed from the server's own
+ * clock would put a late dinner on tomorrow.
+ */
+export interface RecipePatch extends RecipeInput {
+	lastMadeOn?: unknown;
+}
+
+/**
+ * A recipe's method, as Markdown.
+ *
+ * The limit is far above any real method: imported bodies carry a page's whole
+ * content, and a limit near their size would stop a household from saving an
+ * unrelated edit to a recipe it did not write in the app. Line endings are
+ * made `\n`, because a browser submits a textarea with `\r\n` and every web
+ * save would otherwise store the method differently from the import.
+ */
+function recipeNotes(value: unknown): string | null {
+	return optionalText(value, 'notes', 100_000)?.replace(/\r\n?/g, '\n') ?? null;
+}
+
+/**
+ * Servings, as a form sends them. Blank is "not recorded", never zero: the
+ * table refuses zero servings, and passing the blank through as 0 turned an
+ * empty field into a constraint violation and a 500.
+ */
+function recipeServings(value: unknown): number | null {
+	return optionalInt(value, 'servings', { min: 1, max: 1000 });
+}
+
+/** A prep, cook or additional time in minutes; blank is unknown, 0 is none. */
+function recipeMinutes(value: unknown, field: string): number | null {
+	return optionalInt(value, field, { min: 0, max: 10_000 });
+}
+
+/**
+ * A recipe's source link: a web address, or nothing.
+ *
+ * Checked on the way in so this application never stores a `javascript:` or
+ * `data:` link of its own making; the page still checks on the way out,
+ * because an imported value never passed through here. An unchanged value is
+ * let through as it is, so an imported link in some other shape does not stop
+ * the rest of the recipe from being edited.
+ */
+function recipeUrl(value: unknown, current: string | null): string | null {
+	const text = optionalText(value, 'url', 2000);
+	if (text === null || text === current) return text;
+	let protocol: string | null = null;
+	try {
+		protocol = new URL(text).protocol;
+	} catch {
+		// Not a URL at all; refused below with the same message.
+	}
+	if (protocol !== 'http:' && protocol !== 'https:') {
+		throw new InvalidInput('url must be a web address starting with https://');
+	}
+	return text;
+}
+
+/**
+ * Edits a recipe under the version the caller read it at.
+ *
+ * Only the fields present in the patch change; the rest keep their stored
+ * values. A stale `expectedUpdatedAt` is a `conflict` rather than a silent
+ * overwrite, which is the only protection a two-person household has against
+ * one of them saving a form the other has since edited.
+ */
+export function updateRecipe(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: RecipePatch,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Recipe>> {
+	return guarded<Recipe>(async () => {
+		const row = await getScoped<RecipeRow>(
+			sql,
+			RECIPES,
+			id,
+			readableScope(sql, viewer, RECIPES),
+			recipeColumns(sql)
+		);
+		if (!row) return { ok: false, reason: 'not_found' };
+		const current = mapRecipe(row);
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 300)),
+			notes: patched(patch, 'notes', current.notes, recipeNotes),
+			url: patched(patch, 'url', current.url, (v) => recipeUrl(v, current.url)),
+			servings: patched(patch, 'servings', current.servings, recipeServings),
+			prepMinutes: patched(patch, 'prepMinutes', current.prepMinutes, (v) =>
+				recipeMinutes(v, 'prep time')
+			),
+			cookMinutes: patched(patch, 'cookMinutes', current.cookMinutes, (v) =>
+				recipeMinutes(v, 'cook time')
+			),
+			additionalMinutes: patched(patch, 'additionalMinutes', current.additionalMinutes, (v) =>
+				recipeMinutes(v, 'additional time')
+			),
+			courses: patched(patch, 'courses', current.courses, toArrayInput),
+			seasons: patched(patch, 'seasons', current.seasons, toArrayInput),
+			cuisine: patched(patch, 'cuisine', current.cuisine, (v) => optionalText(v, 'cuisine')),
+			isFavourite: patched(
+				patch,
+				'isFavourite',
+				current.isFavourite,
+				(v) => v === true || v === 'on'
+			),
+			lastMadeOn: patched(patch, 'lastMadeOn', current.lastMadeOn, (v) =>
+				optionalDay(v, 'last made')
+			)
+		};
+
+		return writeScoped<RecipeRow, Recipe>({
+			sql,
+			table: RECIPES,
+			id,
+			readScope: readableScope(sql, viewer, RECIPES),
+			writeScope: writableScope(sql, viewer, RECIPES),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				name = ${next.name}, notes = ${next.notes}, url = ${next.url},
+				servings = ${next.servings}::int, prep_minutes = ${next.prepMinutes}::int,
+				cook_minutes = ${next.cookMinutes}::int,
+				additional_minutes = ${next.additionalMinutes}::int,
+				courses = ${next.courses}::text[], seasons = ${next.seasons}::text[],
+				cuisine = ${next.cuisine}, is_favourite = ${next.isFavourite}::boolean,
+				last_made_on = ${next.lastMadeOn}::date,
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: recipeColumns(sql),
+			map: mapRecipe,
+			mayWrite: writableBy(viewer)
+		});
+	});
+}
+
+/**
+ * Archives or restores a recipe. It leaves /food and search's live results and
+ * waits in the Archive; its ingredients, and any day it was planned on, are
+ * untouched.
+ */
+export const setRecipeArchived = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Recipe>> =>
+	archiveScoped<RecipeRow, Recipe>({
+		sql,
+		table: RECIPES,
+		viewer,
+		id,
+		archived,
+		expectedUpdatedAt,
+		columns: recipeColumns(sql),
+		map: mapRecipe
+	});
+
 // ─── the plan ──────────────────────────────────────────────────────────────
 
 export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
@@ -550,6 +716,37 @@ export interface MealPlanDay {
 	name: string | null;
 	notes: string | null;
 	meals: PlannedMeal[];
+}
+
+/**
+ * The planned day nearest to `from`, for an empty week to point at, or null.
+ *
+ * "Planned" means what the week view would show: a live day the viewer can
+ * read, with at least one recipe the viewer can read on it. Without the
+ * scopes this was a household-wide query in the page, which told a member the
+ * date of the other member's private plan — and pointed at weeks that would
+ * then open empty.
+ */
+export async function nearestPlannedDay(
+	sql: Queryable,
+	viewer: Viewer,
+	from: string
+): Promise<string | null> {
+	const [row] = await sql<{ on_date: string }[]>`
+		select p.on_date::text as on_date
+		from meal_plans p
+		where ${readableScope(sql, viewer, 'p')}
+		  and p.archived_at is null
+		  and exists (
+			select 1
+			from meal_plan_recipes m
+			join recipes r on r.id = m.recipe_id
+			where m.meal_plan_id = p.id and ${readableScope(sql, viewer, 'r')}
+		  )
+		order by abs(p.on_date - ${from}::date), p.on_date
+		limit 1
+	`;
+	return row ? toDay(row.on_date) : null;
 }
 
 /** The plan across a date window, with what is on each day. */

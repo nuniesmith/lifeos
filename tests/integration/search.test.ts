@@ -118,7 +118,7 @@ describe('every search result links somewhere real', () => {
 		// assertion below: a branch with no record of its own never has its path
 		// checked, and that is exactly how /library/<id> once shipped pointing at a
 		// route that did not exist.
-		ok(await createRecipe(sql, owner, { name: `${word} soup` }), 'recipe');
+		const recipe = ok(await createRecipe(sql, owner, { name: `${word} soup` }), 'recipe').record;
 		ok(await createIngredient(sql, owner, { name: `${word} root` }), 'ingredient');
 		ok(await createPerson(sql, owner, { name: `${word} keeper` }), 'person');
 		ok(await createHabit(sql, owner, { name: `${word} walk` }), 'habit');
@@ -178,6 +178,9 @@ describe('every search result links somewhere real', () => {
 		expect(pathOf('lab_marker')).toBe(`/health/labs/${marker.id}`);
 		expect(pathOf('medical_visit')).toBe(`/health/visits/${visit.id}`);
 		expect(pathOf('medication')).toBe('/health/medications');
+		// A recipe's method is only readable on its own page, so that is where
+		// a hit goes — not to the list on /food, which shows a dozen cards.
+		expect(pathOf('recipe')).toBe(`/food/recipes/${recipe.id}`);
 		// Important dates are shown on the calendar; /areas never lists them.
 		expect(pathOf('important_date')).toBe('/calendar');
 	});

@@ -11,6 +11,7 @@ import {
 	createIngredient,
 	createRecipe,
 	mealPlan,
+	nearestPlannedDay,
 	planMeal,
 	undoPlanShopping,
 	unplanMeal,
@@ -769,5 +770,50 @@ describe('the /food actions', () => {
 		expect(
 			(await post('unplan', owner, { mealPlanId, slot: 'dinner', recipeId: soup.id })).status
 		).toBe(404);
+	});
+});
+
+describe('the nearest plan an empty week points at', () => {
+	// Far from MONDAY on purpose: each case plants one day and asks from MONDAY.
+	const LATER = '2031-04-02';
+	const SOONER = '2031-03-20';
+
+	it('points at the closest day with a meal the viewer can see', async () => {
+		const stew = await recipe('Bean stew');
+		ok(await planMeal(sql, owner, LATER, 'dinner', stew.id), 'plan later');
+		ok(await planMeal(sql, owner, SOONER, 'dinner', stew.id), 'plan sooner');
+		expect(await nearestPlannedDay(sql, owner, MONDAY)).toBe(SOONER);
+		expect(await nearestPlannedDay(sql, partner, MONDAY)).toBe(SOONER);
+	});
+
+	it('never names the date of another member’s private plan', async () => {
+		// A recipe both can read, so only the day's own scope can hide it.
+		const shared = await recipe('Household omelette');
+		await link(await dayAs(SOONER, 'private', partner.userId), shared.id);
+		expect(await nearestPlannedDay(sql, owner, MONDAY)).toBeNull();
+		expect(await nearestPlannedDay(sql, partner, MONDAY)).toBe(SOONER);
+	});
+
+	it('skips a shared day whose only meal the viewer cannot read', async () => {
+		// The week view would open that day empty, so pointing at it helps no one.
+		const hidden = await recipe('Partner’s secret curry', partner, {
+			ownerUserId: partner.userId,
+			visibility: 'private'
+		});
+		await link(await dayAs(SOONER, 'household', null), hidden.id);
+		expect(await nearestPlannedDay(sql, owner, MONDAY)).toBeNull();
+	});
+
+	it('skips an archived day, and never crosses a household', async () => {
+		const soup = await recipe('Archived soup');
+		const day = await dayAs(SOONER, 'household', null);
+		await link(day, soup.id);
+		await sql`update meal_plans set archived_at = now() where id = ${day}::uuid`;
+
+		const theirs = await recipe('Elsewhere pie', stranger);
+		ok(await planMeal(sql, stranger, LATER, 'dinner', theirs.id), 'plan elsewhere');
+
+		expect(await nearestPlannedDay(sql, owner, MONDAY)).toBeNull();
+		expect(await nearestPlannedDay(sql, stranger, MONDAY)).toBe(LATER);
 	});
 });

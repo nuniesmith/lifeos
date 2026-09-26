@@ -191,10 +191,15 @@ describe('vitamins, which are medications now', () => {
 		`;
 		const nausea = await term(owner, 'symptom', 'Nausea');
 		const day = await log(owner, '2026-08-08');
-		// logHealthTerm does not look at kind, so the leftover can still be on a
-		// day — which is exactly the row that would reach the frequency list
-		// with a label the page has no entry for.
-		ok(await logHealthTerm(sql, owner, day.id, leftover!.id), 'log the leftover');
+		// A link to the leftover can still be on a day — written before 0018,
+		// or by the importer, which links whatever the relation names — and it
+		// is exactly the row that would reach the frequency list with a label
+		// the page has no entry for. Written directly: logHealthTerm refuses a
+		// retired kind now (see the case below).
+		await sql`
+			insert into daily_log_health (daily_log_id, vocabulary_id)
+			values (${day.id}::uuid, ${leftover!.id}::uuid)
+		`;
 		ok(await logHealthTerm(sql, owner, day.id, nausea.id), 'log a symptom');
 
 		// Each read still returns the live symptom, so an empty answer cannot
@@ -215,6 +220,45 @@ describe('vitamins, which are medications now', () => {
 			select kind from health_vocabulary where id = ${leftover!.id}::uuid
 		`;
 		expect(kept?.kind).toBe('vitamin');
+	});
+
+	it('will not attach a leftover vitamin to a day, or take one off', async () => {
+		const [leftover] = await sql<{ id: string }[]>`
+			insert into health_vocabulary (household_id, visibility, kind, name)
+			values (${owner.householdId}::uuid, 'household', 'vitamin', 'Vitamin Q')
+			returning id
+		`;
+		const day = await log(owner, '2026-08-08');
+
+		// Readable, live, in the household, on the viewer's own day — every
+		// other condition holds, so the kind is the only thing refusing it.
+		expect(await logHealthTerm(sql, owner, day.id, leftover!.id)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		// Nor through a caller's own list of kinds: the type is erased by the
+		// time a form value arrives, so the retired kind is refused by value.
+		expect(
+			await logHealthTerm(sql, owner, day.id, leftover!.id, undefined, [
+				'vitamin' as unknown as 'symptom'
+			])
+		).toMatchObject({ ok: false });
+		const linked = async () =>
+			one(
+				await sql<{ n: number }[]>`
+					select count(*)::int as n from daily_log_health where daily_log_id = ${day.id}::uuid
+				`
+			).n;
+		expect(await linked()).toBe(0);
+
+		// A link that already exists is hidden, and stays put: what a page
+		// cannot show, it must not be able to remove.
+		await sql`
+			insert into daily_log_health (daily_log_id, vocabulary_id)
+			values (${day.id}::uuid, ${leftover!.id}::uuid)
+		`;
+		expect(await unlogHealthTerm(sql, owner, day.id, leftover!.id)).toMatchObject({ ok: false });
+		expect(await linked()).toBe(1);
 	});
 });
 
@@ -395,6 +439,135 @@ describe('privacy', () => {
 		await term(owner, 'symptom', 'Nausea');
 		const elsewhere: Viewer = { ...owner, householdId: crypto.randomUUID() };
 		expect(await listHealthTerms(sql, elsewhere)).toEqual([]);
+	});
+
+	it('keeps a day owner-only even when the day is shared with the household', async () => {
+		// A journal is its author's whatever its visibility — search and the
+		// archive treat it the same way. `readableScope` alone would let the
+		// other member through here, so this is the case that proves the owner
+		// check is its own condition and not the visibility rule restated.
+		const nausea = await term(owner, 'symptom', 'Nausea');
+		const headache = await term(owner, 'symptom', 'Headache');
+		const theirDay = await log(partner, '2026-08-08');
+		await sql`update daily_logs set visibility = 'household' where id = ${theirDay.id}::uuid`;
+		ok(await logHealthTerm(sql, partner, theirDay.id, nausea.id), 'log');
+
+		expect(await healthForLog(sql, owner, theirDay.id)).toEqual([]);
+		expect(await logHealthTerm(sql, owner, theirDay.id, headache.id)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		expect(await unlogHealthTerm(sql, owner, theirDay.id, nausea.id)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		expect((await healthForLog(sql, partner, theirDay.id)).map((t) => t.name)).toEqual(['Nausea']);
+	});
+
+	it('will not attach a word from another household', async () => {
+		const [other] = await sql<{ id: string }[]>`
+			insert into households (name) values ('Next door') returning id
+		`;
+		const neighbour: Viewer = { ...owner, householdId: other!.id };
+		const theirs = ok(
+			await createHealthTerm(sql, neighbour, { kind: 'symptom', name: 'Nausea' }),
+			'create next door'
+		).record;
+		const day = await log(owner, '2026-08-08');
+
+		expect(await logHealthTerm(sql, owner, day.id, theirs.id)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		expect(await healthForLog(sql, owner, day.id)).toEqual([]);
+	});
+
+	it('will not attach another member’s private word', async () => {
+		const secret = ok(
+			await createHealthTerm(sql, partner, {
+				kind: 'symptom',
+				name: 'Private word',
+				ownerUserId: partner.userId,
+				visibility: 'private'
+			}),
+			'create a private word'
+		).record;
+		const day = await log(owner, '2026-08-08');
+
+		expect(await logHealthTerm(sql, owner, day.id, secret.id)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		expect(await healthForLog(sql, owner, day.id)).toEqual([]);
+		// Their own private word is theirs to use.
+		const theirDay = await log(partner, '2026-08-08');
+		ok(await logHealthTerm(sql, partner, theirDay.id, secret.id), 'log their own');
+	});
+
+	it('does not reveal another member’s private word by refusing the same name', async () => {
+		ok(
+			await createHealthTerm(sql, partner, {
+				kind: 'symptom',
+				name: 'Private word',
+				ownerUserId: partner.userId,
+				visibility: 'private'
+			}),
+			'create a private word'
+		);
+		// "Already on the list", about a word on no list the owner can see,
+		// would say it exists. The owner gets a word of their own instead.
+		const mine = await createHealthTerm(sql, owner, { kind: 'symptom', name: 'private word' });
+		expect(mine).toMatchObject({ ok: true });
+		expect((await listHealthTerms(sql, owner, { kind: 'symptom' })).map((t) => t.name)).toEqual([
+			'private word'
+		]);
+	});
+});
+
+describe('narrowing what may be attached', () => {
+	it('refuses a word outside the kinds the caller offers', async () => {
+		const content = await term(owner, 'mood', 'Content');
+		const nausea = await term(owner, 'symptom', 'Nausea');
+		const day = await log(owner, '2026-08-08');
+		const picker = ['symptom', 'activity', 'exercise'] as const;
+
+		expect(await logHealthTerm(sql, owner, day.id, content.id, undefined, picker)).toMatchObject({
+			ok: false,
+			reason: 'not_found'
+		});
+		ok(await logHealthTerm(sql, owner, day.id, nausea.id, undefined, picker), 'log a symptom');
+
+		// And will not take one off either: a link the importer made stays.
+		ok(await logHealthTerm(sql, owner, day.id, content.id), 'log the mood unrestricted');
+		expect(await unlogHealthTerm(sql, owner, day.id, content.id, picker)).toMatchObject({
+			ok: false
+		});
+		expect((await healthForLog(sql, owner, day.id)).map((t) => t.name).sort()).toEqual([
+			'Content',
+			'Nausea'
+		]);
+	});
+
+	it('treats an empty list of kinds as none, not as all', async () => {
+		const nausea = await term(owner, 'symptom', 'Nausea');
+		const day = await log(owner, '2026-08-08');
+		expect(await logHealthTerm(sql, owner, day.id, nausea.id, undefined, [])).toMatchObject({
+			ok: false
+		});
+	});
+
+	it('keeps a day’s detail when the word is tagged again without one', async () => {
+		const nausea = await term(owner, 'symptom', 'Nausea');
+		const day = await log(owner, '2026-08-08');
+		ok(await logHealthTerm(sql, owner, day.id, nausea.id, 'after lunch'), 'log with detail');
+
+		// A second tap from the journal carries no detail. It must not wipe one.
+		ok(await logHealthTerm(sql, owner, day.id, nausea.id), 'tag again');
+		expect((await healthForLog(sql, owner, day.id))[0]?.detail).toBe('after lunch');
+
+		// Null is an explicit clear, and still works.
+		ok(await logHealthTerm(sql, owner, day.id, nausea.id, null), 'clear');
+		expect((await healthForLog(sql, owner, day.id))[0]?.detail).toBeNull();
 	});
 });
 

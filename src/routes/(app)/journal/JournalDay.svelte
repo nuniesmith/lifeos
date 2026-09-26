@@ -14,14 +14,28 @@
 		appPath
 	} from '$lib/components';
 	import type { JournalData } from './entry';
+	import HealthTags, { type TagResult } from './HealthTags.svelte';
 
 	interface Props {
 		data: JournalData;
 		/** Whatever the last action returned; both routes post the same ones. */
-		form?: { error?: string; saved?: boolean } | null;
+		form?: ({ error?: string; saved?: boolean } & TagResult) | null;
 	}
 
 	let { data, form }: Props = $props();
+
+	/**
+	 * Whether anything has been written, as opposed to the day merely existing.
+	 * Tagging a day before writing about it starts its entry (see entry.ts), and
+	 * "Written" on a day that only carries a headache would be untrue.
+	 */
+	const written = $derived(
+		data.entry !== null &&
+			(data.entry.energyLevel !== null ||
+				[data.entry.note, data.entry.mood, data.entry.gratitude, data.entry.highlight].some(
+					(text) => text.trim() !== ''
+				))
+	);
 
 	/**
 	 * Dates are read at midday. The day itself arrives as `YYYY-MM-DD` from the
@@ -73,7 +87,7 @@
 		<!-- Stated, not offered as a setting: daily logs are private by design
 		     and this page has no control that could widen one. -->
 		<Badge tone="neutral" dot>Private to you</Badge>
-		{#if data.entry}<Badge tone="ok">Written</Badge>{/if}
+		{#if written}<Badge tone="ok">Written</Badge>{/if}
 	{/snippet}
 </PageHeader>
 
@@ -180,6 +194,8 @@
 			</Button>
 		</form>
 	</Card>
+
+	<HealthTags date={data.date} tags={data.tags} result={form} />
 
 	{#if data.images.length > 0}
 		<Card title="From this day" subtitle="Imported with the page">

@@ -1,4 +1,4 @@
-import { goToDay, loadJournal, saveJournal } from './entry';
+import { addTag, goToDay, loadJournal, saveJournal, tagDay } from './entry';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -13,5 +13,7 @@ export const load: PageServerLoad = ({ locals }) => loadJournal(locals, null);
 
 export const actions: Actions = {
 	save: ({ locals, request }) => saveJournal(locals, request),
+	tag: ({ locals, request }) => tagDay(locals, request),
+	addTag: ({ locals, request }) => addTag(locals, request),
 	go: ({ locals, request }) => goToDay(locals, request)
 };
