@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { Button, Card, Input, PageHeader, Select, Textarea } from '$lib/components';
-	import { SHELF_LABELS } from '../shelf';
+	import { SHELF_LABELS } from '../shelf-labels';
 
 	let { data, form } = $props();
 
