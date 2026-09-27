@@ -1,4 +1,5 @@
 import type { Fragment } from 'postgres';
+import { FOOD_UNITS, isFoodUnit, type FoodUnit } from '../../food-units';
 import type { Viewer } from '../auth/authz';
 import { isDay } from './dates';
 import {
@@ -29,9 +30,17 @@ import {
 	type PageOptions,
 	type Queryable,
 	type RecordBase,
+	type WriteFailure,
 	type WriteResult
 } from './base';
-import { optionalDay, optionalInt, optionalText, patched, requiredText } from './validate';
+import {
+	optionalDay,
+	optionalInt,
+	optionalNumber,
+	optionalText,
+	patched,
+	requiredText
+} from './validate';
 
 /**
  * Food HQ (MODEL-002, feature pack 2).
@@ -44,6 +53,41 @@ import { optionalDay, optionalInt, optionalText, patched, requiredText } from '.
  * Everything here is household-scoped rather than personal. Dinner is a
  * household fact, unlike a journal entry.
  */
+
+// ─── structured amounts ─────────────────────────────────────────────────────
+//
+// Shared by an ingredient's pantry quantity and a recipe_ingredients pairing's
+// amount (migration 0026) — the same number-and-unit pair, just beside two
+// different free-text columns.
+
+/**
+ * A structured amount's number: the table's own CHECK requires it to be
+ * greater than 0, so a bad value is refused here with a field-level message
+ * rather than surfacing as a raw constraint violation.
+ */
+function amountValue(value: unknown, field: string): number | null {
+	const n = optionalNumber(value, field);
+	if (n !== null && n <= 0) throw new InvalidInput(`${field} must be greater than 0`);
+	return n;
+}
+
+/**
+ * A structured amount's unit, paired with its number: no number, no unit —
+ * even one a caller sent alongside a now-blank number is dropped, because a
+ * leftover pick beside a cleared field does not mean anything — and a number
+ * with no unit is refused, because "500" is not a structured amount until it
+ * says what it is 500 of.
+ */
+function amountUnit(value: number | null, given: unknown, field: string): FoodUnit | null {
+	if (value === null) return null;
+	if (given === undefined || given === null || given === '') {
+		throw new InvalidInput(`choose a unit for the ${field}`);
+	}
+	if (!isFoodUnit(given)) {
+		throw new InvalidInput(`${field} unit must be one of ${FOOD_UNITS.join(', ')}`);
+	}
+	return given;
+}
 
 // ─── ingredients ───────────────────────────────────────────────────────────
 
@@ -58,6 +102,11 @@ export interface Ingredient extends RecordBase {
 	isStaple: boolean;
 	store: string | null;
 	quantity: string | null;
+	/** The same amount as `quantity`, structured (migration 0026): set only
+	 *  when someone has picked a number and a unit in the app, never by an
+	 *  import. Null whenever `quantityUnit` is, and vice versa. */
+	quantityValue: number | null;
+	quantityUnit: FoodUnit | null;
 	preferredBrand: string | null;
 	notes: string | null;
 }
@@ -70,6 +119,8 @@ interface IngredientRow extends BaseRow {
 	is_staple: unknown;
 	store: string | null;
 	quantity: string | null;
+	quantity_value: unknown;
+	quantity_unit: string | null;
 	preferred_brand: string | null;
 	notes: string | null;
 }
@@ -78,7 +129,8 @@ const INGREDIENTS = 'ingredients';
 
 const ingredientColumns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
-	name, aisle, category, status, is_staple, store, quantity, preferred_brand, notes`;
+	name, aisle, category, status, is_staple, store, quantity, quantity_value, quantity_unit,
+	preferred_brand, notes`;
 
 const mapIngredient = (row: IngredientRow): Ingredient => ({
 	...mapBase(row),
@@ -89,6 +141,8 @@ const mapIngredient = (row: IngredientRow): Ingredient => ({
 	isStaple: toBool(row.is_staple),
 	store: toTextOrNull(row.store),
 	quantity: toTextOrNull(row.quantity),
+	quantityValue: toNumberOrNull(row.quantity_value),
+	quantityUnit: isFoodUnit(row.quantity_unit) ? row.quantity_unit : null,
 	preferredBrand: toTextOrNull(row.preferred_brand),
 	notes: toTextOrNull(row.notes)
 });
@@ -136,8 +190,33 @@ export interface IngredientInput extends OwnershipInput {
 	isStaple?: unknown;
 	store?: unknown;
 	quantity?: unknown;
+	quantityValue?: unknown;
+	quantityUnit?: unknown;
 	preferredBrand?: unknown;
 	notes?: unknown;
+}
+
+/**
+ * `quantityValue`/`quantityUnit` together, from a patch and what is stored.
+ * Mirrors health-measurements.ts's `unitOf` (migration 0022): clearing the
+ * number clears the unit with it, a patch that touches neither keeps both as
+ * they are, and a number that changed — on a create, where `current.value` is
+ * always null, or newly set on an edit — must bring its own unit rather than
+ * keep whatever the previous number's unit happened to be.
+ */
+function ingredientQuantity(
+	input: IngredientInput,
+	current: { value: number | null; unit: FoodUnit | null }
+): { value: number | null; unit: FoodUnit | null } {
+	const value = patched(input, 'quantityValue', current.value, (v) => amountValue(v, 'quantity'));
+	if (value === null) return { value: null, unit: null };
+	if (value !== current.value) {
+		return { value, unit: amountUnit(value, input.quantityUnit, 'quantity') };
+	}
+	return {
+		value,
+		unit: patched(input, 'quantityUnit', current.unit, (v) => amountUnit(value, v, 'quantity'))
+	};
 }
 
 function ingredientStatus(value: unknown, fallback: IngredientStatus): IngredientStatus {
@@ -160,6 +239,10 @@ export function createIngredient(
 			ownerUserId: null,
 			visibility: 'household'
 		});
+		// No existing row on a create, so the number is simply whatever was
+		// sent — there is no stored unit a fresh value could keep instead.
+		const quantityValue = amountValue(input.quantityValue, 'quantity');
+		const quantityUnit = amountUnit(quantityValue, input.quantityUnit, 'quantity');
 
 		// Conditional rather than a unique index: the database no longer
 		// forbids two ingredients with the same name, because the source has
@@ -169,13 +252,15 @@ export function createIngredient(
 		const rows = await sql<IngredientRow[]>`
 			insert into ${sql(INGREDIENTS)} (
 				household_id, owner_user_id, visibility, name, aisle, category, status,
-				is_staple, store, quantity, preferred_brand, notes, created_by, updated_by
+				is_staple, store, quantity, quantity_value, quantity_unit, preferred_brand, notes,
+				created_by, updated_by
 			)
 			select ${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${optionalText(input.aisle, 'aisle')}, ${optionalText(input.category, 'category')},
 				${ingredientStatus(input.status, 'in_stock')},
 				${input.isStaple === true || input.isStaple === 'on'}::boolean,
 				${optionalText(input.store, 'store')}, ${optionalText(input.quantity, 'quantity')},
+				${quantityValue}, ${quantityUnit},
 				${optionalText(input.preferredBrand, 'preferred brand')},
 				${optionalText(input.notes, 'notes')},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
@@ -224,6 +309,10 @@ export function updateIngredient(
 			),
 			notes: patched(patch, 'notes', current.notes, (v) => optionalText(v, 'notes'))
 		};
+		const quantity = ingredientQuantity(patch, {
+			value: current.quantityValue,
+			unit: current.quantityUnit
+		});
 
 		return writeScoped<IngredientRow, Ingredient>({
 			sql,
@@ -236,6 +325,7 @@ export function updateIngredient(
 				name = ${next.name}, aisle = ${next.aisle}, category = ${next.category},
 				status = ${next.status}, is_staple = ${next.isStaple}::boolean,
 				store = ${next.store}, quantity = ${next.quantity},
+				quantity_value = ${quantity.value}, quantity_unit = ${quantity.unit},
 				preferred_brand = ${next.preferredBrand}, notes = ${next.notes},
 				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
 			columns: ingredientColumns(sql),
@@ -244,6 +334,30 @@ export function updateIngredient(
 		});
 	});
 }
+
+/**
+ * Archives or restores an ingredient. It leaves /food HQ, the shopping list
+ * and search's live results, and waits in the Archive like everything else
+ * (base.ts's `archivedAssignment`); nothing that already references it — a
+ * recipe's `recipe_ingredients` row, a planned meal — is touched.
+ */
+export const setIngredientArchived = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Ingredient>> =>
+	archiveScoped<IngredientRow, Ingredient>({
+		sql,
+		table: INGREDIENTS,
+		viewer,
+		id,
+		archived,
+		expectedUpdatedAt,
+		columns: ingredientColumns(sql),
+		map: mapIngredient
+	});
 
 /** Aisles in use, so the shopping list can be walked in shop order. */
 export async function ingredientAisles(sql: Queryable, viewer: Viewer): Promise<string[]> {
@@ -484,19 +598,30 @@ export function createRecipe(
 	});
 }
 
+/** One ingredient a recipe calls for, and the amount on that pairing. */
+export interface RecipeIngredient {
+	ingredient: Ingredient;
+	amount: string | null;
+	/** The same amount, structured (migration 0026) — see {@link Ingredient.quantityValue}. */
+	amountValue: number | null;
+	amountUnit: FoodUnit | null;
+}
+
 /** The ingredients a recipe calls for. */
 export async function ingredientsForRecipe(
 	sql: Queryable,
 	viewer: Viewer,
 	recipeId: string
-): Promise<{ ingredient: Ingredient; amount: string | null }[]> {
+): Promise<RecipeIngredient[]> {
 	if (!isUuid(recipeId)) return [];
 	// Only `ingredients` and the link table are in the FROM, so the unqualified
 	// column list from `baseColumns` stays unambiguous — joining `recipes` here
 	// as well would make every `id` a syntax error. The recipe's own scope is
 	// checked with EXISTS instead.
-	const rows = await sql<(IngredientRow & { amount: string | null })[]>`
-		select ${ingredientColumns(sql)}, ri.amount
+	const rows = await sql<
+		(IngredientRow & { amount: string | null; amount_value: unknown; amount_unit: string | null })[]
+	>`
+		select ${ingredientColumns(sql)}, ri.amount, ri.amount_value, ri.amount_unit
 		from ${sql(INGREDIENTS)}
 		join recipe_ingredients ri on ri.ingredient_id = ${sql(INGREDIENTS)}.id
 		where ri.recipe_id = ${recipeId}::uuid
@@ -507,31 +632,146 @@ export async function ingredientsForRecipe(
 		  )
 		order by ${sql(INGREDIENTS)}.name asc
 	`;
-	return rows.map((row) => ({ ingredient: mapIngredient(row), amount: row.amount }));
+	return rows.map((row) => ({
+		ingredient: mapIngredient(row),
+		amount: row.amount,
+		amountValue: toNumberOrNull(row.amount_value),
+		amountUnit: isFoodUnit(row.amount_unit) ? row.amount_unit : null
+	}));
 }
 
-export async function addRecipeIngredient(
+/**
+ * A pairing's amount, as either the free-text shorthand every existing caller
+ * already passes, or the fuller shape a form with a structured amount needs.
+ */
+export type RecipeAmountInput =
+	string | null | undefined | { text?: unknown; value?: unknown; unit?: unknown };
+
+function recipeAmount(amount: RecipeAmountInput): {
+	text: string | null;
+	value: number | null;
+	unit: FoodUnit | null;
+} {
+	const input = typeof amount === 'object' && amount !== null ? amount : { text: amount };
+	const text = optionalText(input.text, 'amount', 200);
+	const value = amountValue(input.value, 'amount');
+	const unit = amountUnit(value, input.unit, 'amount');
+	return { text, value, unit };
+}
+
+/**
+ * Attaches an ingredient to a recipe with an amount, or — attaching one
+ * already there — changes its amount. One statement either way: the pairing's
+ * primary key is `(recipe_id, ingredient_id)` (migration 0012), so "attach
+ * again" and "update the amount" are the same UPSERT rather than two code
+ * paths that could disagree about what the pairing currently holds.
+ */
+export function addRecipeIngredient(
 	sql: Queryable,
 	viewer: Viewer,
 	recipeId: string,
 	ingredientId: string,
-	amount?: string | null
+	amount: RecipeAmountInput = {}
+): Promise<WriteResult<{ recipeId: string; ingredientId: string }>> {
+	if (!isUuid(recipeId) || !isUuid(ingredientId)) {
+		return Promise.resolve({ ok: false, reason: 'not_found' });
+	}
+	return guarded(async () => {
+		const { text, value, unit } = recipeAmount(amount);
+
+		// Both sides are checked in the same statement, so a caller cannot
+		// attach an ingredient from another household by guessing an id, and
+		// cannot attach to a recipe that is not theirs to write.
+		const rows = await sql<{ recipe_id: string }[]>`
+			insert into recipe_ingredients (recipe_id, ingredient_id, amount, amount_value, amount_unit)
+			select r.id, i.id, ${text}, ${value}, ${unit}
+			from ${sql(RECIPES)} r, ${sql(INGREDIENTS)} i
+			where r.id = ${recipeId}::uuid and ${writableScope(sql, viewer, 'r')}
+			  and i.id = ${ingredientId}::uuid and ${readableScope(sql, viewer, 'i')}
+			on conflict (recipe_id, ingredient_id) do update set
+				amount = excluded.amount, amount_value = excluded.amount_value,
+				amount_unit = excluded.amount_unit
+			returning recipe_id
+		`;
+		if (!rows[0]) return { ok: false, reason: 'not_found' };
+		return { ok: true, record: { recipeId, ingredientId } };
+	});
+}
+
+/**
+ * Detaches an ingredient from a recipe. Only the recipe needs to be writable:
+ * this changes the pairing, not the ingredient, which keeps its place in the
+ * pantry and on every other recipe that calls for it.
+ */
+export async function removeRecipeIngredient(
+	sql: Queryable,
+	viewer: Viewer,
+	recipeId: string,
+	ingredientId: string
 ): Promise<WriteResult<{ recipeId: string; ingredientId: string }>> {
 	if (!isUuid(recipeId) || !isUuid(ingredientId)) return { ok: false, reason: 'not_found' };
 
-	// Both sides are checked in the statement, so a caller cannot attach an
-	// ingredient from another household by guessing an id.
 	const rows = await sql<{ recipe_id: string }[]>`
-		insert into recipe_ingredients (recipe_id, ingredient_id, amount)
-		select r.id, i.id, ${amount ?? null}
-		from ${sql(RECIPES)} r, ${sql(INGREDIENTS)} i
-		where r.id = ${recipeId}::uuid and ${writableScope(sql, viewer, 'r')}
-		  and i.id = ${ingredientId}::uuid and ${readableScope(sql, viewer, 'i')}
-		on conflict (recipe_id, ingredient_id) do update set amount = excluded.amount
-		returning recipe_id
+		delete from recipe_ingredients ri
+		using ${sql(RECIPES)} r
+		where ri.recipe_id = r.id
+		  and ri.recipe_id = ${recipeId}::uuid and ri.ingredient_id = ${ingredientId}::uuid
+		  and ${writableScope(sql, viewer, 'r')}
+		returning ri.recipe_id
 	`;
 	if (!rows[0]) return { ok: false, reason: 'not_found' };
 	return { ok: true, record: { recipeId, ingredientId } };
+}
+
+/**
+ * Carries a repository "soft" failure — a normal `WriteResult`, not a thrown
+ * error — out through a transaction that must roll back because of it.
+ * `guarded`'s writers return failures as data on purpose (base.ts), so once
+ * the ingredient half of {@link attachNewIngredientToRecipe} has actually
+ * inserted a row, only a thrown error makes `atomically`'s `sql.begin` undo
+ * it; this is that throw, converted straight back into the same
+ * `WriteResult` shape once it is outside the transaction.
+ */
+class AttachFailure extends Error {
+	constructor(
+		readonly reason: WriteFailure,
+		readonly failureMessage?: string
+	) {
+		super('attach failed');
+	}
+}
+
+/**
+ * Creates a new ingredient and attaches it to a recipe in one transaction, for
+ * the recipe page's "or add a new one" — a failed attach must not leave a new
+ * pantry item behind with nothing calling for it, and a failed create must
+ * never attempt the attach at all.
+ */
+export function attachNewIngredientToRecipe(
+	sql: Queryable,
+	viewer: Viewer,
+	recipeId: string,
+	ingredient: IngredientInput,
+	amount: RecipeAmountInput = {}
+): Promise<WriteResult<{ recipeId: string; ingredientId: string }>> {
+	if (!isUuid(recipeId)) return Promise.resolve({ ok: false, reason: 'not_found' });
+
+	return guarded(async () => {
+		try {
+			return await atomically(sql, async (tx) => {
+				const created = await createIngredient(tx, viewer, ingredient);
+				if (!created.ok) throw new AttachFailure(created.reason, created.message);
+				const attached = await addRecipeIngredient(tx, viewer, recipeId, created.record.id, amount);
+				if (!attached.ok) throw new AttachFailure(attached.reason, attached.message);
+				return attached;
+			});
+		} catch (err) {
+			if (err instanceof AttachFailure) {
+				return { ok: false, reason: err.reason, message: err.failureMessage };
+			}
+			throw err;
+		}
+	});
 }
 
 // ─── recipes: detail and editing ───────────────────────────────────────────
