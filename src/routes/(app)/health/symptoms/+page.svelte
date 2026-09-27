@@ -101,7 +101,10 @@
 						icon="journal"
 					>
 						{#snippet action()}
-							<Button href={resolve(appPath('/journal'))} size="sm">Open today’s journal</Button>
+							<!-- A plain path: Button resolves its own href, and resolving it
+								     twice throws while rendering on the server (the first call
+								     returns a relative "../journal"), which took this page down. -->
+							<Button href="/journal" size="sm">Open today’s journal</Button>
 						{/snippet}
 					</EmptyState>
 				{:else}
