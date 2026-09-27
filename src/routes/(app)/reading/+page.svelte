@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LibraryList, PageHeader } from '$lib/components';
+	import { Button, LibraryList, PageHeader } from '$lib/components';
 
 	let { data, form } = $props();
 </script>
@@ -9,6 +9,13 @@
 <PageHeader title="Reading Tracker" description="What you mean to get to, and what you got to.">
 	{#snippet meta()}
 		<span>{data.items.length} on the list</span>
+	{/snippet}
+	{#snippet actions()}
+		<!-- Lands straight on the reading list rather than in the inbox
+		     everything else added from /library starts in. -->
+		<Button href="/library/new?status=reading_list" variant="primary" icon="plus">
+			Add to reading list
+		</Button>
 	{/snippet}
 </PageHeader>
 
