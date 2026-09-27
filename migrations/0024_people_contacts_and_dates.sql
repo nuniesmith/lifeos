@@ -31,7 +31,7 @@ alter table people
 -- ─── important dates, linked to a person ───────────────────────────────────
 --
 -- `important_dates` has stood alone since migration 0004: a row could say
--- "Dentist" or "Jordan's birthday" but nothing recorded WHOSE birthday it
+-- "Dentist" or "a friend's birthday" but nothing recorded WHOSE birthday it
 -- was, so a person's own page had no dates to show. Nullable and
 -- `on delete set null`, matching `wishlist_items.for_person_id` from
 -- migration 0014 for the same reason: a date is not required to be about a
