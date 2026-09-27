@@ -385,6 +385,22 @@ describe('links between entries', () => {
 		});
 	});
 
+	it('lists nothing for an entry the viewer cannot read, even when the far end is readable', async () => {
+		const hidden = await seedItem(viewer.householdId, viewer.userId, 'private', 'Kept to myself');
+		const open = await seedItem(viewer.householdId, viewer.userId, 'household', 'Open to both');
+		await addLibraryLink(sql, viewer, hidden.id, open.id);
+
+		// The partner can read `open` but not `hidden`, so asking about
+		// `hidden` by id must not reveal that it links anywhere...
+		expect(await listLibraryLinks(sql, partner, hidden.id)).toEqual([]);
+		// ...and from the end they can read, the private one stays out of sight.
+		expect(await listLibraryLinks(sql, partner, open.id)).toEqual([]);
+		// The owner still sees the link from both ends.
+		expect((await listLibraryLinks(sql, viewer, hidden.id)).map((l) => l.itemId)).toEqual([
+			open.id
+		]);
+	});
+
 	it('refuses to remove a link on an entry the viewer cannot write', async () => {
 		const theirs = await seedItem(viewer.householdId, partner.userId, 'household', 'One of theirs');
 		const other = await seedItem(viewer.householdId, partner.userId, 'household', 'Also theirs');

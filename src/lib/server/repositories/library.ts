@@ -432,6 +432,14 @@ export async function listLibraryLinks(
 ): Promise<LibraryLink[]> {
 	if (!isUuid(itemId)) return [];
 
+	// Both ends are checked here, not only the far one. The page loads the
+	// entry first and 404s an unreadable one, but this function answers on its
+	// own too: without the anchor check, asking about another member's
+	// private entry would list which of the viewer's own entries it links to.
+	const anchorReadable = sql`exists (
+		select 1 from library_items a
+		where a.id = ${itemId}::uuid and ${readableScope(sql, viewer, 'a')}
+	)`;
 	const rows = await sql<
 		{ item_id: string; title: string; entry_type: string; archived: boolean }[]
 	>`
@@ -439,11 +447,13 @@ export async function listLibraryLinks(
 		from library_links l
 		join library_items t on t.id = l.item_b_id
 		where l.item_a_id = ${itemId}::uuid and ${readableScope(sql, viewer, 't')}
+		  and ${anchorReadable}
 		union all
 		select t.id as item_id, t.title, t.entry_type, (t.archived_at is not null) as archived
 		from library_links l
 		join library_items t on t.id = l.item_a_id
 		where l.item_b_id = ${itemId}::uuid and ${readableScope(sql, viewer, 't')}
+		  and ${anchorReadable}
 		order by title asc
 	`;
 	return rows.map(mapLink);
