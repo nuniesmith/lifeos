@@ -241,7 +241,9 @@ test.describe('a person’s own page', () => {
 		await expect(page.getByText('Alex Fixtureton')).toHaveCount(0);
 
 		await page.goto(`/people/${personId}`);
-		await expect(page.getByText('Archived')).toBeVisible();
+		// Exact: the badge. The sentence under the restore button also starts
+		// with "Archived:", and a substring match would find both.
+		await expect(page.getByText('Archived', { exact: true })).toBeVisible();
 		await page.getByRole('button', { name: 'Restore' }).click();
 		await expect(page.getByText('Restored. They are back on People')).toBeVisible();
 
