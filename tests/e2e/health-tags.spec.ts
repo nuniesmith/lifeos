@@ -188,6 +188,20 @@ test.describe('tagging a journal day', () => {
 		await expect(patterns).toContainText('Mood words come only from days imported from Notion.');
 		await expect(patterns).not.toContainText('Tag a day in your journal');
 	});
+
+	test('an empty list that the journal can fill links to today’s journal', async ({ page }) => {
+		await signIn(page);
+		// Nothing has been tagged as exercise in this spec, so the list is empty.
+		// This empty state is the one that carries a link, and the link's own
+		// href handling once took the whole page down with a 500.
+		await page.goto('/health/symptoms?kind=exercise');
+		const patterns = page.locator('section', {
+			has: page.getByRole('heading', { name: 'Patterns' })
+		});
+		await expect(patterns).toContainText('Tag a day in your journal');
+		await patterns.getByRole('link', { name: 'Open today’s journal' }).click();
+		await expect(page).toHaveURL(/\/journal$/);
+	});
 });
 
 test.describe('without JavaScript', () => {
