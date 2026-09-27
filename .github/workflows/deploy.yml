@@ -31,7 +31,9 @@ jobs:
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
-    # Only pushes to main publish an image; manual CI and PR runs do not.
+    # Only pushes to main publish an image here; manual CI and PR runs do not.
+    # The weekly refresh publishes its own tag and dispatches this workflow
+    # with it (CI's "Deploy the refreshed image").
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
