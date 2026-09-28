@@ -53,9 +53,10 @@ export interface SavingsContribution extends RecordBase {
 	contributedOn: string;
 	goalId: string | null;
 	/** Denormalised for display, the same shape `WishlistItem.forPersonName`
-	 *  uses for its own optional link to `people`. Not re-checked readable on
-	 *  every read after it is attached — see `savingsSummary`'s per-goal join,
-	 *  which follows the identical precedent. */
+	 *  uses for its own optional link to `people` — but null when the viewer
+	 *  cannot read the goal. A contribution shared with the household may point
+	 *  at its author's private goal, and the goal's title is the private part.
+	 *  `savingsSummary`'s per-goal join applies the same check. */
 	goalTitle: string | null;
 	notes: string | null;
 }
@@ -117,7 +118,7 @@ export async function listSavingsContributions(
 	const rows = await sql<SavingsContributionRow[]>`
 		select ${savingsColumns(sql)}
 		from ${sql(SAVINGS_CONTRIBUTIONS)} s
-		left join ${sql(GOALS)} g on g.id = s.goal_id
+		left join ${sql(GOALS)} g on g.id = s.goal_id and ${readableScope(sql, viewer, 'g')}
 		where ${readableScope(sql, viewer, 's')}
 		  and ${liveScope(sql, 's', filters.includeArchived)}
 		  ${filters.goalId && isUuid(filters.goalId) ? sql`and s.goal_id = ${filters.goalId}::uuid` : sql``}
@@ -136,7 +137,7 @@ export async function getSavingsContribution(
 	const rows = await sql<SavingsContributionRow[]>`
 		select ${savingsColumns(sql)}
 		from ${sql(SAVINGS_CONTRIBUTIONS)} s
-		left join ${sql(GOALS)} g on g.id = s.goal_id
+		left join ${sql(GOALS)} g on g.id = s.goal_id and ${readableScope(sql, viewer, 'g')}
 		where s.id = ${id}::uuid and ${readableScope(sql, viewer, 's')}
 		limit 1
 	`;
@@ -359,7 +360,9 @@ export async function savingsSummary(
 	const perGoal = await sql<{ goal_id: string; goal_title: string; total: string }[]>`
 		select s.goal_id, g.title as goal_title, sum(s.amount) as total
 		from ${sql(SAVINGS_CONTRIBUTIONS)} s
-		join ${sql(GOALS)} g on g.id = s.goal_id
+		-- A contribution toward a goal the viewer cannot read still counts in the
+		-- totals above, but is left out of this breakdown rather than naming it.
+		join ${sql(GOALS)} g on g.id = s.goal_id and ${readableScope(sql, viewer, 'g')}
 		where ${readableScope(sql, viewer, 's')} and s.archived_at is null and s.goal_id is not null
 		group by s.goal_id, g.title
 		order by g.title asc
