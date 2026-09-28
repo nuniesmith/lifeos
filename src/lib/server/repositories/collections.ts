@@ -3,6 +3,7 @@ import type { Viewer } from '../auth/authz';
 import {
 	InvalidInput,
 	baseColumns,
+	getScoped,
 	guarded,
 	isUuid,
 	liveScope,
@@ -28,7 +29,7 @@ import {
 	type WriteResult
 } from './base';
 import { toDateOrNull } from '../db/coerce';
-import { optionalText, requiredText } from './validate';
+import { optionalDay, optionalText, patched, requiredText } from './validate';
 
 /**
  * People, wishlist, watchlist and bills (MODEL-002, feature pack 4).
@@ -128,6 +129,21 @@ export interface PersonInput extends OwnershipInput {
 	groups?: unknown;
 	birthday?: unknown;
 	notes?: unknown;
+	email?: unknown;
+	phone?: unknown;
+	address?: unknown;
+}
+
+/** A comma-separated string from the quick-add form, or an array from anywhere else. */
+function parseGroups(value: unknown): string[] {
+	if (Array.isArray(value)) return value.map(String);
+	if (typeof value === 'string' && value.trim()) {
+		return value
+			.split(',')
+			.map((g) => g.trim())
+			.filter(Boolean);
+	}
+	return [];
 }
 
 export function createPerson(
@@ -141,14 +157,7 @@ export function createPerson(
 			ownerUserId: null,
 			visibility: 'household'
 		});
-		const groups = Array.isArray(input.groups)
-			? input.groups.map(String)
-			: typeof input.groups === 'string' && input.groups.trim()
-				? input.groups
-						.split(',')
-						.map((g) => g.trim())
-						.filter(Boolean)
-				: [];
+		const groups = parseGroups(input.groups);
 
 		// See migration 0016: the database no longer forbids a repeated name,
 		// because a unique index there aborts a whole import over one label the
@@ -156,13 +165,16 @@ export function createPerson(
 		const rows = await sql<PersonRow[]>`
 			insert into ${sql(PEOPLE)} (
 				household_id, owner_user_id, visibility, name, kind, groups, birthday,
-				notes, created_by, updated_by
+				notes, email, phone, address, created_by, updated_by
 			)
 			select ${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${oneOf(input.kind, PERSON_KINDS, 'kind', 'person')},
 				${groups}::text[],
-				${(input.birthday as string) || null}::date,
+				${optionalDay(input.birthday, 'birthday')}::date,
 				${optionalText(input.notes, 'notes')},
+				${optionalText(input.email, 'email', 320)},
+				${optionalText(input.phone, 'phone', 40)},
+				${optionalText(input.address, 'address', 500)},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			where not exists (
 				select 1 from ${sql(PEOPLE)} existing
@@ -187,6 +199,137 @@ export async function personGroups(sql: Queryable, viewer: Viewer): Promise<stri
 		order by "group" asc
 	`;
 	return rows.map((r) => toText(r.group));
+}
+
+// ─── a person's own page ────────────────────────────────────────────────────
+//
+// Contact details are not on `Person` / `peopleColumns` above: that shape is
+// what every list, card and search result is built from, and a column those
+// queries never select cannot leak through them by accident. `PersonDetail`
+// is the wider shape the person's own page reads, and `getPerson` is the only
+// function in this module that returns it.
+
+export interface PersonDetail extends Person {
+	email: string | null;
+	phone: string | null;
+	address: string | null;
+}
+
+interface PersonDetailRow extends PersonRow {
+	email: string | null;
+	phone: string | null;
+	address: string | null;
+}
+
+const personDetailColumns = (sql: Queryable): Fragment => sql`
+	${peopleColumns(sql)}, email, phone, address`;
+
+const mapPersonDetail = (row: PersonDetailRow): PersonDetail => ({
+	...mapPerson(row),
+	email: toTextOrNull(row.email),
+	phone: toTextOrNull(row.phone),
+	address: toTextOrNull(row.address)
+});
+
+export async function getPerson(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string
+): Promise<PersonDetail | null> {
+	const row = await getScoped<PersonDetailRow>(
+		sql,
+		PEOPLE,
+		id,
+		readableScope(sql, viewer, PEOPLE),
+		personDetailColumns(sql)
+	);
+	return row ? mapPersonDetail(row) : null;
+}
+
+export function updatePerson(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: PersonInput,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<PersonDetail>> {
+	return guarded<PersonDetail>(async () => {
+		const current = await getPerson(sql, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 200)),
+			kind: patched(patch, 'kind', current.kind, (v) =>
+				oneOf(v, PERSON_KINDS, 'kind', current.kind)
+			),
+			// `parseGroups` never throws, so an explicit `'groups' in patch` check
+			// (rather than `patched`, which needs a validator that can) is what
+			// keeps a patch with no `groups` key from wiping the existing list.
+			groups: 'groups' in patch ? parseGroups(patch.groups) : current.groups,
+			birthday: patched(patch, 'birthday', current.birthday, (v) => optionalDay(v, 'birthday')),
+			notes: patched(patch, 'notes', current.notes, (v) => optionalText(v, 'notes')),
+			email: patched(patch, 'email', current.email, (v) => optionalText(v, 'email', 320)),
+			phone: patched(patch, 'phone', current.phone, (v) => optionalText(v, 'phone', 40)),
+			address: patched(patch, 'address', current.address, (v) => optionalText(v, 'address', 500))
+		};
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+
+		return writeScoped<PersonDetailRow, PersonDetail>({
+			sql,
+			table: PEOPLE,
+			id,
+			readScope: readableScope(sql, viewer, PEOPLE),
+			writeScope: writableScope(sql, viewer, PEOPLE),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				name = ${next.name}, kind = ${next.kind}, groups = ${next.groups}::text[],
+				birthday = ${next.birthday}::date, notes = ${next.notes},
+				email = ${next.email}, phone = ${next.phone}, address = ${next.address},
+				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: personDetailColumns(sql),
+			map: mapPersonDetail,
+			mayWrite: writableBy(viewer)
+		});
+	});
+}
+
+/**
+ * "Delete": archived people leave /people and search but stay reachable from
+ * their own page and the Archive, and are recoverable — see base.ts's header.
+ *
+ * Hand-rolled rather than built on base.ts's `archiveScoped` because that
+ * helper leaves `updated_at` to a database trigger, and `people` (added in
+ * migration 0014, alongside `wishlist_items`, `media_items` and `bills`) has
+ * never had one — every write in this file sets it by hand instead, this one
+ * included.
+ */
+export function setPersonArchived(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<PersonDetail>> {
+	return guarded<PersonDetail>(async () =>
+		writeScoped<PersonDetailRow, PersonDetail>({
+			sql,
+			table: PEOPLE,
+			id,
+			readScope: readableScope(sql, viewer, PEOPLE),
+			writeScope: writableScope(sql, viewer, PEOPLE),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				archived_at = case when ${archived}::boolean then now() else null end,
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: personDetailColumns(sql),
+			map: mapPersonDetail,
+			mayWrite: writableBy(viewer)
+		})
+	);
 }
 
 // ─── the wishlist ──────────────────────────────────────────────────────────
@@ -306,6 +449,8 @@ export interface WishlistInput extends OwnershipInput {
 	itemType?: unknown;
 	status?: unknown;
 	priceRange?: unknown;
+	purpose?: unknown;
+	shopSource?: unknown;
 	url?: unknown;
 	occasion?: unknown;
 	forPersonId?: unknown;
@@ -331,13 +476,15 @@ export function createWishlistItem(
 		const rows = await sql<{ id: string }[]>`
 			insert into ${sql(WISHLIST)} (
 				household_id, owner_user_id, visibility, name, item_type, status,
-				price_range, url, occasion, for_person_id, is_favourite,
+				price_range, purpose, shop_source, url, occasion, for_person_id, is_favourite,
 				created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
 				${optionalText(input.itemType, 'type')},
 				${oneOf(input.status, WISHLIST_STATUSES, 'status', 'wanted')},
 				${optionalText(input.priceRange, 'price range')},
+				${optionalText(input.purpose, 'purpose')},
+				${optionalText(input.shopSource, 'shop')},
 				${optionalText(input.url, 'url')},
 				${optionalText(input.occasion, 'occasion')},
 				(select p.id from ${sql(PEOPLE)} p
@@ -354,6 +501,126 @@ export function createWishlistItem(
 		// carries the recipient's name rather than only their id.
 		const found = await getWishlistItem(sql, viewer, id);
 		if (!found) throw new Error('insert returned no readable row');
+		return { ok: true, record: found };
+	});
+}
+
+// An UPDATE's own RETURNING cannot reach across the join that gives every
+// other read here `forPersonName`, so a write reads back only this table's
+// own columns and re-fetches through `getWishlistItem` for the name — the
+// same two-step shape `createWishlistItem` above already uses.
+const wishlistColumns = (sql: Queryable): Fragment => sql`
+	${baseColumns(sql)},
+	name, item_type, status, price_range, purpose, shop_source, url, occasion,
+	for_person_id, is_favourite`;
+
+export function updateWishlistItem(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: WishlistInput,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<WishlistItem>> {
+	return guarded<WishlistItem>(async () => {
+		const current = await getWishlistItem(sql, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 300)),
+			itemType: patched(patch, 'itemType', current.itemType, (v) => optionalText(v, 'type')),
+			status: patched(patch, 'status', current.status, (v) =>
+				oneOf(v, WISHLIST_STATUSES, 'status', current.status)
+			),
+			priceRange: patched(patch, 'priceRange', current.priceRange, (v) =>
+				optionalText(v, 'price range')
+			),
+			purpose: patched(patch, 'purpose', current.purpose, (v) => optionalText(v, 'purpose')),
+			shopSource: patched(patch, 'shopSource', current.shopSource, (v) => optionalText(v, 'shop')),
+			url: patched(patch, 'url', current.url, (v) => optionalText(v, 'url')),
+			occasion: patched(patch, 'occasion', current.occasion, (v) => optionalText(v, 'occasion')),
+			isFavourite: patched(
+				patch,
+				'isFavourite',
+				current.isFavourite,
+				(v) => v === true || v === 'on' || v === 'true'
+			)
+		};
+
+		// Re-checked readable on every save, the same way creating one does, so
+		// an edit cannot attach an id the viewer cannot see (rule: a link is
+		// checked in the same query that writes it). Leaving `forPersonId` out
+		// of the patch entirely keeps the existing link — the CASE is what
+		// tells "not mentioned" apart from "mentioned as empty", inside the one
+		// statement that also does the write.
+		const forPersonGiven = 'forPersonId' in patch;
+		const rawForPersonId =
+			typeof patch.forPersonId === 'string' && isUuid(patch.forPersonId) ? patch.forPersonId : null;
+
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+
+		const result = await writeScoped<WishlistRow, WishlistItem>({
+			sql,
+			table: WISHLIST,
+			id,
+			readScope: readableScope(sql, viewer, WISHLIST),
+			writeScope: writableScope(sql, viewer, WISHLIST),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				name = ${next.name}, item_type = ${next.itemType}, status = ${next.status},
+				price_range = ${next.priceRange}, purpose = ${next.purpose},
+				shop_source = ${next.shopSource}, url = ${next.url}, occasion = ${next.occasion},
+				is_favourite = ${next.isFavourite}::boolean,
+				for_person_id = case when ${forPersonGiven}::boolean then
+					(select p.id from ${sql(PEOPLE)} p
+					 where p.id = ${rawForPersonId}::uuid and ${readableScope(sql, viewer, 'p')})
+					else for_person_id end,
+				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: wishlistColumns(sql),
+			map: mapWishlist,
+			mayWrite: writableBy(viewer)
+		});
+		if (!result.ok) return result;
+
+		// The name-joined shape every other read of this table returns.
+		const found = await getWishlistItem(sql, viewer, result.record.id);
+		if (!found) throw new Error('update returned no readable row');
+		return { ok: true, record: found };
+	});
+}
+
+/**
+ * Marks an item bought, given, declined, or back on the list: one fact
+ * stated outright rather than a field flipped, the same reasoning as a
+ * recipe's "made it today" (see `food/recipes/[id]/+page.server.ts`) —
+ * repeating it is harmless, so it carries no version to conflict over.
+ */
+export function setWishlistItemStatus(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	status: unknown
+): Promise<WriteResult<WishlistItem>> {
+	return guarded<WishlistItem>(async () => {
+		const next = oneOf(status, WISHLIST_STATUSES, 'status', 'wanted');
+		const result = await writeScoped<WishlistRow, WishlistItem>({
+			sql,
+			table: WISHLIST,
+			id,
+			readScope: readableScope(sql, viewer, WISHLIST),
+			writeScope: writableScope(sql, viewer, WISHLIST),
+			assignments: sql`
+				status = ${next}, updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: wishlistColumns(sql),
+			map: mapWishlist,
+			mayWrite: writableBy(viewer)
+		});
+		if (!result.ok) return result;
+		const found = await getWishlistItem(sql, viewer, result.record.id);
+		if (!found) throw new Error('update returned no readable row');
 		return { ok: true, record: found };
 	});
 }

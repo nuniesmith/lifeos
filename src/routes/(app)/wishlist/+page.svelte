@@ -52,6 +52,7 @@
 				{#each data.wanted as item (item.id)}
 					<ListRow
 						title={item.name}
+						href={`/wishlist/${item.id}`}
 						meta={[item.itemType, item.priceRange, item.occasion].filter(Boolean).join(' · ')}
 					>
 						{#snippet trail()}
@@ -69,7 +70,12 @@
 			<Card flush>
 				<List label="Settled">
 					{#each data.settled as item (item.id)}
-						<ListRow title={item.name} meta={item.forPersonName ?? undefined} muted />
+						<ListRow
+							title={item.name}
+							href={`/wishlist/${item.id}`}
+							meta={item.forPersonName ?? undefined}
+							muted
+						/>
 					{/each}
 				</List>
 			</Card>
