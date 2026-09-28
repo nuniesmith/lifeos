@@ -138,7 +138,10 @@ test.describe('editing a significant event', () => {
 			.click();
 		await editSheet.getByRole('button', { name: 'Archive this event' }).click();
 		await expect(editSheet).toBeHidden();
-		await expect(events).not.toContainText('Finished a 10k race');
+		// With its only event archived the year has none live, and the page shows
+		// an empty state INSTEAD of the list, so assert the title is gone rather
+		// than that a list which may not exist does not contain it.
+		await expect(events.getByText('Finished a 10k race')).toHaveCount(0);
 
 		const archived = page.getByRole('list', { name: 'Archived events' });
 		await expect(archived).toContainText('Finished a 10k race');
