@@ -204,7 +204,7 @@ export function createAssessment(
 				 where ar.id = ${(input.areaId as string) || null}::uuid
 				   and ${readableScope(sql, viewer, 'ar')}),
 				${rating}::int, ${optionalText(input.period, 'period')},
-				${toIntOrNull(input.year ?? null)}::int,
+				${optionalInt(input.year, 'year', { min: 1900, max: 2200 })}::int,
 				${input.isPriority === true || input.isPriority === 'on'}::boolean,
 				${optionalText(input.notes, 'notes')},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid

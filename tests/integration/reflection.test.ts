@@ -111,6 +111,23 @@ describe('the wheel of life', () => {
 		expect(rated.focus).toBe('Physical health');
 	});
 
+	it('adds a rating with the year left blank, as the form sends it', async () => {
+		// The add form's Year is optional and submits ''. That used to be read
+		// as 0, which the table's CHECK (1900-2200) refused, so no rating could
+		// be added without a year.
+		const rated = ok(
+			await createAssessment(sql, owner, { focus: 'Sleep', rating: 5, year: '', period: '' }),
+			'assess with a blank year'
+		).record;
+		expect(rated.year).toBeNull();
+	});
+
+	it('refuses a year outside the range the table allows, as invalid rather than an error', async () => {
+		expect(
+			await createAssessment(sql, owner, { focus: 'Sleep', rating: 5, year: '150' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
 	it('refuses a rating outside one to ten', async () => {
 		for (const rating of [0, 11, -3]) {
 			expect(await createAssessment(sql, owner, { focus: 'x', rating })).toMatchObject({
