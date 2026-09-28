@@ -465,3 +465,19 @@ export async function householdToday(sql: Queryable, householdId: string): Promi
 	if (!row) throw new Error('household not found');
 	return toDay(row.today);
 }
+
+// ─── multi-step writes ─────────────────────────────────────────────────────
+
+/**
+ * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
+ * transaction — so a multi-step write (a foreign key checked and then used, a
+ * log entry and the total it updates) is all-or-nothing on its own and still
+ * composes inside a caller's transaction (rule 3 above). `food.ts` defined
+ * this privately for itself first; it lives here now that a second and third
+ * caller want the identical logic rather than a third private copy.
+ */
+export function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+	// The driver types the result as UnwrapPromiseArray<T>, which is T for
+	// anything that is not an array of promises — and nothing here is.
+	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
+}

@@ -2,9 +2,11 @@ import type { Fragment } from 'postgres';
 import type { Viewer } from '../auth/authz';
 import {
 	InvalidInput,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
+	householdToday,
 	isUuid,
 	liveScope,
 	mapBase,
@@ -12,6 +14,7 @@ import {
 	readableScope,
 	resolveOwnership,
 	toBool,
+	toDay,
 	toDayOrNull,
 	toInt,
 	toIntOrNull,
@@ -28,8 +31,15 @@ import {
 	type RecordBase,
 	type WriteResult
 } from './base';
-import { toDateOrNull } from '../db/coerce';
-import { optionalDay, optionalText, patched, requiredText } from './validate';
+import { toDate, toDateOrNull } from '../db/coerce';
+import { addDays, daysInMonth } from './dates';
+import {
+	optionalDay,
+	optionalNumber,
+	optionalText,
+	patched,
+	requiredText
+} from './validate';
 
 /**
  * People, wishlist, watchlist and bills (MODEL-002, feature pack 4).
@@ -776,8 +786,12 @@ export type BillFrequency = (typeof BILL_FREQUENCIES)[number];
 export const BILL_STATUSES = ['active', 'free_trial', 'paused', 'cancelled'] as const;
 export type BillStatus = (typeof BILL_STATUSES)[number];
 
+export const BILL_TYPES = ['bill', 'subscription'] as const;
+export type BillType = (typeof BILL_TYPES)[number];
+
 export interface Bill extends RecordBase {
 	name: string;
+	type: BillType;
 	amount: number | null;
 	currency: string;
 	frequency: BillFrequency | null;
@@ -787,12 +801,21 @@ export interface Bill extends RecordBase {
 	autopay: boolean;
 	status: BillStatus;
 	freeTrialEndsOn: string | null;
+	/** What the trial converts to — a second price beside the trial's own
+	 *  (often zero) `amount`, so "free now, $14.99 after" is two facts rather
+	 *  than one the household has to remember on their own. */
+	trialPrice: number | null;
+	/** A management or cancel link. Rendered through `safeLinkUrl` — see
+	 *  src/lib/server/markdown.ts — never trusted as-is. */
+	url: string | null;
+	notes: string | null;
 	/** The amount normalised to a month, so a year's worth can be compared. */
 	monthlyEquivalent: number | null;
 }
 
 interface BillRow extends BaseRow {
 	name: string;
+	type: string;
 	amount: unknown;
 	currency: string;
 	frequency: string | null;
@@ -802,15 +825,18 @@ interface BillRow extends BaseRow {
 	autopay: unknown;
 	status: string;
 	free_trial_ends_on: string | null;
+	trial_price: unknown;
+	url: string | null;
+	notes: string | null;
 }
 
 const BILLS = 'bills';
 
 const billColumns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
-	name, amount, currency, frequency, next_due_on::text as next_due_on,
+	name, type, amount, currency, frequency, next_due_on::text as next_due_on,
 	category, account, autopay, status,
-	free_trial_ends_on::text as free_trial_ends_on`;
+	free_trial_ends_on::text as free_trial_ends_on, trial_price, url, notes`;
 
 /** How many of each period fit in a month, for the normalised figure. */
 const PER_MONTH: Record<BillFrequency, number> = {
@@ -830,6 +856,7 @@ function mapBill(row: BillRow): Bill {
 	return {
 		...mapBase(row),
 		name: toText(row.name),
+		type: row.type as BillType,
 		amount,
 		currency: toText(row.currency),
 		frequency,
@@ -839,6 +866,9 @@ function mapBill(row: BillRow): Bill {
 		autopay: toBool(row.autopay),
 		status: row.status as BillStatus,
 		freeTrialEndsOn: toDayOrNull(row.free_trial_ends_on),
+		trialPrice: toNumberOrNull(row.trial_price),
+		url: toTextOrNull(row.url),
+		notes: toTextOrNull(row.notes),
 		monthlyEquivalent:
 			amount !== null && frequency !== null
 				? Math.round(amount * PER_MONTH[frequency] * 100) / 100
@@ -874,13 +904,35 @@ export async function listBills(
 
 export interface BillInput extends OwnershipInput {
 	name?: unknown;
+	type?: unknown;
 	amount?: unknown;
 	currency?: unknown;
 	frequency?: unknown;
 	nextDueOn?: unknown;
 	category?: unknown;
+	account?: unknown;
 	autopay?: unknown;
 	status?: unknown;
+	freeTrialEndsOn?: unknown;
+	trialPrice?: unknown;
+	url?: unknown;
+	notes?: unknown;
+}
+
+/** Zero or greater — the CHECK `amount` and `trial_price` share, distinct
+ *  from a strictly-positive one like a payment's own amount. */
+function nonNegativeAmount(value: unknown, field: string): number | null {
+	const n = optionalNumber(value, field);
+	if (n !== null && n < 0) throw new InvalidInput(`${field} must be zero or greater`);
+	return n;
+}
+
+/** A checkbox as a form actually sends it: present and `'on'`, or absent. */
+const checkboxBool = (value: unknown): boolean => value === true || value === 'on';
+
+function currencyOf(value: unknown, fallback: string): string {
+	if (value === undefined || value === null || value === '') return fallback;
+	return String(value).toUpperCase().slice(0, 3);
 }
 
 export function createBill(
@@ -897,19 +949,24 @@ export function createBill(
 
 		const rows = await sql<BillRow[]>`
 			insert into ${sql(BILLS)} (
-				household_id, owner_user_id, visibility, name, amount, currency,
-				frequency, next_due_on, category, autopay, status, created_by, updated_by
+				household_id, owner_user_id, visibility, name, type, amount, currency,
+				frequency, next_due_on, category, account, autopay, status,
+				free_trial_ends_on, trial_price, url, notes, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
-				${toNumberOrNull(input.amount ?? null)}::numeric,
-				${String(input.currency ?? 'CAD')
-					.toUpperCase()
-					.slice(0, 3)},
+				${oneOf(input.type, BILL_TYPES, 'type', 'bill')},
+				${nonNegativeAmount(input.amount, 'amount')}::numeric,
+				${currencyOf(input.currency, 'CAD')},
 				${input.frequency ? oneOf(input.frequency, BILL_FREQUENCIES, 'frequency', 'monthly') : null},
-				${(input.nextDueOn as string) || null}::date,
+				${optionalDay(input.nextDueOn, 'next due date')}::date,
 				${optionalText(input.category, 'category')},
-				${input.autopay === true || input.autopay === 'on'}::boolean,
+				${optionalText(input.account, 'account')},
+				${checkboxBool(input.autopay)}::boolean,
 				${oneOf(input.status, BILL_STATUSES, 'status', 'active')},
+				${optionalDay(input.freeTrialEndsOn, 'trial end date')}::date,
+				${nonNegativeAmount(input.trialPrice, 'trial price')}::numeric,
+				${optionalText(input.url, 'link', 2000)},
+				${optionalText(input.notes, 'notes')},
 				${viewer.userId}::uuid, ${viewer.userId}::uuid
 			)
 			returning ${billColumns(sql)}
@@ -918,6 +975,351 @@ export function createBill(
 		if (!row) throw new Error('insert returned no row');
 		return { ok: true, record: mapBill(row) };
 	});
+}
+
+export async function getBill(sql: Queryable, viewer: Viewer, id: string): Promise<Bill | null> {
+	const row = await getScoped<BillRow>(
+		sql,
+		BILLS,
+		id,
+		readableScope(sql, viewer, BILLS),
+		billColumns(sql)
+	);
+	return row ? mapBill(row) : null;
+}
+
+export function updateBill(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: BillInput,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Bill>> {
+	return guarded<Bill>(async () => {
+		const current = await getBill(sql, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 200)),
+			type: patched(patch, 'type', current.type, (v) => oneOf(v, BILL_TYPES, 'type', current.type)),
+			amount: patched(patch, 'amount', current.amount, (v) => nonNegativeAmount(v, 'amount')),
+			currency: patched(patch, 'currency', current.currency, (v) =>
+				currencyOf(v, current.currency)
+			),
+			frequency: patched(patch, 'frequency', current.frequency, (v) =>
+				v ? oneOf(v, BILL_FREQUENCIES, 'frequency', current.frequency ?? 'monthly') : null
+			),
+			nextDueOn: patched(patch, 'nextDueOn', current.nextDueOn, (v) =>
+				optionalDay(v, 'next due date')
+			),
+			category: patched(patch, 'category', current.category, (v) => optionalText(v, 'category')),
+			account: patched(patch, 'account', current.account, (v) => optionalText(v, 'account')),
+			autopay: patched(patch, 'autopay', current.autopay, checkboxBool),
+			status: patched(patch, 'status', current.status, (v) =>
+				oneOf(v, BILL_STATUSES, 'status', current.status)
+			),
+			freeTrialEndsOn: patched(patch, 'freeTrialEndsOn', current.freeTrialEndsOn, (v) =>
+				optionalDay(v, 'trial end date')
+			),
+			trialPrice: patched(patch, 'trialPrice', current.trialPrice, (v) =>
+				nonNegativeAmount(v, 'trial price')
+			),
+			url: patched(patch, 'url', current.url, (v) => optionalText(v, 'link', 2000)),
+			notes: patched(patch, 'notes', current.notes, (v) => optionalText(v, 'notes'))
+		};
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+
+		return writeScoped<BillRow, Bill>({
+			sql,
+			table: BILLS,
+			id,
+			readScope: readableScope(sql, viewer, BILLS),
+			writeScope: writableScope(sql, viewer, BILLS),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				name = ${next.name}, type = ${next.type}, amount = ${next.amount}::numeric,
+				currency = ${next.currency}, frequency = ${next.frequency},
+				next_due_on = ${next.nextDueOn}::date, category = ${next.category},
+				account = ${next.account}, autopay = ${next.autopay}::boolean, status = ${next.status},
+				free_trial_ends_on = ${next.freeTrialEndsOn}::date,
+				trial_price = ${next.trialPrice}::numeric, url = ${next.url}, notes = ${next.notes},
+				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: billColumns(sql),
+			map: mapBill,
+			mayWrite: writableBy(viewer)
+		});
+	});
+}
+
+/** "Delete": archived bills leave /finance but stay recoverable from the
+ *  Archive, like everything else in LifeOS (base.ts's header). Hand-rolled
+ *  rather than built on base.ts's `archiveScoped`, the same reason
+ *  `setPersonArchived` is: that helper leaves `updated_at` to a database
+ *  trigger, and `bills` (added in migration 0014, alongside `people`) has
+ *  never had one. */
+export function setBillArchived(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Bill>> {
+	return guarded<Bill>(async () =>
+		writeScoped<BillRow, Bill>({
+			sql,
+			table: BILLS,
+			id,
+			readScope: readableScope(sql, viewer, BILLS),
+			writeScope: writableScope(sql, viewer, BILLS),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: sql`
+				archived_at = case when ${archived}::boolean then now() else null end,
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: billColumns(sql),
+			map: mapBill,
+			mayWrite: writableBy(viewer)
+		})
+	);
+}
+
+/**
+ * Adds whole months to a day, clamping into a shorter month rather than
+ * rolling into the next one — the same rule `nextOccurrence` in dates.ts uses
+ * for a recurring important date, reimplemented here for a specific number of
+ * months at a time rather than that function's year-or-month recurrence walk.
+ */
+function addMonthsClamped(day: string, months: number): string {
+	const [year, month, date] = day.split('-').map(Number);
+	const total = year! * 12 + (month! - 1) + months;
+	const y = Math.floor(total / 12);
+	const m = (total % 12) + 1;
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return `${y}-${pad(m)}-${pad(Math.min(date!, daysInMonth(y, m)))}`;
+}
+
+/**
+ * The due date after one payment, for whichever frequency the table's own
+ * CHECK allows.
+ *
+ * `one_off` has no next occurrence at all: paying it is the end of it, not a
+ * schedule to keep advancing, so the date clears rather than repeating. A
+ * bill with no frequency recorded (the column is nullable — imported data
+ * that never said, or a genuinely irregular bill) is left exactly where it
+ * was: there is no period to add a multiple of, and guessing one would
+ * silently invent a schedule nobody set. Exported for its own unit tests, the
+ * same reason `placeInZone` in health-measurements.ts is.
+ */
+export function advanceDueDate(
+	current: string | null,
+	frequency: BillFrequency | null
+): string | null {
+	if (current === null || frequency === null) return current;
+	switch (frequency) {
+		case 'weekly':
+			return addDays(current, 7);
+		case 'biweekly':
+			return addDays(current, 14);
+		case 'monthly':
+			return addMonthsClamped(current, 1);
+		case 'quarterly':
+			return addMonthsClamped(current, 3);
+		case 'annual':
+			return addMonthsClamped(current, 12);
+		case 'one_off':
+			return null;
+	}
+}
+
+// ─── bill payments ──────────────────────────────────────────────────────────
+
+export interface BillPayment {
+	id: string;
+	billId: string;
+	amountPaid: number;
+	paidOn: string;
+	note: string | null;
+	previousNextDueOn: string | null;
+	createdAt: Date;
+	createdBy: string | null;
+}
+
+interface BillPaymentRow {
+	id: string;
+	bill_id: string;
+	amount_paid: unknown;
+	paid_on: string;
+	note: string | null;
+	previous_next_due_on: string | null;
+	created_at: unknown;
+	created_by: string | null;
+}
+
+const BILL_PAYMENTS = 'bill_payments';
+
+function mapBillPayment(row: BillPaymentRow): BillPayment {
+	return {
+		id: row.id,
+		billId: row.bill_id,
+		amountPaid: toNumberOrNull(row.amount_paid) ?? 0,
+		paidOn: toDay(row.paid_on),
+		note: toTextOrNull(row.note),
+		previousNextDueOn: toDayOrNull(row.previous_next_due_on),
+		createdAt: toDate(row.created_at),
+		createdBy: row.created_by
+	};
+}
+
+/** Most recent first: the list this feeds only ever asks "what happened
+ *  lately", and only the newest row may be undone (see `deleteBillPayment`). */
+export async function listBillPayments(
+	sql: Queryable,
+	viewer: Viewer,
+	billId: string
+): Promise<BillPayment[]> {
+	if (!isUuid(billId)) return [];
+	const rows = await sql<BillPaymentRow[]>`
+		select p.id, p.bill_id, p.amount_paid, p.paid_on::text as paid_on, p.note,
+		       p.previous_next_due_on::text as previous_next_due_on, p.created_at, p.created_by
+		from ${sql(BILL_PAYMENTS)} p
+		join ${sql(BILLS)} b on b.id = p.bill_id
+		where p.bill_id = ${billId}::uuid and ${readableScope(sql, viewer, 'b')}
+		order by p.paid_on desc, p.created_at desc
+	`;
+	return rows.map(mapBillPayment);
+}
+
+export interface BillPaymentInput {
+	amountPaid?: unknown;
+	paidOn?: unknown;
+	note?: unknown;
+}
+
+export interface BillPaymentResult {
+	bill: Bill;
+	payment: BillPayment;
+}
+
+/**
+ * Records a payment against a bill and advances its due date by one period,
+ * in one transaction (base.ts's `atomically`): a payment logged with no
+ * matching change to `next_due_on`, or a due date moved with nothing in the
+ * log to say why, would each be a silent half of "mark paid".
+ */
+export function recordBillPayment(
+	sql: Queryable,
+	viewer: Viewer,
+	billId: string,
+	input: BillPaymentInput
+): Promise<WriteResult<BillPaymentResult>> {
+	if (!isUuid(billId)) return Promise.resolve({ ok: false, reason: 'not_found' });
+
+	return guarded(() =>
+		atomically(sql, async (tx): Promise<WriteResult<BillPaymentResult>> => {
+			// Locked, so two concurrent "mark paid" taps cannot both advance the
+			// due date from the same starting point.
+			const [row] = await tx<BillRow[]>`
+				select ${billColumns(tx)} from ${tx(BILLS)}
+				where id = ${billId}::uuid and ${writableScope(tx, viewer, BILLS)}
+				for update
+			`;
+			if (!row) return { ok: false, reason: 'not_found' };
+			const bill = mapBill(row);
+
+			const paidOn =
+				optionalDay(input.paidOn, 'date paid') ?? (await householdToday(tx, viewer.householdId));
+			const amountPaid = optionalNumber(input.amountPaid, 'amount paid') ?? bill.amount;
+			if (amountPaid === null || amountPaid <= 0) {
+				throw new InvalidInput('enter an amount paid greater than 0');
+			}
+			const note = optionalText(input.note, 'note', 500);
+			const nextDueOn = advanceDueDate(bill.nextDueOn, bill.frequency);
+
+			const [payment] = await tx<BillPaymentRow[]>`
+				insert into ${tx(BILL_PAYMENTS)} (
+					bill_id, amount_paid, paid_on, note, previous_next_due_on, created_by
+				) values (
+					${billId}::uuid, ${amountPaid}::numeric, ${paidOn}::date, ${note},
+					${bill.nextDueOn}::date, ${viewer.userId}::uuid
+				)
+				returning id, bill_id, amount_paid, paid_on::text as paid_on, note,
+				          previous_next_due_on::text as previous_next_due_on, created_at, created_by
+			`;
+			if (!payment) throw new Error('insert returned no row');
+
+			const [updatedRow] = await tx<BillRow[]>`
+				update ${tx(BILLS)} set next_due_on = ${nextDueOn}::date,
+					updated_at = now(), updated_by = ${viewer.userId}::uuid
+				where id = ${billId}::uuid
+				returning ${billColumns(tx)}
+			`;
+			if (!updatedRow) throw new Error('update returned no row');
+
+			return { ok: true, record: { bill: mapBill(updatedRow), payment: mapBillPayment(payment) } };
+		})
+	);
+}
+
+/**
+ * Undoes a payment: deletes the log row and puts the bill's due date back to
+ * what it was immediately before that payment moved it.
+ *
+ * Only the most recent payment for the bill may be undone. An older row's own
+ * "previous due date" is real, but restoring it would jump the bill's due
+ * date backwards past every payment recorded since — silently undoing work
+ * nobody asked to undo. The bill page only ever offers Undo on the newest row
+ * for the same reason.
+ */
+export function deleteBillPayment(
+	sql: Queryable,
+	viewer: Viewer,
+	billId: string,
+	paymentId: string
+): Promise<WriteResult<Bill>> {
+	if (!isUuid(billId) || !isUuid(paymentId)) {
+		return Promise.resolve({ ok: false, reason: 'not_found' });
+	}
+
+	return guarded(() =>
+		atomically(sql, async (tx): Promise<WriteResult<Bill>> => {
+			const [row] = await tx<BillRow[]>`
+				select ${billColumns(tx)} from ${tx(BILLS)}
+				where id = ${billId}::uuid and ${writableScope(tx, viewer, BILLS)}
+				for update
+			`;
+			if (!row) return { ok: false, reason: 'not_found' };
+
+			const [latest] = await tx<{ id: string; previous_next_due_on: string | null }[]>`
+				select id, previous_next_due_on::text as previous_next_due_on
+				from ${tx(BILL_PAYMENTS)}
+				where bill_id = ${billId}::uuid
+				order by paid_on desc, created_at desc
+				limit 1
+				for update
+			`;
+			if (!latest || latest.id !== paymentId) {
+				return {
+					ok: false,
+					reason: 'invalid',
+					message: 'only the most recent payment can be undone'
+				};
+			}
+
+			await tx`delete from ${tx(BILL_PAYMENTS)} where id = ${paymentId}::uuid`;
+
+			const [updated] = await tx<BillRow[]>`
+				update ${tx(BILLS)} set next_due_on = ${latest.previous_next_due_on}::date,
+					updated_at = now(), updated_by = ${viewer.userId}::uuid
+				where id = ${billId}::uuid
+				returning ${billColumns(tx)}
+			`;
+			if (!updated) throw new Error('update returned no row');
+			return { ok: true, record: mapBill(updated) };
+		})
+	);
 }
 
 /**
