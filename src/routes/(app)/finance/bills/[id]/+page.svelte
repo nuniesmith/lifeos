@@ -67,9 +67,16 @@
 		if (errorFor('save')) editing = true;
 	});
 
-	// The newest payment only — see deleteBillPayment's own header for why an
-	// older one cannot be undone safely.
-	const latestPaymentId = $derived(data.payments[0]?.id ?? null);
+	// The payment entered last, which is not always the top row: the list is
+	// in date-paid order, and a payment can be entered late for an earlier day.
+	// See deleteBillPayment's header for why only that one can be undone.
+	const latestPaymentId = $derived(
+		data.payments.reduce<(typeof data.payments)[number] | null>(
+			(latest, payment) =>
+				latest === null || payment.createdAt > latest.createdAt ? payment : latest,
+			null
+		)?.id ?? null
+	);
 </script>
 
 <svelte:head><title>{bill.name} · LifeOS</title></svelte:head>

@@ -1639,12 +1639,15 @@ export function recordBillPayment(
 			const note = optionalText(input.note, 'note', 500);
 			const nextDueOn = advanceDueDate(bill.nextDueOn, bill.frequency);
 
+			// clock_timestamp(), not the column's now() default: now() is when the
+			// transaction began, but undo needs the order payments were actually
+			// recorded in, and that is the order this bill's row lock admits them.
 			const [payment] = await tx<BillPaymentRow[]>`
 				insert into ${tx(BILL_PAYMENTS)} (
-					bill_id, amount_paid, paid_on, note, previous_next_due_on, created_by
+					bill_id, amount_paid, paid_on, note, previous_next_due_on, created_by, created_at
 				) values (
 					${billId}::uuid, ${amountPaid}::numeric, ${paidOn}::date, ${note},
-					${bill.nextDueOn}::date, ${viewer.userId}::uuid
+					${bill.nextDueOn}::date, ${viewer.userId}::uuid, clock_timestamp()
 				)
 				returning id, bill_id, amount_paid, paid_on::text as paid_on, note,
 				          previous_next_due_on::text as previous_next_due_on, created_at, created_by
@@ -1668,11 +1671,14 @@ export function recordBillPayment(
  * Undoes a payment: deletes the log row and puts the bill's due date back to
  * what it was immediately before that payment moved it.
  *
- * Only the most recent payment for the bill may be undone. An older row's own
- * "previous due date" is real, but restoring it would jump the bill's due
- * date backwards past every payment recorded since — silently undoing work
- * nobody asked to undo. The bill page only ever offers Undo on the newest row
- * for the same reason.
+ * Only the most recently RECORDED payment for the bill may be undone. An
+ * older row's own "previous due date" is real, but restoring it would jump the
+ * bill's due date backwards past every payment recorded since — silently
+ * undoing work nobody asked to undo. "Most recent" means entered last, not
+ * paid last: each row's previous_next_due_on is the due date as the payment
+ * entered before it left it, so a payment entered late for an earlier day is
+ * still the newest link in that chain. The bill page offers Undo on the same
+ * row for the same reason.
  */
 export function deleteBillPayment(
 	sql: Queryable,
@@ -1697,7 +1703,7 @@ export function deleteBillPayment(
 				select id, previous_next_due_on::text as previous_next_due_on
 				from ${tx(BILL_PAYMENTS)}
 				where bill_id = ${billId}::uuid
-				order by paid_on desc, created_at desc
+				order by created_at desc
 				limit 1
 				for update
 			`;
