@@ -931,7 +931,9 @@ export function updateMediaItem(
 			whySaved: patched(patch, 'whySaved', current.whySaved, (v) => optionalText(v, 'why saved')),
 			isFavourite: patched(patch, 'isFavourite', current.isFavourite, (v) => v === true),
 			watchAgain: patched(patch, 'watchAgain', current.watchAgain, (v) => v === true),
-			startedOn: patched(patch, 'startedOn', current.startedOn, (v) => optionalDay(v, 'started on')),
+			startedOn: patched(patch, 'startedOn', current.startedOn, (v) =>
+				optionalDay(v, 'started on')
+			),
 			finishedOn: patched(patch, 'finishedOn', current.finishedOn, (v) =>
 				optionalDay(v, 'finished on')
 			)

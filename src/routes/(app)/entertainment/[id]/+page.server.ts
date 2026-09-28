@@ -123,7 +123,8 @@ export const actions: Actions = {
 		const viewer = await requireViewer(locals.user);
 		const form = await request.formData();
 		const status = form.get('status');
-		if (!isStatus(status)) return fail(400, { action: 'setStatus' as const, error: 'Not a status.' });
+		if (!isStatus(status))
+			return fail(400, { action: 'setStatus' as const, error: 'Not a status.' });
 
 		const result = await setMediaStatus(sql, viewer, params.id, status);
 		if (!result.ok) return refused('setStatus', result);

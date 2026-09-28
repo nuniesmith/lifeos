@@ -15,8 +15,12 @@
 		dropped: 'Dropped'
 	};
 
-	const typeOptions = data.mediaTypes.map((t) => ({ value: t, label: TYPE_LABELS[t] ?? t }));
-	const statusOptions = data.statuses.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }));
+	const typeOptions = $derived(
+		data.mediaTypes.map((t) => ({ value: t, label: TYPE_LABELS[t] ?? t }))
+	);
+	const statusOptions = $derived(
+		data.statuses.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }))
+	);
 </script>
 
 <svelte:head><title>New title · LifeOS</title></svelte:head>

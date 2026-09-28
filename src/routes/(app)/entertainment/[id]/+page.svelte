@@ -28,8 +28,12 @@
 	};
 	const RATING_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: `${n} / 5` }));
 
-	const typeOptions = data.mediaTypes.map((t) => ({ value: t, label: TYPE_LABELS[t] ?? t }));
-	const statusOptions = data.statuses.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }));
+	const typeOptions = $derived(
+		data.mediaTypes.map((t) => ({ value: t, label: TYPE_LABELS[t] ?? t }))
+	);
+	const statusOptions = $derived(
+		data.statuses.map((s) => ({ value: s, label: STATUS_LABELS[s] ?? s }))
+	);
 
 	const errorFor = (action: string) => (form?.action === action ? form.error : undefined);
 
@@ -61,7 +65,6 @@
 			year: 'numeric',
 			timeZone: 'UTC'
 		});
-
 </script>
 
 <svelte:head><title>{item.name} · LifeOS</title></svelte:head>
@@ -184,18 +187,8 @@
 				</div>
 
 				<div class="grid">
-					<Input
-						label="Started on"
-						name="startedOn"
-						type="date"
-						value={item.startedOn ?? ''}
-					/>
-					<Input
-						label="Finished on"
-						name="finishedOn"
-						type="date"
-						value={item.finishedOn ?? ''}
-					/>
+					<Input label="Started on" name="startedOn" type="date" value={item.startedOn ?? ''} />
+					<Input label="Finished on" name="finishedOn" type="date" value={item.finishedOn ?? ''} />
 				</div>
 
 				<Select
@@ -238,52 +231,47 @@
 
 	{#if data.canEdit && !archived}
 		<Card title="Log a viewing">
-			{#key logFormKey}
-				<form
-					method="POST"
-					action="?/logViewing"
-					class="edit"
-					use:enhance={() => {
-						return async ({ result, update }) => {
-							await update({ reset: false });
-							if (result.type === 'success') logFormKey += 1;
-						};
-					}}
-				>
-					<div class="grid">
-						<Input label="Date watched" name="watchedOn" type="date" required value={data.today} />
-					</div>
-					<div class="grid">
-						<Input
-							label="Season"
-							name="season"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							value={item.currentSeason?.toString() ?? ''}
-						/>
-						<Input
-							label="Episode"
-							name="episode"
-							type="number"
-							inputmode="numeric"
-							min="0"
-							value={item.currentEpisode?.toString() ?? ''}
-						/>
-					</div>
-					<Textarea label="Note" name="note" rows={2} hint="Optional." />
+			<!--
+				Plain use:enhance, no {#key} bump: this form has no <Select>, so
+				the reset-puts-a-Select-back-on-its-first-option trap does not
+				apply, and the default reset is exactly what is wanted here --
+				it clears the note and puts the date and progress back to
+				today/current, ready for the next entry to be logged.
+			-->
+			<form method="POST" action="?/logViewing" class="edit" use:enhance>
+				<div class="grid">
+					<Input label="Date watched" name="watchedOn" type="date" required value={data.today} />
+				</div>
+				<div class="grid">
+					<Input
+						label="Season"
+						name="season"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						value={item.currentSeason?.toString() ?? ''}
+					/>
+					<Input
+						label="Episode"
+						name="episode"
+						type="number"
+						inputmode="numeric"
+						min="0"
+						value={item.currentEpisode?.toString() ?? ''}
+					/>
+				</div>
+				<Textarea label="Note" name="note" rows={2} hint="Optional." />
 
-					{#if errorFor('logViewing')}
-						<p class="notice error" role="alert">{errorFor('logViewing')}</p>
-					{:else if form?.action === 'logViewing' && form.logged}
-						<p class="notice ok" role="status">Logged.</p>
-					{/if}
+				{#if errorFor('logViewing')}
+					<p class="notice error" role="alert">{errorFor('logViewing')}</p>
+				{:else if form?.action === 'logViewing' && form.logged}
+					<p class="notice ok" role="status">Logged.</p>
+				{/if}
 
-					<div class="row-end">
-						<Button type="submit" variant="primary">Log a viewing</Button>
-					</div>
-				</form>
-			{/key}
+				<div class="row-end">
+					<Button type="submit" variant="primary">Log a viewing</Button>
+				</div>
+			</form>
 		</Card>
 	{/if}
 
@@ -301,7 +289,9 @@
 						<div class="viewing-row">
 							<span class="date">{longDay(viewing.watchedOn)}</span>
 							{#if viewing.season}
-								<span class="ep">S{viewing.season}{viewing.episode ? `E${viewing.episode}` : ''}</span>
+								<span class="ep"
+									>S{viewing.season}{viewing.episode ? `E${viewing.episode}` : ''}</span
+								>
 							{/if}
 							<span class="who">{viewing.loggedByMe ? 'You' : 'Your household'}</span>
 						</div>
@@ -327,7 +317,9 @@
 			</form>
 		</Card>
 	{:else}
-		<p class="muted">This title belongs to someone else in the household, so only they can change it.</p>
+		<p class="muted">
+			This title belongs to someone else in the household, so only they can change it.
+		</p>
 	{/if}
 </div>
 
