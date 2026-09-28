@@ -57,11 +57,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		await Promise.all([
 			listBills(sql, viewer, { status: ['active', 'free_trial'], limit: 200 }),
 			monthlyCommitment(sql, viewer),
-			// Archived rows travel with the live ones and are split below, rather
-			// than a second query: neither list is fetched again, and this page's
-			// only way back for an archived income entry or contribution is
-			// right here — unlike a bill, which also has its own detail page and
-			// is already reachable from the global Archive besides.
+			// Archived rows travel with the live ones and are split below (the
+			// /perspectives pattern), so each section can offer Restore where the
+			// entry was archived: unlike a bill, neither kind has a page of its
+			// own, and the global Archive is otherwise the only way back.
 			listIncomeEntries(sql, viewer, { limit: RECENT_LIMIT, includeArchived: true }),
 			incomeSummaryForMonth(sql, viewer, monthStart, monthEnd),
 			listSavingsContributions(sql, viewer, { limit: RECENT_LIMIT, includeArchived: true }),
