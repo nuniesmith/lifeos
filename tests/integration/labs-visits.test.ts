@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { createMember } from '$lib/server/auth/admin';
@@ -10,9 +11,11 @@ import {
 	createLabMarker,
 	createLabResult,
 	createMedicalVisit,
+	createPerson,
 	getLabMarker,
 	getMedicalVisit,
 	labResultCounts,
+	linkedNamesForVisit,
 	listLabMarkers,
 	listLabResults,
 	listMedicalVisits,
@@ -21,6 +24,7 @@ import {
 	setLabMarkerArchived,
 	setLabResultArchived,
 	setMedicalVisitArchived,
+	setPersonArchived,
 	symptomsForVisit,
 	updateLabMarker,
 	updateLabResult,
@@ -530,5 +534,249 @@ describe('privacy and household isolation', () => {
 
 		expect(await listLabMarkers(sql, elsewhere)).toEqual([]);
 		expect(await listMedicalVisits(sql, elsewhere)).toEqual([]);
+	});
+});
+
+describe('a visit’s provider, location and pet links', () => {
+	const person = async (
+		viewer: Viewer,
+		name: string,
+		kind: 'person' | 'place' | 'pet',
+		extra: Record<string, unknown> = {}
+	) =>
+		ok(await createPerson(sql, viewer, { name, kind, ...extra }), `create ${kind} ${name}`).record;
+
+	it('links a provider, a place and a pet, and reads their names back', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const place = await person(owner, 'Placeholder Clinic', 'place');
+		const pet = await person(owner, 'Zorbo', 'pet');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+
+		const linked = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ providerPersonId: provider.id, locationPlaceId: place.id, petId: pet.id },
+				v.updatedAt
+			),
+			'link provider, place and pet'
+		).record;
+		expect(linked).toMatchObject({
+			providerPersonId: provider.id,
+			locationPlaceId: place.id,
+			petId: pet.id
+		});
+
+		expect(await linkedNamesForVisit(sql, owner, linked)).toEqual({
+			providerName: 'Doctor Placeholder',
+			locationName: 'Placeholder Clinic',
+			petName: 'Zorbo'
+		});
+	});
+
+	it('refuses linking the wrong kind, as not found', async () => {
+		// A place cannot be a provider (base.ts's own worked example).
+		const place = await person(owner, 'Placeholder Clinic', 'place');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+
+		expect(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: place.id }, v.updatedAt)
+		).toMatchObject({ ok: false, reason: 'not_found' });
+		expect(await getMedicalVisit(sql, owner, v.id)).toMatchObject({ providerPersonId: null });
+	});
+
+	it('refuses linking the other member’s private person, as not found', async () => {
+		const theirs = await person(partner, 'Their Contact', 'person', {
+			ownerUserId: partner.userId,
+			visibility: 'private'
+		});
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+
+		expect(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: theirs.id }, v.updatedAt)
+		).toMatchObject({ ok: false, reason: 'not_found' });
+	});
+
+	it('refuses linking an archived person', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		ok(await setPersonArchived(sql, owner, provider.id, true), 'archive');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+
+		expect(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: provider.id }, v.updatedAt)
+		).toMatchObject({ ok: false, reason: 'not_found' });
+	});
+
+	it('leaves the visit’s imported text intact when the linked person is later deleted', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+		const linked = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ providerPersonId: provider.id, provider: 'Imported Provider Text' },
+				v.updatedAt
+			),
+			'link and set text'
+		).record;
+		expect(linked).toMatchObject({
+			providerPersonId: provider.id,
+			provider: 'Imported Provider Text'
+		});
+
+		// Deleting a person outright is not exposed anywhere in the repository
+		// layer (archiving is) -- this reaches into the table directly, because
+		// the question here is what the FK's `on delete set null` does, not
+		// application behaviour.
+		await sql`delete from people where id = ${provider.id}::uuid`;
+
+		expect(await getMedicalVisit(sql, owner, v.id)).toMatchObject({
+			providerPersonId: null,
+			provider: 'Imported Provider Text'
+		});
+	});
+
+	it('never rewrites the imported free text when linking, or the link when editing text', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+		const imported = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ provider: 'Imported Provider Text' },
+				v.updatedAt
+			),
+			'set imported text'
+		).record;
+
+		const linked = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ providerPersonId: provider.id },
+				imported.updatedAt
+			),
+			'link provider'
+		).record;
+		expect(linked).toMatchObject({
+			provider: 'Imported Provider Text',
+			providerPersonId: provider.id
+		});
+
+		const edited = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ provider: 'Edited Provider Text' },
+				linked.updatedAt
+			),
+			'edit text only'
+		).record;
+		expect(edited).toMatchObject({
+			provider: 'Edited Provider Text',
+			providerPersonId: provider.id
+		});
+	});
+
+	it('clears a link by saving an empty value, leaving the text untouched', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+		const linked = ok(
+			await updateMedicalVisit(
+				sql,
+				owner,
+				v.id,
+				{ providerPersonId: provider.id, provider: 'Imported Provider Text' },
+				v.updatedAt
+			),
+			'link'
+		).record;
+
+		const cleared = ok(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: '' }, linked.updatedAt),
+			'clear link'
+		).record;
+		expect(cleared).toMatchObject({ providerPersonId: null, provider: 'Imported Provider Text' });
+	});
+
+	it('leaves an unmentioned link untouched when another field is edited', async () => {
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+		const linked = ok(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: provider.id }, v.updatedAt),
+			'link'
+		).record;
+
+		const edited = ok(
+			await updateMedicalVisit(sql, owner, v.id, { notes: 'Unrelated note.' }, linked.updatedAt),
+			'edit unrelated field'
+		).record;
+		expect(edited.providerPersonId).toBe(provider.id);
+	});
+
+	it('shows a name only while the linked person stays readable', async () => {
+		// A person's own visibility can change after a visit links to them --
+		// linkedNamesForVisit re-checks readability on every read rather than
+		// trusting the id, the same rule readableScope enforces everywhere else.
+		const provider = await person(owner, 'Doctor Placeholder', 'person');
+		const v = await visit(owner, 'Follow up', '2026-09-25', '14:40');
+		const linked = ok(
+			await updateMedicalVisit(sql, owner, v.id, { providerPersonId: provider.id }, v.updatedAt),
+			'link'
+		).record;
+		expect((await linkedNamesForVisit(sql, partner, linked)).providerName).toBe(
+			'Doctor Placeholder'
+		);
+
+		await sql`update people set owner_user_id = ${owner.userId}::uuid, visibility = 'private' where id = ${provider.id}::uuid`;
+		expect((await linkedNamesForVisit(sql, partner, linked)).providerName).toBeNull();
+		expect((await linkedNamesForVisit(sql, owner, linked)).providerName).toBe('Doctor Placeholder');
+	});
+});
+
+describe('through a client configured the way the app’s is', () => {
+	it('links a visit’s provider through the drizzle-wrapped client', async () => {
+		// `$lib/server/db` hands its client to drizzle(), which replaces the
+		// driver's timestamp serializers with pass-throughs -- a JS Date sent as
+		// a parameter reaches the wire unconverted and throws (see the identical
+		// test in health-measurements.test.ts for how this failed in
+		// production). Every timestamp this module sends is already
+		// `${iso}::timestamptz`, but `resolveVisitLink` and the transaction
+		// `updateMedicalVisit` now opens are new code, so this proves the same
+		// discipline holds for the links too, not just the plain fields.
+		const appLike = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		drizzle(appLike);
+		try {
+			const provider = ok(
+				await createPerson(appLike, owner, { name: 'Doctor Placeholder', kind: 'person' }),
+				'create person through the app-like client'
+			).record;
+			const v = ok(
+				await createMedicalVisit(appLike, owner, {
+					reason: 'Follow up',
+					visitDate: '2026-09-25',
+					visitTime: '14:40'
+				}),
+				'create visit through the app-like client'
+			).record;
+			const linked = ok(
+				await updateMedicalVisit(
+					appLike,
+					owner,
+					v.id,
+					{ providerPersonId: provider.id },
+					v.updatedAt
+				),
+				'link provider through the app-like client'
+			).record;
+			expect(linked.providerPersonId).toBe(provider.id);
+		} finally {
+			await appLike.end({ timeout: 5 });
+		}
 	});
 });
