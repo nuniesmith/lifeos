@@ -134,8 +134,10 @@ test.describe('a visit’s provider, location and pet links', () => {
 		await page.goto(`/health/visits/${visitId}`);
 
 		// The imported words are still there, untouched by anything below.
-		await expect(page.getByLabel('Provider')).toHaveValue('Imported Provider Text');
-		await expect(page.getByLabel('Location')).toHaveValue('Imported Location Text');
+		// Exact: a label matches as a substring by default, and "Linked provider"
+		// and "New provider" both contain "Provider".
+		await expect(page.getByLabel('Provider', { exact: true })).toHaveValue('Imported Provider Text');
+		await expect(page.getByLabel('Location', { exact: true })).toHaveValue('Imported Location Text');
 
 		await page.getByLabel('Linked provider').selectOption({ label: 'Doctor Fixtureton' });
 		await page.getByLabel('Linked place').selectOption({ label: 'Fixture Clinic' });
@@ -152,8 +154,8 @@ test.describe('a visit’s provider, location and pet links', () => {
 		await expect(page.getByLabel('Linked pet')).toHaveValue(petId);
 
 		// The free text is exactly as it was: linking never rewrites it.
-		await expect(page.getByLabel('Provider')).toHaveValue('Imported Provider Text');
-		await expect(page.getByLabel('Location')).toHaveValue('Imported Location Text');
+		await expect(page.getByLabel('Provider', { exact: true })).toHaveValue('Imported Provider Text');
+		await expect(page.getByLabel('Location', { exact: true })).toHaveValue('Imported Location Text');
 
 		// The header shows the linked names, each a link into /people/[id].
 		await expect(page.getByRole('link', { name: 'Doctor Fixtureton' })).toHaveAttribute(
@@ -173,7 +175,7 @@ test.describe('a visit’s provider, location and pet links', () => {
 		// guess.
 		await page.reload();
 		await expect(page.getByLabel('Linked provider')).toHaveValue(providerId);
-		await expect(page.getByLabel('Provider')).toHaveValue('Imported Provider Text');
+		await expect(page.getByLabel('Provider', { exact: true })).toHaveValue('Imported Provider Text');
 	});
 
 	test('adds a new person inline from the picker’s own "add" form', async ({ page }) => {
