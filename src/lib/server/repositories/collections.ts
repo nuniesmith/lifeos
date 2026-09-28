@@ -2,6 +2,8 @@ import type { Fragment } from 'postgres';
 import type { Viewer } from '../auth/authz';
 import {
 	InvalidInput,
+	MAX_LIMIT,
+	archiveScoped,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -28,8 +30,15 @@ import {
 	type RecordBase,
 	type WriteResult
 } from './base';
-import { toDateOrNull } from '../db/coerce';
-import { optionalDay, optionalText, patched, requiredText } from './validate';
+import { toDate, toDateOrNull } from '../db/coerce';
+import {
+	optionalDay,
+	optionalInt,
+	optionalText,
+	patched,
+	requiredDay,
+	requiredText
+} from './validate';
 
 /**
  * People, wishlist, watchlist and bills (MODEL-002, feature pack 4).
@@ -653,6 +662,11 @@ export interface MediaItem extends RecordBase {
 	timesWatched: number;
 	whySaved: string | null;
 	isFavourite: boolean;
+	/** Whether this is worth watching again -- plan §13's "watch again", set
+	 *  from the full edit and read by nothing else yet. */
+	watchAgain: boolean;
+	startedOn: string | null;
+	finishedOn: string | null;
 	lastWatchedAt: Date | null;
 }
 
@@ -670,6 +684,9 @@ interface MediaRow extends BaseRow {
 	times_watched: unknown;
 	why_saved: string | null;
 	is_favourite: unknown;
+	watch_again: unknown;
+	started_on: string | null;
+	finished_on: string | null;
 	last_watched_at: unknown;
 }
 
@@ -679,7 +696,8 @@ const mediaColumns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	name, media_type, status, rating, genre, streaming_service, release_year,
 	total_seasons, current_season, current_episode, times_watched, why_saved,
-	is_favourite, last_watched_at`;
+	is_favourite, watch_again, started_on::text as started_on,
+	finished_on::text as finished_on, last_watched_at`;
 
 const mapMedia = (row: MediaRow): MediaItem => ({
 	...mapBase(row),
@@ -696,6 +714,9 @@ const mapMedia = (row: MediaRow): MediaItem => ({
 	timesWatched: toInt(row.times_watched),
 	whySaved: toTextOrNull(row.why_saved),
 	isFavourite: toBool(row.is_favourite),
+	watchAgain: toBool(row.watch_again),
+	startedOn: toDayOrNull(row.started_on),
+	finishedOn: toDayOrNull(row.finished_on),
 	lastWatchedAt: toDateOrNull(row.last_watched_at)
 });
 
@@ -759,6 +780,401 @@ export function setMediaStatus(
 			mayWrite: writableBy(viewer)
 		});
 	});
+}
+
+export async function getMediaItem(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string
+): Promise<MediaItem | null> {
+	const row = await getScoped<MediaRow>(
+		sql,
+		MEDIA,
+		id,
+		readableScope(sql, viewer, MEDIA),
+		mediaColumns(sql)
+	);
+	return row ? mapMedia(row) : null;
+}
+
+/** Streaming services already in use, for the picker's filter and as
+ *  suggestions on the add/edit forms. Free text (migration 0014), so this is
+ *  a convenience list, not a constraint someone else's guess could violate. */
+export async function mediaStreamingServices(sql: Queryable, viewer: Viewer): Promise<string[]> {
+	const rows = await sql<{ streaming_service: string }[]>`
+		select distinct streaming_service from ${sql(MEDIA)}
+		where ${readableScope(sql, viewer, MEDIA)} and streaming_service is not null
+		order by streaming_service asc
+	`;
+	return rows.map((r) => toText(r.streaming_service));
+}
+
+export interface MediaItemInput extends OwnershipInput {
+	name?: unknown;
+	mediaType?: unknown;
+	status?: unknown;
+	genre?: unknown;
+	streamingService?: unknown;
+	releaseYear?: unknown;
+	totalSeasons?: unknown;
+}
+
+/**
+ * Adds a title to the watchlist. Only a name is required (plan §13, feature
+ * 1) -- a title is often saved on a recommendation, with everything else
+ * filled in once it is actually being watched, through {@link updateMediaItem}.
+ */
+export function createMediaItem(
+	sql: Queryable,
+	viewer: Viewer,
+	input: MediaItemInput
+): Promise<WriteResult<MediaItem>> {
+	return guarded<MediaItem>(async () => {
+		const name = requiredText(input.name, 'name', 300);
+		// Household-shared by default, like the wishlist and bills this table
+		// was migrated alongside (migration 0014): a watchlist is something
+		// both members add to and pick from, not a private list by default.
+		const { ownerUserId, visibility } = resolveOwnership(viewer, input, {
+			ownerUserId: null,
+			visibility: 'household'
+		});
+
+		const rows = await sql<MediaRow[]>`
+			insert into ${sql(MEDIA)} (
+				household_id, owner_user_id, visibility, name, media_type, status,
+				genre, streaming_service, release_year, total_seasons,
+				created_by, updated_by
+			) values (
+				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
+				${oneOf(input.mediaType, MEDIA_TYPES, 'type', 'other')},
+				${oneOf(input.status, MEDIA_STATUSES, 'status', 'want_to_watch')},
+				${optionalText(input.genre, 'genre')},
+				${optionalText(input.streamingService, 'streaming service')},
+				${optionalInt(input.releaseYear, 'release year', { min: 1850, max: 2200 })},
+				${optionalInt(input.totalSeasons, 'total seasons', { min: 0 })},
+				${viewer.userId}::uuid, ${viewer.userId}::uuid
+			)
+			returning ${mediaColumns(sql)}
+		`;
+		const row = rows[0];
+		if (!row) throw new Error('insert returned no row');
+		return { ok: true, record: mapMedia(row) };
+	});
+}
+
+export interface MediaItemPatch extends OwnershipInput {
+	name?: unknown;
+	mediaType?: unknown;
+	status?: unknown;
+	genre?: unknown;
+	streamingService?: unknown;
+	releaseYear?: unknown;
+	totalSeasons?: unknown;
+	currentSeason?: unknown;
+	currentEpisode?: unknown;
+	rating?: unknown;
+	whySaved?: unknown;
+	isFavourite?: unknown;
+	watchAgain?: unknown;
+	startedOn?: unknown;
+	finishedOn?: unknown;
+}
+
+/**
+ * The full edit of a title (plan §13, feature 2): every field except
+ * `timesWatched` and `lastWatchedAt`, which are not here on purpose. Both are
+ * history -- the importer's own counts, plus whatever {@link logMediaViewing}
+ * has added since -- and a plain field edit must not be able to overwrite
+ * that history by way of a stray form value. `setMediaStatus` keeps its own
+ * increment-on-watched side effect for the quick queue actions; a status
+ * changed through this full edit is a plain field like any other here, with
+ * no side effect of its own.
+ */
+export function updateMediaItem(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: MediaItemPatch,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<MediaItem>> {
+	return guarded<MediaItem>(async () => {
+		const current = await getMediaItem(sql, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
+
+		const next = {
+			name: patched(patch, 'name', current.name, (v) => requiredText(v, 'name', 300)),
+			mediaType: patched(patch, 'mediaType', current.mediaType, (v) =>
+				oneOf(v, MEDIA_TYPES, 'type', current.mediaType)
+			),
+			status: patched(patch, 'status', current.status, (v) =>
+				oneOf(v, MEDIA_STATUSES, 'status', current.status)
+			),
+			genre: patched(patch, 'genre', current.genre, (v) => optionalText(v, 'genre')),
+			streamingService: patched(patch, 'streamingService', current.streamingService, (v) =>
+				optionalText(v, 'streaming service')
+			),
+			releaseYear: patched(patch, 'releaseYear', current.releaseYear, (v) =>
+				optionalInt(v, 'release year', { min: 1850, max: 2200 })
+			),
+			totalSeasons: patched(patch, 'totalSeasons', current.totalSeasons, (v) =>
+				optionalInt(v, 'total seasons', { min: 0 })
+			),
+			currentSeason: patched(patch, 'currentSeason', current.currentSeason, (v) =>
+				optionalInt(v, 'current season', { min: 0 })
+			),
+			currentEpisode: patched(patch, 'currentEpisode', current.currentEpisode, (v) =>
+				optionalInt(v, 'current episode', { min: 0 })
+			),
+			rating: patched(patch, 'rating', current.rating, (v) =>
+				optionalInt(v, 'rating', { min: 1, max: 5 })
+			),
+			whySaved: patched(patch, 'whySaved', current.whySaved, (v) => optionalText(v, 'why saved')),
+			isFavourite: patched(patch, 'isFavourite', current.isFavourite, (v) => v === true),
+			watchAgain: patched(patch, 'watchAgain', current.watchAgain, (v) => v === true),
+			startedOn: patched(patch, 'startedOn', current.startedOn, (v) =>
+				optionalDay(v, 'started on')
+			),
+			finishedOn: patched(patch, 'finishedOn', current.finishedOn, (v) =>
+				optionalDay(v, 'finished on')
+			)
+		};
+
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+
+		return writeScoped<MediaRow, MediaItem>({
+			sql,
+			table: MEDIA,
+			id,
+			readScope: readableScope(sql, viewer, MEDIA),
+			writeScope: writableScope(sql, viewer, MEDIA),
+			expectedUpdatedAt,
+			assignments: sql`
+				name = ${next.name}, media_type = ${next.mediaType}, status = ${next.status},
+				genre = ${next.genre}, streaming_service = ${next.streamingService},
+				release_year = ${next.releaseYear}, total_seasons = ${next.totalSeasons},
+				current_season = ${next.currentSeason}, current_episode = ${next.currentEpisode},
+				rating = ${next.rating}, why_saved = ${next.whySaved},
+				is_favourite = ${next.isFavourite}, watch_again = ${next.watchAgain},
+				started_on = ${next.startedOn}::date, finished_on = ${next.finishedOn}::date,
+				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
+				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+			columns: mediaColumns(sql),
+			map: mapMedia,
+			mayWrite: writableBy(viewer)
+		});
+	});
+}
+
+/** Archives or restores a title. It leaves /entertainment and search's live
+ *  results and waits in the Archive; its viewing history is untouched. */
+export const setMediaItemArchived = (
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	archived: boolean,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<MediaItem>> =>
+	archiveScoped<MediaRow, MediaItem>({
+		sql,
+		table: MEDIA,
+		viewer,
+		id,
+		archived,
+		expectedUpdatedAt,
+		columns: mediaColumns(sql),
+		map: mapMedia
+	});
+
+/**
+ * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
+ * transaction, so "log a viewing" (an insert plus an update to the same
+ * item, which must not take effect only halfway) is atomic on its own and
+ * still composes inside a caller's transaction (base.ts, rule 3).
+ */
+function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
+}
+
+// ─── per-viewing history ────────────────────────────────────────────────────
+
+export interface MediaViewing {
+	id: string;
+	mediaItemId: string;
+	watchedOn: string;
+	season: number | null;
+	episode: number | null;
+	note: string | null;
+	loggedBy: string | null;
+	createdAt: Date;
+}
+
+interface MediaViewingRow {
+	id: string;
+	media_item_id: string;
+	watched_on: string;
+	season: unknown;
+	episode: unknown;
+	note: string | null;
+	logged_by: string | null;
+	created_at: unknown;
+}
+
+const VIEWINGS = 'media_viewings';
+
+const viewingColumns = (sql: Queryable): Fragment => sql`
+	id, media_item_id, watched_on::text as watched_on, season, episode, note, logged_by, created_at`;
+
+const mapViewing = (row: MediaViewingRow): MediaViewing => ({
+	id: row.id,
+	mediaItemId: row.media_item_id,
+	watchedOn: row.watched_on,
+	season: toIntOrNull(row.season),
+	episode: toIntOrNull(row.episode),
+	note: toTextOrNull(row.note),
+	loggedBy: row.logged_by,
+	createdAt: toDate(row.created_at)
+});
+
+/** Every logged viewing of one title, most recent first. Scoped through the
+ *  title itself (migration 0025's own header): a viewing has no visibility
+ *  of its own, so seeing its history requires being able to see the title. */
+export async function listMediaViewings(
+	sql: Queryable,
+	viewer: Viewer,
+	mediaItemId: string
+): Promise<MediaViewing[]> {
+	if (!isUuid(mediaItemId)) return [];
+	const rows = await sql<MediaViewingRow[]>`
+		select ${viewingColumns(sql)} from ${sql(VIEWINGS)}
+		where media_item_id = ${mediaItemId}::uuid
+		  and exists (
+		      select 1 from ${sql(MEDIA)}
+		      where id = ${mediaItemId}::uuid and ${readableScope(sql, viewer, MEDIA)}
+		  )
+		order by watched_on desc, created_at desc
+	`;
+	return rows.map(mapViewing);
+}
+
+export interface MediaViewingInput {
+	watchedOn?: unknown;
+	season?: unknown;
+	episode?: unknown;
+	note?: unknown;
+}
+
+/**
+ * Logs one viewing of a title (plan §13, feature 3) and keeps the title's own
+ * summary in step: `times_watched` gains one and `last_watched_at` moves
+ * forward to cover it, never backward past a more recent viewing already on
+ * record. Both statements run in one transaction so a failure between them
+ * cannot leave a viewing logged with no count to show for it.
+ *
+ * `times_watched` is only ever added to, never recomputed from a count of
+ * this table's rows: the importer's own figure has no viewing rows behind
+ * it, and counting rows instead would silently erase that history the moment
+ * anyone logged a single new viewing.
+ */
+export function logMediaViewing(
+	sql: Queryable,
+	viewer: Viewer,
+	mediaItemId: string,
+	input: MediaViewingInput
+): Promise<WriteResult<MediaViewing>> {
+	return guarded<MediaViewing>(async () => {
+		if (!isUuid(mediaItemId)) return { ok: false, reason: 'not_found' };
+		const watchedOn = requiredDay(input.watchedOn, 'date watched');
+		const season = optionalInt(input.season, 'season', { min: 0 });
+		const episode = optionalInt(input.episode, 'episode', { min: 0 });
+		const note = optionalText(input.note, 'note');
+		// Noon UTC on the day watched: a stable instant for a value that is
+		// only ever compared to itself and to what is already stored, so the
+		// exact hour does not matter -- only that it lands on the right day
+		// and is never taken from now(), which would misdate a backfilled
+		// viewing of something actually watched last week.
+		const watchedInstant = `${watchedOn}T12:00:00.000Z`;
+
+		return atomically(sql, async (tx) => {
+			const item = await getMediaItem(tx, viewer, mediaItemId);
+			if (!item) return { ok: false, reason: 'not_found' };
+			if (!writableBy(viewer)(item)) return { ok: false, reason: 'forbidden' };
+
+			const rows = await tx<MediaViewingRow[]>`
+				insert into ${tx(VIEWINGS)} (
+					household_id, media_item_id, watched_on, season, episode, note, logged_by
+				)
+				select m.household_id, m.id, ${watchedOn}::date, ${season}, ${episode}, ${note},
+				       ${viewer.userId}::uuid
+				from ${tx(MEDIA)} m
+				where m.id = ${mediaItemId}::uuid and ${writableScope(tx, viewer, 'm')}
+				returning ${viewingColumns(tx)}
+			`;
+			const viewing = rows[0];
+			// The scope is re-checked here in the statement itself rather than
+			// trusted from the read a moment ago -- the same reason writeScoped
+			// (base.ts) puts its own predicate in the UPDATE rather than relying
+			// on an earlier SELECT that a concurrent change could have outrun.
+			if (!viewing) return { ok: false, reason: 'conflict' };
+
+			await tx`
+				update ${tx(MEDIA)} m
+				set times_watched = m.times_watched + 1,
+				    last_watched_at = greatest(
+				        coalesce(m.last_watched_at, ${watchedInstant}::timestamptz),
+				        ${watchedInstant}::timestamptz
+				    ),
+				    updated_at = now(), updated_by = ${viewer.userId}::uuid
+				where m.id = ${mediaItemId}::uuid and ${writableScope(tx, viewer, 'm')}
+			`;
+
+			return { ok: true, record: mapViewing(viewing) };
+		});
+	});
+}
+
+// ─── what should we watch? ──────────────────────────────────────────────────
+
+export interface MediaPickerFilters {
+	mediaType?: MediaType;
+	streamingService?: string;
+}
+
+/**
+ * A random suggestion from what the household has not started yet (plan
+ * §13, feature 4).
+ *
+ * "Not watched yet" is the real `want_to_watch` status (migration 0014), not
+ * an invented reading of `timesWatched === 0`: something dropped partway
+ * through, or already mid-rewatch, is not what "what should we watch"
+ * is asking for.
+ *
+ * The pick happens in JS over every matching row rather than
+ * `order by random() limit 1`, so a test can pin `random` and know exactly
+ * which title comes back (plan's randomness rule) rather than asserting only
+ * that *some* row was returned.
+ */
+export async function pickMediaToWatch(
+	sql: Queryable,
+	viewer: Viewer,
+	filters: MediaPickerFilters = {},
+	random: () => number = Math.random
+): Promise<MediaItem | null> {
+	const rows = await sql<MediaRow[]>`
+		select ${mediaColumns(sql)} from ${sql(MEDIA)}
+		where ${readableScope(sql, viewer, MEDIA)}
+		  and ${liveScope(sql, MEDIA)}
+		  and status = 'want_to_watch'
+		  ${filters.mediaType ? sql`and media_type = ${filters.mediaType}` : sql``}
+		  ${filters.streamingService ? sql`and streaming_service = ${filters.streamingService}` : sql``}
+		order by name asc
+		limit ${MAX_LIMIT}
+	`;
+	if (rows.length === 0) return null;
+	const index = Math.min(rows.length - 1, Math.floor(random() * rows.length));
+	return mapMedia(rows[index]!);
 }
 
 // ─── bills ─────────────────────────────────────────────────────────────────
