@@ -65,6 +65,10 @@ const TABLES = [
 	'library_items',
 	'people',
 	'media_items',
+	// migration 0025: media_viewings carries its own household_id (like
+	// lab_results, not like library_links) but still has to follow the
+	// title it logs a viewing of.
+	'media_viewings',
 	'bills',
 	'prep_tasks',
 	'wishlist_items',
@@ -179,6 +183,7 @@ async function rowsFor(db, table, id) {
 		case 'lab_markers':
 		case 'medical_visits':
 		case 'lab_results':
+		case 'media_viewings':
 			// All carry household_id directly, so one branch serves them.
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'daily_log_health':

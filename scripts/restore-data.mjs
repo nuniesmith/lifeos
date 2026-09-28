@@ -80,6 +80,11 @@ const TABLES = [
 	'library_items',
 	'people',
 	'media_items',
+	// migration 0025: media_item_id needs no special remapping -- ids are
+	// preserved verbatim, so media_viewings only has to land after
+	// media_items, whose id it carries. logged_by is a user reference and is
+	// remapped generically, the same as owner_user_id below.
+	'media_viewings',
 	'bills',
 	'prep_tasks',
 	'wishlist_items',
@@ -140,6 +145,11 @@ const ORDER = [
 	'library_items',
 	'people',
 	'media_items',
+	// migration 0025: media_item_id needs no special remapping -- ids are
+	// preserved verbatim, so media_viewings only has to land after
+	// media_items, whose id it carries. logged_by is a user reference and is
+	// remapped generically, the same as owner_user_id below.
+	'media_viewings',
 	'bills',
 	'prep_tasks',
 	'wishlist_items',
@@ -218,7 +228,7 @@ async function readAndVerifyManifest() {
 function mappedValue(table, column, value, targetOwner) {
 	if (value === null || value === undefined) return value;
 	if (column === 'sha256' && typeof value === 'string') return Buffer.from(value, 'hex');
-	if (['owner_user_id', 'created_by', 'updated_by', 'started_by'].includes(column))
+	if (['owner_user_id', 'created_by', 'updated_by', 'started_by', 'logged_by'].includes(column))
 		return targetOwner;
 	if (table === 'habit_logs' && column === 'user_id') return targetOwner;
 	return value;
