@@ -323,6 +323,42 @@ describe('bill payments', () => {
 		]);
 	});
 
+	it('undoes the payment entered last, even when it was backdated before an earlier entry', async () => {
+		const bill = ok(
+			await createBill(sql, owner, {
+				name: 'Fictional Water',
+				amount: 30,
+				frequency: 'monthly',
+				nextDueOn: '2026-05-01'
+			}),
+			'create'
+		).record;
+		const entered = ok(
+			await recordBillPayment(sql, owner, bill.id, { paidOn: '2026-04-30' }),
+			'the first payment entered'
+		).record;
+		// Catching up on the log: a payment for an EARLIER day, entered second.
+		const backdated = ok(
+			await recordBillPayment(sql, owner, bill.id, { paidOn: '2026-03-31' }),
+			'a backdated payment'
+		).record;
+		expect(backdated.bill.nextDueOn).toBe('2026-07-01');
+
+		// The first entry is no longer the newest link in the due-date chain,
+		// though it is still the newest by date paid.
+		const refused = failed(
+			await deleteBillPayment(sql, owner, bill.id, entered.payment.id),
+			'undo the payment entered first'
+		);
+		expect(refused.reason).toBe('invalid');
+
+		const undone = ok(
+			await deleteBillPayment(sql, owner, bill.id, backdated.payment.id),
+			'undo the payment entered last'
+		).record;
+		expect(undone.nextDueOn).toBe('2026-06-01');
+	});
+
 	it('leaves next_due_on alone when the bill has no frequency, and null forever once one_off is paid', async () => {
 		const irregular = ok(
 			await createBill(sql, owner, { name: 'Fictional Irregular', nextDueOn: '2026-06-01' }),
@@ -513,6 +549,37 @@ describe('savings', () => {
 			'detach the goal'
 		).record;
 		expect(changedGoal.goalId).toBeNull();
+	});
+
+	it('never shows the title of a goal the viewer cannot read, but still counts the money', async () => {
+		const [privateGoal] = await sql<{ id: string }[]>`
+			insert into goals (household_id, owner_user_id, visibility, title, created_by, updated_by)
+			values (${partner.householdId}::uuid, ${partner.userId}::uuid, 'private',
+			        'Fictional Secret Goal', ${partner.userId}::uuid, ${partner.userId}::uuid)
+			returning id
+		`;
+		// Shared with the household (the default), but toward a private goal.
+		const shared = ok(
+			await createSavingsContribution(sql, partner, {
+				title: 'Fictional Shared Transfer',
+				amount: 75,
+				contributedOn: '2026-09-10',
+				goalId: privateGoal!.id
+			}),
+			'create toward their own private goal'
+		).record;
+		expect(shared.goalTitle).toBe('Fictional Secret Goal');
+
+		const [seen] = await listSavingsContributions(sql, owner);
+		expect(seen?.title).toBe('Fictional Shared Transfer');
+		expect(seen?.goalTitle).toBeNull();
+
+		const summary = await savingsSummary(sql, owner, '2026-09-01', '2026-09-30');
+		expect(summary.total).toBe(75);
+		expect(summary.perGoal).toEqual([]);
+		expect((await savingsSummary(sql, partner, '2026-09-01', '2026-09-30')).perGoal).toEqual([
+			{ goalId: privateGoal!.id, goalTitle: 'Fictional Secret Goal', total: 75 }
+		]);
 	});
 
 	it('archives and restores a contribution', async () => {
