@@ -135,6 +135,9 @@ function visit(overrides: Partial<MedicalVisit> = {}): MedicalVisit {
 		familyMember: null,
 		notes: null,
 		dailyLogId: null,
+		providerPersonId: null,
+		locationPlaceId: null,
+		petId: null,
 		...overrides
 	};
 }

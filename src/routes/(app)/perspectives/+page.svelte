@@ -1,13 +1,44 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { Badge, Button, Card, EmptyState, Input, PageHeader, appPath } from '$lib/components';
+	import {
+		Badge,
+		Button,
+		Card,
+		Checkbox,
+		EmptyState,
+		Input,
+		List,
+		ListRow,
+		PageHeader,
+		Sheet,
+		Textarea,
+		appPath
+	} from '$lib/components';
 
 	let { data, form } = $props();
+
+	type Assessment = (typeof data.assessments)[number];
 
 	/** Low scores are the point, so they are the ones that get the colour. */
 	const tone = (rating: number): 'crit' | 'warn' | 'ok' =>
 		rating <= 3 ? 'crit' : rating <= 6 ? 'warn' : 'ok';
+
+	let editing = $state<Assessment | null>(null);
+	let sheetOpen = $state(false);
+	// Mirrored into their own bound state for the same reason
+	// yearly-review/+page.svelte's event sheet does: `Checkbox` has no `name`
+	// of its own, and a plain `value` is not trusted to pick the right
+	// `<option>` on a native, unbound `<select>`.
+	let editPriority = $state(false);
+	let editAreaId = $state('');
+
+	function startEdit(assessment: Assessment) {
+		editing = assessment;
+		editPriority = assessment.isPriority;
+		editAreaId = assessment.areaId ?? '';
+		sheetOpen = true;
+	}
 </script>
 
 <svelte:head><title>Perspectives · LifeOS</title></svelte:head>
@@ -77,7 +108,10 @@
 				<li>
 					<div class="row">
 						<span class="focus">{a.focus}</span>
-						<Badge tone={tone(a.rating)}>{a.rating}/10</Badge>
+						<div class="row-actions">
+							<Badge tone={tone(a.rating)}>{a.rating}/10</Badge>
+							<Button size="sm" variant="ghost" onclick={() => startEdit(a)}>Edit</Button>
+						</div>
 					</div>
 					<!-- The bar repeats the number rather than replacing it: the
 					     score is the fact, the length is the comparison. -->
@@ -91,7 +125,104 @@
 			{/each}
 		</ul>
 	{/if}
+
+	{#if data.archivedAssessments.length > 0}
+		<section aria-labelledby="archived-heading">
+			<h2 id="archived-heading" class="subsection-title">Archived</h2>
+			<Card flush>
+				<List label="Archived ratings">
+					{#each data.archivedAssessments as a (a.id)}
+						<ListRow
+							title={a.focus}
+							meta={[a.areaName, a.period, a.year ? String(a.year) : null]
+								.filter(Boolean)
+								.join(' · ')}
+							muted
+						>
+							{#snippet trail()}
+								<form method="POST" action="?/archive" use:enhance>
+									<input type="hidden" name="id" value={a.id} />
+									<input type="hidden" name="archived" value="false" />
+									<Button type="submit" size="sm" aria-label={`Restore ${a.focus}`}>Restore</Button>
+								</form>
+							{/snippet}
+						</ListRow>
+					{/each}
+				</List>
+			</Card>
+		</section>
+	{/if}
 </div>
+
+<Sheet bind:open={sheetOpen} title="Edit rating">
+	{#if editing}
+		{@const a = editing}
+		<form
+			method="POST"
+			action="?/update"
+			class="edit-form"
+			use:enhance={() => {
+				return async ({ result, update }) => {
+					await update();
+					if (result.type === 'success') sheetOpen = false;
+				};
+			}}
+		>
+			<input type="hidden" name="id" value={a.id} />
+			<input type="hidden" name="expectedUpdatedAt" value={a.updatedAt.toISOString()} />
+
+			{#if form?.action === 'update' && form.error}
+				<p class="notice error" role="alert">{form.error}</p>
+			{/if}
+
+			<Input label="Focus" name="focus" required value={a.focus} />
+			<div class="grid-2">
+				<Input
+					label="Out of 10"
+					name="rating"
+					type="number"
+					min="1"
+					max="10"
+					required
+					value={String(a.rating)}
+				/>
+				<Input label="Year" name="year" type="number" value={a.year ? String(a.year) : ''} />
+			</div>
+			<Input label="When" name="period" placeholder="Start of Year" value={a.period ?? ''} />
+			<label class="who">
+				<span class="label">Area</span>
+				<select name="areaId" bind:value={editAreaId}>
+					<option value="">No area</option>
+					{#each data.areas as area (area.id)}<option value={area.id}>{area.name}</option>{/each}
+				</select>
+			</label>
+			<Checkbox label="This is a priority area" bind:checked={editPriority} />
+			<input type="hidden" name="isPriority" value={editPriority ? 'on' : ''} />
+			<Textarea label="Notes" name="notes" rows={3} value={a.notes ?? ''} />
+
+			<div class="actions">
+				<Button variant="ghost" type="button" onclick={() => (sheetOpen = false)}>Cancel</Button>
+				<Button type="submit" variant="primary">Save changes</Button>
+			</div>
+		</form>
+
+		<form
+			method="POST"
+			action="?/archive"
+			class="archive-form"
+			use:enhance={() => {
+				return async ({ update }) => {
+					await update();
+					sheetOpen = false;
+				};
+			}}
+		>
+			<input type="hidden" name="id" value={a.id} />
+			<input type="hidden" name="archived" value="true" />
+			<Button type="submit" variant="danger" size="sm">Archive this rating</Button>
+		</form>
+	{/if}
+</Sheet>
 
 <style>
 	.stack {
@@ -173,6 +304,11 @@
 		align-items: center;
 		justify-content: space-between;
 	}
+	.row-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+	}
 	.focus {
 		font-size: var(--fs-base);
 		font-weight: 620;
@@ -207,5 +343,31 @@
 		color: var(--c-crit);
 		border: 1px solid color-mix(in srgb, var(--c-crit) 25%, transparent);
 		background: color-mix(in srgb, var(--c-crit) 8%, transparent);
+	}
+	.subsection-title {
+		margin: 0 0 var(--sp-3);
+		font-size: var(--fs-base);
+		font-weight: 620;
+		color: var(--c-text-muted);
+	}
+	.edit-form {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-4);
+	}
+	.grid-2 {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--sp-3);
+	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--sp-2);
+	}
+	.archive-form {
+		margin-top: var(--sp-2);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--c-border);
 	}
 </style>

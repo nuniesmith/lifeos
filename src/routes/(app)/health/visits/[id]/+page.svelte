@@ -43,6 +43,47 @@
 	const symptomOptions = $derived(
 		data.pickableSymptoms.map((term) => ({ value: term.id, label: term.name }))
 	);
+
+	// Bumped after a successful save to draw the Details form afresh, the same
+	// fix as `addFormKey` on /health/measurements: this form carries three
+	// <Select>s now, and a plain `update()` resets a native <select> back to
+	// whichever option the page was first served with rather than the one just
+	// saved -- remounting under a fresh key reads the current value instead of
+	// fighting the browser's own reset.
+	let detailsFormKey = $state(0);
+
+	const providerOptions = $derived([
+		{ value: '', label: 'No provider linked' },
+		...data.providers.map((p) => ({ value: p.id, label: p.name }))
+	]);
+	const placeOptions = $derived([
+		{ value: '', label: 'No place linked' },
+		...data.places.map((p) => ({ value: p.id, label: p.name }))
+	]);
+	const petOptions = $derived([
+		{ value: '', label: 'No pet linked' },
+		...data.pets.map((p) => ({ value: p.id, label: p.name }))
+	]);
+
+	// The header's own summary: the linked record's name when there is one,
+	// the imported free text otherwise -- linking never rewrites that text, so
+	// both are read here rather than one being derived from the other. A link
+	// to /people/[id] is only ever shown alongside a NAME that came from a
+	// link, never over the plain imported text, which names someone this
+	// household may not have a `people` row for at all.
+	const personLink = (id: string | null) => (id ? `/people/${id}` : null);
+	const providerDisplay = $derived(data.linked.providerName ?? data.visit.provider);
+	const providerHref = $derived(
+		data.linked.providerName ? personLink(data.visit.providerPersonId) : null
+	);
+	const locationDisplay = $derived(data.linked.locationName ?? data.visit.location);
+	const locationHref = $derived(
+		data.linked.locationName ? personLink(data.visit.locationPlaceId) : null
+	);
+	const petHref = $derived(data.linked.petName ? personLink(data.visit.petId) : null);
+
+	const addedFeedback = (action: 'addProvider' | 'addPlace' | 'addPet') =>
+		form && form.action === action && 'addedId' in form ? 'Added.' : undefined;
 </script>
 
 <svelte:head><title>{data.visit.reason} · LifeOS</title></svelte:head>
@@ -51,7 +92,21 @@
 	{#snippet meta()}
 		{#if data.visit.visitType}<Badge tone="accent">{data.visit.visitType}</Badge>{/if}
 		{#if archived}<Badge tone="neutral">Archived</Badge>{/if}
-		{#if data.visit.location}<span>{data.visit.location}</span>{/if}
+		{#if providerDisplay}
+			<span>
+				{#if providerHref}<a href={resolve(appPath(providerHref))}>{providerDisplay}</a
+					>{:else}{providerDisplay}{/if}
+			</span>
+		{/if}
+		{#if locationDisplay}
+			<span>
+				{#if locationHref}<a href={resolve(appPath(locationHref))}>{locationDisplay}</a
+					>{:else}{locationDisplay}{/if}
+			</span>
+		{/if}
+		{#if petHref}
+			<span><a href={resolve(appPath(petHref))}>{data.linked.petName}</a></span>
+		{/if}
 	{/snippet}
 </PageHeader>
 
@@ -64,54 +119,132 @@
 <div class="columns">
 	<div class="column">
 		<Card title="Details">
-			<form method="POST" action="?/saveVisit" class="edit" use:enhance>
-				<input type="hidden" name="updatedAt" value={data.visit.updatedAt.toISOString()} />
-				<Input label="Reason" name="reason" value={data.visit.reason} required />
-				<div class="grid">
+			{#key detailsFormKey}
+				<form
+					method="POST"
+					action="?/saveVisit"
+					class="edit"
+					use:enhance={() => {
+						return async ({ result, update }) => {
+							await update();
+							if (result.type === 'success') detailsFormKey += 1;
+						};
+					}}
+				>
+					<input type="hidden" name="updatedAt" value={data.visit.updatedAt.toISOString()} />
+					<Input label="Reason" name="reason" value={data.visit.reason} required />
+					<div class="grid">
+						<Input
+							label="Date"
+							name="visitDate"
+							type="date"
+							value={dateValue(data.visit.visitAt)}
+							required
+						/>
+						<Input
+							label="Time"
+							name="visitTime"
+							type="time"
+							value={timeValue(data.visit.visitAt)}
+							required
+						/>
+					</div>
+					<div class="grid">
+						<Input label="Visit type" name="visitType" value={data.visit.visitType ?? ''} />
+						<Input label="Provider" name="provider" value={data.visit.provider ?? ''} />
+						<Input label="Location" name="location" value={data.visit.location ?? ''} />
+					</div>
+
+					<!--
+						Independent of the two free-text fields above: linking never
+						rewrites the imported words (migration 0028's own header), so a
+						visit can carry both an unlinked "Provider" string and a linked
+						person, and saving one never touches the other.
+					-->
+					<div class="grid">
+						<Select
+							label="Linked provider"
+							name="providerPersonId"
+							options={providerOptions}
+							value={data.visit.providerPersonId ?? ''}
+						/>
+						<Select
+							label="Linked place"
+							name="locationPlaceId"
+							options={placeOptions}
+							value={data.visit.locationPlaceId ?? ''}
+						/>
+						<Select
+							label="Linked pet"
+							name="petId"
+							options={petOptions}
+							value={data.visit.petId ?? ''}
+						/>
+					</div>
+
+					<div class="grid">
+						<Input
+							label="Cost"
+							name="amount"
+							type="number"
+							step="any"
+							value={data.visit.amount?.toString() ?? ''}
+						/>
+						<Input label="Currency" name="currency" value={data.visit.currency} />
+						<Input label="Paid by" name="paidBy" value={data.visit.paidBy ?? ''} />
+					</div>
 					<Input
-						label="Date"
-						name="visitDate"
-						type="date"
-						value={dateValue(data.visit.visitAt)}
-						required
+						label="Requirements"
+						name="requirements"
+						placeholder="Bloodwork, Fasting"
+						hint="Comma-separated"
+						value={data.visit.requirements.join(', ')}
 					/>
-					<Input
-						label="Time"
-						name="visitTime"
-						type="time"
-						value={timeValue(data.visit.visitAt)}
-						required
-					/>
-				</div>
-				<div class="grid">
-					<Input label="Visit type" name="visitType" value={data.visit.visitType ?? ''} />
-					<Input label="Provider" name="provider" value={data.visit.provider ?? ''} />
-					<Input label="Location" name="location" value={data.visit.location ?? ''} />
-				</div>
-				<div class="grid">
-					<Input
-						label="Cost"
-						name="amount"
-						type="number"
-						step="any"
-						value={data.visit.amount?.toString() ?? ''}
-					/>
-					<Input label="Currency" name="currency" value={data.visit.currency} />
-					<Input label="Paid by" name="paidBy" value={data.visit.paidBy ?? ''} />
-				</div>
-				<Input
-					label="Requirements"
-					name="requirements"
-					placeholder="Bloodwork, Fasting"
-					hint="Comma-separated"
-					value={data.visit.requirements.join(', ')}
-				/>
-				<Input label="Who it was for" name="familyMember" value={data.visit.familyMember ?? ''} />
-				<Textarea label="Notes" name="notes" rows={3} value={data.visit.notes ?? ''} />
-				<div>
-					<Button type="submit" variant="primary">Save</Button>
-				</div>
-			</form>
+					<Input label="Who it was for" name="familyMember" value={data.visit.familyMember ?? ''} />
+					<Textarea label="Notes" name="notes" rows={3} value={data.visit.notes ?? ''} />
+
+					<div>
+						<Button type="submit" variant="primary">Save</Button>
+					</div>
+				</form>
+			{/key}
+
+			<!--
+				"Add a new one" inline, reusing /people's own creation code
+				(createPerson): each mini-form adds a person of the one `kind` its
+				button names, then the picker above lists it once the page
+				revalidates. It is not auto-selected -- see the report for why this
+				was kept simple rather than also wiring a client-side auto-select.
+			-->
+			<div class="add-links">
+				<form method="POST" action="?/addProvider" use:enhance class="add-link">
+					<div class="grow">
+						<Input label="New provider" labelHidden name="name" placeholder="Add a provider" />
+					</div>
+					<Button type="submit" size="sm">Add provider</Button>
+					{#if addedFeedback('addProvider')}
+						<span class="added-ok">{addedFeedback('addProvider')}</span>
+					{/if}
+				</form>
+				<form method="POST" action="?/addPlace" use:enhance class="add-link">
+					<div class="grow">
+						<Input label="New place" labelHidden name="name" placeholder="Add a place" />
+					</div>
+					<Button type="submit" size="sm">Add place</Button>
+					{#if addedFeedback('addPlace')}
+						<span class="added-ok">{addedFeedback('addPlace')}</span>
+					{/if}
+				</form>
+				<form method="POST" action="?/addPet" use:enhance class="add-link">
+					<div class="grow">
+						<Input label="New pet" labelHidden name="name" placeholder="Add a pet" />
+					</div>
+					<Button type="submit" size="sm">Add pet</Button>
+					{#if addedFeedback('addPet')}
+						<span class="added-ok">{addedFeedback('addPet')}</span>
+					{/if}
+				</form>
+			</div>
 		</Card>
 
 		<Card title="Lab results from this visit" flush>
@@ -221,6 +354,28 @@
 		display: grid;
 		gap: var(--sp-3);
 		grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+	}
+	.add-links {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-2);
+		margin-top: var(--sp-4);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--c-border);
+	}
+	.add-link {
+		display: flex;
+		gap: var(--sp-2);
+		align-items: flex-end;
+		flex-wrap: wrap;
+	}
+	.add-link .grow {
+		flex: 1;
+		min-width: 9rem;
+	}
+	.added-ok {
+		color: var(--c-ok);
+		font-size: var(--fs-xs);
 	}
 	.chips {
 		display: flex;

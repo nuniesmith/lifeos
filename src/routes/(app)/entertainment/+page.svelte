@@ -32,6 +32,10 @@
 
 <PageHeader title="Entertainment" description="What is on, what is queued, what was good.">
 	{#snippet meta()}<span>{data.watching.length} on the go</span>{/snippet}
+	{#snippet actions()}
+		<Button href="/entertainment/pick" icon="search">What should we watch?</Button>
+		<Button href="/entertainment/new" icon="plus">New title</Button>
+	{/snippet}
 </PageHeader>
 
 {#if form?.error}<p class="notice error" role="alert">{form.error}</p>{/if}
@@ -49,7 +53,7 @@
 			{:else}
 				<List label="Currently watching">
 					{#each data.watching as item (item.id)}
-						<ListRow title={item.name} meta={meta(item)}>
+						<ListRow title={item.name} meta={meta(item)} href={`/entertainment/${item.id}`}>
 							{#snippet lead()}
 								<CoverThumb cover={item.cover} />
 							{/snippet}
@@ -82,7 +86,7 @@
 			{:else}
 				<List label="Up next">
 					{#each data.queued as item (item.id)}
-						<ListRow title={item.name} meta={meta(item)}>
+						<ListRow title={item.name} meta={meta(item)} href={`/entertainment/${item.id}`}>
 							{#snippet lead()}
 								<CoverThumb cover={item.cover} />
 							{/snippet}
@@ -106,7 +110,7 @@
 			<Card flush>
 				<List label="Seen">
 					{#each data.watched as item (item.id)}
-						<ListRow title={item.name} meta={meta(item)} muted>
+						<ListRow title={item.name} meta={meta(item)} href={`/entertainment/${item.id}`} muted>
 							{#snippet lead()}
 								<CoverThumb cover={item.cover} />
 							{/snippet}

@@ -5,15 +5,20 @@
 		Badge,
 		Button,
 		Card,
+		Checkbox,
 		EmptyState,
 		Input,
 		List,
 		ListRow,
 		PageHeader,
+		Sheet,
+		Textarea,
 		appPath
 	} from '$lib/components';
 
 	let { data, form } = $props();
+
+	type EventRow = (typeof data.events)[number];
 
 	const stats = $derived([
 		{ label: 'Days logged', value: data.review.daysLogged },
@@ -23,6 +28,26 @@
 		{ label: 'Projects finished', value: data.review.projectsCompleted },
 		{ label: 'Moments kept', value: data.review.events }
 	]);
+
+	let editingEvent = $state<EventRow | null>(null);
+	let eventSheetOpen = $state(false);
+	// `Checkbox` has no `name` of its own (unlike Input/Select, it does not
+	// spread HTML attributes) — see health/medications/+page.svelte's
+	// `fRunningLow` for the same shape — so its checked state is mirrored into
+	// a hidden input for the form to submit, and needs its own bound state
+	// rather than reading `editingEvent.isFavourite` directly. The area select
+	// is bound for the same reason a plain `value` was not trusted to pick the
+	// right `<option>` on a native, unbound `<select>` — nothing else in this
+	// codebase relies on that, so this does not either.
+	let editFavourite = $state(false);
+	let editAreaId = $state('');
+
+	function startEditEvent(event: EventRow) {
+		editingEvent = event;
+		editFavourite = event.isFavourite;
+		editAreaId = event.areaId ?? '';
+		eventSheetOpen = true;
+	}
 </script>
 
 <svelte:head><title>Reflect &amp; Reset · LifeOS</title></svelte:head>
@@ -101,7 +126,11 @@
 						{#each data.events as event (event.id)}
 							<ListRow title={event.title} meta={event.onDate}>
 								{#snippet trail()}
+									{#if event.isFavourite}<Badge tone="accent">Favourite</Badge>{/if}
 									{#if event.areaName}<Badge tone="neutral">{event.areaName}</Badge>{/if}
+									<Button size="sm" variant="ghost" onclick={() => startEditEvent(event)}>
+										Edit
+									</Button>
 								{/snippet}
 							</ListRow>
 						{/each}
@@ -109,6 +138,29 @@
 				{/if}
 			</Card>
 		</div>
+
+		{#if data.archivedEvents.length > 0}
+			<div class="spaced">
+				<h3 class="subsection-title">Archived events</h3>
+				<Card flush>
+					<List label="Archived events">
+						{#each data.archivedEvents as event (event.id)}
+							<ListRow title={event.title} meta={event.onDate} muted>
+								{#snippet trail()}
+									<form method="POST" action="?/archiveEvent" use:enhance>
+										<input type="hidden" name="id" value={event.id} />
+										<input type="hidden" name="archived" value="false" />
+										<Button type="submit" size="sm" aria-label={`Restore ${event.title}`}>
+											Restore
+										</Button>
+									</form>
+								{/snippet}
+							</ListRow>
+						{/each}
+					</List>
+				</Card>
+			</div>
+		{/if}
 	</section>
 
 	{#if data.assessments.length > 0}
@@ -136,6 +188,66 @@
 	</p>
 </div>
 
+<Sheet bind:open={eventSheetOpen} title="Edit event">
+	{#if editingEvent}
+		{@const ev = editingEvent}
+		<form
+			method="POST"
+			action="?/updateEvent"
+			class="edit-form"
+			use:enhance={() => {
+				return async ({ result, update }) => {
+					await update();
+					if (result.type === 'success') eventSheetOpen = false;
+				};
+			}}
+		>
+			<input type="hidden" name="id" value={ev.id} />
+			<input type="hidden" name="expectedUpdatedAt" value={ev.updatedAt.toISOString()} />
+
+			{#if form?.action === 'updateEvent' && form.error}
+				<p class="notice error" role="alert">{form.error}</p>
+			{/if}
+
+			<Input label="Something worth remembering" name="title" required value={ev.title} />
+			<Input label="When" name="onDate" type="date" required value={ev.onDate} />
+			<label class="who">
+				<span class="label">Area</span>
+				<select name="areaId" bind:value={editAreaId}>
+					<option value="">No area</option>
+					{#each data.areas as area (area.id)}<option value={area.id}>{area.name}</option>{/each}
+				</select>
+			</label>
+			<Checkbox label="Favourite" bind:checked={editFavourite} />
+			<input type="hidden" name="isFavourite" value={editFavourite ? 'on' : ''} />
+			<Textarea label="Notes" name="notes" rows={3} value={ev.notes ?? ''} />
+
+			<div class="actions">
+				<Button variant="ghost" type="button" onclick={() => (eventSheetOpen = false)}>
+					Cancel
+				</Button>
+				<Button type="submit" variant="primary">Save changes</Button>
+			</div>
+		</form>
+
+		<form
+			method="POST"
+			action="?/archiveEvent"
+			class="archive-form"
+			use:enhance={() => {
+				return async ({ update }) => {
+					await update();
+					eventSheetOpen = false;
+				};
+			}}
+		>
+			<input type="hidden" name="id" value={ev.id} />
+			<input type="hidden" name="archived" value="true" />
+			<Button type="submit" variant="danger" size="sm">Archive this event</Button>
+		</form>
+	{/if}
+</Sheet>
+
 <style>
 	.stack {
 		display: flex;
@@ -146,6 +258,12 @@
 		margin: 0 0 var(--sp-3);
 		font-size: var(--fs-lg);
 		font-weight: 650;
+	}
+	.subsection-title {
+		margin: 0 0 var(--sp-3);
+		font-size: var(--fs-base);
+		font-weight: 620;
+		color: var(--c-text-muted);
 	}
 	.spaced {
 		margin-top: var(--sp-3);
@@ -213,6 +331,21 @@
 	.who .label {
 		color: var(--c-text-muted);
 		font-size: var(--fs-sm);
+	}
+	.edit-form {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-4);
+	}
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--sp-2);
+	}
+	.archive-form {
+		margin-top: var(--sp-2);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--c-border);
 	}
 	select {
 		min-height: var(--tap);

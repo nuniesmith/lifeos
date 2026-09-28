@@ -3,6 +3,7 @@ import type { Viewer } from '../auth/authz';
 import { toDate } from '../db/coerce';
 import {
 	InvalidInput,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -615,6 +616,15 @@ export interface MedicalVisit extends RecordBase {
 	familyMember: string | null;
 	notes: string | null;
 	dailyLogId: string | null;
+	/**
+	 * The person/place/pet this visit links to (migration 0028), each a
+	 * `people.id` of the matching `kind`. Independent of the free-text
+	 * `provider`/`location` above -- see that migration's header for why
+	 * linking never rewrites the imported words.
+	 */
+	providerPersonId: string | null;
+	locationPlaceId: string | null;
+	petId: string | null;
 }
 
 interface MedicalVisitRow extends BaseRow {
@@ -630,6 +640,9 @@ interface MedicalVisitRow extends BaseRow {
 	family_member: string | null;
 	notes: string | null;
 	daily_log_id: string | null;
+	provider_person_id: string | null;
+	location_place_id: string | null;
+	pet_id: string | null;
 }
 
 const VISITS = 'medical_visits';
@@ -637,7 +650,8 @@ const VISITS = 'medical_visits';
 const visitColumns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	reason, visit_at, visit_type, provider, location, amount, currency, paid_by,
-	requirements, family_member, notes, daily_log_id`;
+	requirements, family_member, notes, daily_log_id,
+	provider_person_id, location_place_id, pet_id`;
 
 function mapVisit(row: MedicalVisitRow): MedicalVisit {
 	return {
@@ -656,7 +670,10 @@ function mapVisit(row: MedicalVisitRow): MedicalVisit {
 		requirements: fromStringArray(row.requirements),
 		familyMember: toTextOrNull(row.family_member),
 		notes: toTextOrNull(row.notes),
-		dailyLogId: row.daily_log_id
+		dailyLogId: row.daily_log_id,
+		providerPersonId: row.provider_person_id,
+		locationPlaceId: row.location_place_id,
+		petId: row.pet_id
 	};
 }
 
@@ -719,6 +736,18 @@ export interface MedicalVisitInput extends OwnershipInput {
 	requirements?: unknown;
 	familyMember?: unknown;
 	notes?: unknown;
+	/**
+	 * A `people.id`, chosen on the visit's edit form (migration 0028) --
+	 * `updateMedicalVisit` is the only writer that reads these three.
+	 * `createMedicalVisit` does not: a visit is logged from the list page's
+	 * quick-add form, which has no picker, so there is nothing yet to link.
+	 * Absent leaves the current link untouched; `''`/`null` clears it;
+	 * anything else must resolve to a live, readable `people` row of the
+	 * right `kind` or the whole write is refused -- see `resolveVisitLink`.
+	 */
+	providerPersonId?: unknown;
+	locationPlaceId?: unknown;
+	petId?: unknown;
 }
 
 /**
@@ -870,6 +899,60 @@ export function createMedicalVisit(
 	});
 }
 
+/** The `people` table, read directly rather than through collections.ts's own repository functions (plan §13, PACK3-002). */
+const PEOPLE = 'people';
+
+/** Table `provider_person_id`/`location_place_id`/`pet_id` each require (migration 0028). */
+type VisitLinkKind = 'person' | 'place' | 'pet';
+
+/** What {@link resolveVisitLink} decides: either the id to write, or a refusal. */
+type LinkResolution = { ok: true; id: string | null } | { ok: false };
+
+/**
+ * Resolves one of a visit's three links -- provider, location, pet -- against
+ * a caller's patch, for use inside the same transaction as the UPDATE that
+ * writes it.
+ *
+ * A caller can ask for exactly one of three things: leave the link as it is
+ * (the key is absent from `patch` -- `current` passes straight through),
+ * clear it (the key is present but empty), or point it at a specific person
+ * (the key names an id). Only the third case touches the database, and the
+ * query that does is the entire check: household, live, and the `kind` this
+ * role requires, all in one WHERE clause, matching `readableScope`'s own rule
+ * that authorization is SQL the database enforces, never a filter over a row
+ * already fetched into JS. An id that fails any part of that -- wrong
+ * household, wrong kind, archived, or private to the other member -- comes
+ * back as "no such row" and nothing else, so a caller cannot tell "does not
+ * exist" apart from "exists but is not yours to see". The caller turns that
+ * into the same `not_found` an unreadable id gets everywhere else in this
+ * module, refusing the whole write rather than silently dropping the link:
+ * unlike `createLabResult`'s optional `medicalVisitId`, a link the edit form's
+ * own picker just offered is never a guess, so an id that does not resolve
+ * means something is wrong and the save must say so.
+ */
+async function resolveVisitLink(
+	sql: Queryable,
+	viewer: Viewer,
+	patch: object,
+	key: string,
+	current: string | null,
+	kind: VisitLinkKind
+): Promise<LinkResolution> {
+	if (!(key in patch)) return { ok: true, id: current };
+	const candidate = optionalId((patch as Record<string, unknown>)[key], key);
+	if (candidate === null) return { ok: true, id: null };
+	if (!isUuid(candidate)) return { ok: false };
+
+	const [row] = await sql<{ id: string }[]>`
+		select id from ${sql(PEOPLE)}
+		where id = ${candidate}::uuid
+		  and ${readableScope(sql, viewer, PEOPLE)}
+		  and kind = ${kind}
+		  and archived_at is null
+	`;
+	return row ? { ok: true, id: row.id } : { ok: false };
+}
+
 export function updateMedicalVisit(
 	sql: Queryable,
 	viewer: Viewer,
@@ -877,71 +960,100 @@ export function updateMedicalVisit(
 	patch: MedicalVisitInput,
 	expectedUpdatedAt?: Date | string
 ): Promise<WriteResult<MedicalVisit>> {
-	return guarded<MedicalVisit>(async () => {
-		const current = await getMedicalVisit(sql, viewer, id);
-		if (!current) return { ok: false, reason: 'not_found' };
+	return guarded<MedicalVisit>(() =>
+		atomically(sql, async (tx) => {
+			const current = await getMedicalVisit(tx, viewer, id);
+			if (!current) return { ok: false, reason: 'not_found' };
 
-		// `visitAt` is one instant made of two form fields. Each is `patched`
-		// independently against the CURRENT wall-clock day/time (not the raw
-		// instant -- see `instantToWallClock`), so a save that touches only one
-		// of them still recombines correctly with the other's existing value,
-		// the same as every other field below.
-		const timeZone = await householdTimeZone(sql, viewer.householdId);
-		const currentWall = instantToWallClock(current.visitAt, timeZone);
-		const requiredWallPart = (field: string) => (v: unknown) => {
-			if (typeof v !== 'string' || !v.trim()) throw new InvalidInput(`${field} is required`);
-			return v.trim();
-		};
-		const nextDay = patched(patch, 'visitDate', currentWall.day, requiredWallPart('date'));
-		const nextTime = patched(patch, 'visitTime', currentWall.time, requiredWallPart('time'));
-		const visitAt = requiredInstant(nextDay, nextTime, timeZone);
+			// The three links are resolved before anything else: a bad one refuses
+			// the whole save, and `planMeal` (./food.ts) is the precedent for
+			// checking first so a refusal leaves nothing behind, not even the
+			// plain-field changes below.
+			const provider = await resolveVisitLink(
+				tx,
+				viewer,
+				patch,
+				'providerPersonId',
+				current.providerPersonId,
+				'person'
+			);
+			if (!provider.ok) return { ok: false, reason: 'not_found' };
+			const place = await resolveVisitLink(
+				tx,
+				viewer,
+				patch,
+				'locationPlaceId',
+				current.locationPlaceId,
+				'place'
+			);
+			if (!place.ok) return { ok: false, reason: 'not_found' };
+			const pet = await resolveVisitLink(tx, viewer, patch, 'petId', current.petId, 'pet');
+			if (!pet.ok) return { ok: false, reason: 'not_found' };
 
-		const next = {
-			reason: patched(patch, 'reason', current.reason, (v) => requiredText(v, 'reason', 300)),
-			visitAt,
-			visitType: patched(patch, 'visitType', current.visitType, (v) =>
-				optionalText(v, 'visit type')
-			),
-			provider: patched(patch, 'provider', current.provider, (v) => optionalText(v, 'provider')),
-			location: patched(patch, 'location', current.location, (v) => optionalText(v, 'location')),
-			amount: patched(patch, 'amount', current.amount, (v) => optionalNumber(v, 'cost')),
-			currency: patched(patch, 'currency', current.currency, optionalCurrency),
-			paidBy: patched(patch, 'paidBy', current.paidBy, (v) => optionalText(v, 'paid by')),
-			requirements: patched(patch, 'requirements', current.requirements, toStringArray),
-			familyMember: patched(patch, 'familyMember', current.familyMember, (v) =>
-				optionalText(v, 'family member')
-			),
-			notes: patched(patch, 'notes', current.notes, (v) => optionalText(v, 'notes'))
-		};
-		if (next.amount !== null && next.amount < 0) {
-			throw new InvalidInput('cost must not be negative');
-		}
-		const ownership = resolveOwnership(viewer, patch, {
-			ownerUserId: current.ownerUserId,
-			visibility: current.visibility
-		});
+			// `visitAt` is one instant made of two form fields. Each is `patched`
+			// independently against the CURRENT wall-clock day/time (not the raw
+			// instant -- see `instantToWallClock`), so a save that touches only one
+			// of them still recombines correctly with the other's existing value,
+			// the same as every other field below.
+			const timeZone = await householdTimeZone(tx, viewer.householdId);
+			const currentWall = instantToWallClock(current.visitAt, timeZone);
+			const requiredWallPart = (field: string) => (v: unknown) => {
+				if (typeof v !== 'string' || !v.trim()) throw new InvalidInput(`${field} is required`);
+				return v.trim();
+			};
+			const nextDay = patched(patch, 'visitDate', currentWall.day, requiredWallPart('date'));
+			const nextTime = patched(patch, 'visitTime', currentWall.time, requiredWallPart('time'));
+			const visitAt = requiredInstant(nextDay, nextTime, timeZone);
 
-		return writeScoped<MedicalVisitRow, MedicalVisit>({
-			sql,
-			table: VISITS,
-			id,
-			readScope: readableScope(sql, viewer, VISITS),
-			writeScope: writableScope(sql, viewer, VISITS),
-			expectedUpdatedAt,
-			assignments: sql`
-				reason = ${next.reason}, visit_at = ${next.visitAt}::timestamptz,
-				visit_type = ${next.visitType}, provider = ${next.provider},
-				location = ${next.location}, amount = ${next.amount}::numeric,
-				currency = ${next.currency}, paid_by = ${next.paidBy},
-				owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
-				requirements = ${next.requirements}::text[], family_member = ${next.familyMember},
-				notes = ${next.notes},
-				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
-			columns: visitColumns(sql),
-			map: mapVisit,
-			mayWrite: writableBy(viewer)
-		});
-	});
+			const next = {
+				reason: patched(patch, 'reason', current.reason, (v) => requiredText(v, 'reason', 300)),
+				visitAt,
+				visitType: patched(patch, 'visitType', current.visitType, (v) =>
+					optionalText(v, 'visit type')
+				),
+				provider: patched(patch, 'provider', current.provider, (v) => optionalText(v, 'provider')),
+				location: patched(patch, 'location', current.location, (v) => optionalText(v, 'location')),
+				amount: patched(patch, 'amount', current.amount, (v) => optionalNumber(v, 'cost')),
+				currency: patched(patch, 'currency', current.currency, optionalCurrency),
+				paidBy: patched(patch, 'paidBy', current.paidBy, (v) => optionalText(v, 'paid by')),
+				requirements: patched(patch, 'requirements', current.requirements, toStringArray),
+				familyMember: patched(patch, 'familyMember', current.familyMember, (v) =>
+					optionalText(v, 'family member')
+				),
+				notes: patched(patch, 'notes', current.notes, (v) => optionalText(v, 'notes'))
+			};
+			if (next.amount !== null && next.amount < 0) {
+				throw new InvalidInput('cost must not be negative');
+			}
+			const ownership = resolveOwnership(viewer, patch, {
+				ownerUserId: current.ownerUserId,
+				visibility: current.visibility
+			});
+
+			return writeScoped<MedicalVisitRow, MedicalVisit>({
+				sql: tx,
+				table: VISITS,
+				id,
+				readScope: readableScope(tx, viewer, VISITS),
+				writeScope: writableScope(tx, viewer, VISITS),
+				expectedUpdatedAt,
+				assignments: tx`
+					reason = ${next.reason}, visit_at = ${next.visitAt}::timestamptz,
+					visit_type = ${next.visitType}, provider = ${next.provider},
+					location = ${next.location}, amount = ${next.amount}::numeric,
+					currency = ${next.currency}, paid_by = ${next.paidBy},
+					owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
+					requirements = ${next.requirements}::text[], family_member = ${next.familyMember},
+					notes = ${next.notes},
+					provider_person_id = ${provider.id}::uuid, location_place_id = ${place.id}::uuid,
+					pet_id = ${pet.id}::uuid,
+					updated_at = now(), updated_by = ${viewer.userId}::uuid`,
+				columns: visitColumns(tx),
+				map: mapVisit,
+				mayWrite: writableBy(viewer)
+			});
+		})
+	);
 }
 
 export function setMedicalVisitArchived(
@@ -1046,4 +1158,46 @@ export async function removeVisitSymptom(
 	`;
 	if (!rows[0]) return { ok: false, reason: 'not_found' };
 	return { ok: true, record: { medicalVisitId: visitId } };
+}
+
+// ─── a visit's linked provider, location and pet ───────────────────────────
+
+export interface VisitLinkedNames {
+	providerName: string | null;
+	locationName: string | null;
+	petName: string | null;
+}
+
+/**
+ * The names behind a visit's three links, for its own page (migration 0028).
+ *
+ * Re-checked for readability here rather than trusted from the id alone: a
+ * link is only ever written once `resolveVisitLink` has confirmed the target
+ * is readable, but visibility is edited afterwards on the `people` row, not
+ * on this one, so a person set to private later must stop showing their name
+ * on a visit the other member can still see -- the same live check
+ * `readableScope` performs on every other read in this module, not a fact
+ * cached at link time. Archived is deliberately NOT filtered out: archiving a
+ * provider must not erase who a past visit was with.
+ */
+export async function linkedNamesForVisit(
+	sql: Queryable,
+	viewer: Viewer,
+	visit: Pick<MedicalVisit, 'providerPersonId' | 'locationPlaceId' | 'petId'>
+): Promise<VisitLinkedNames> {
+	const ids = [visit.providerPersonId, visit.locationPlaceId, visit.petId].filter(isUuid);
+	const empty: VisitLinkedNames = { providerName: null, locationName: null, petName: null };
+	if (ids.length === 0) return empty;
+
+	const rows = await sql<{ id: string; name: string }[]>`
+		select id, name from ${sql(PEOPLE)}
+		where id = any(${ids}::uuid[])
+		  and ${readableScope(sql, viewer, PEOPLE)}
+	`;
+	const nameOf = new Map(rows.map((r) => [r.id, toText(r.name)]));
+	return {
+		providerName: visit.providerPersonId ? (nameOf.get(visit.providerPersonId) ?? null) : null,
+		locationName: visit.locationPlaceId ? (nameOf.get(visit.locationPlaceId) ?? null) : null,
+		petName: visit.petId ? (nameOf.get(visit.petId) ?? null) : null
+	};
 }

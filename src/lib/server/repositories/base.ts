@@ -392,8 +392,13 @@ export function archiveScoped<Row extends object, T extends OwnedRecord>(spec: {
 		readScope: readableScope(sql, viewer, spec.table),
 		writeScope: writableScope(sql, viewer, spec.table),
 		expectedUpdatedAt: spec.expectedUpdatedAt,
+		// updated_at is set here, not left to a trigger: only the tables of
+		// migration 0004 have one, and on every later table (ingredients,
+		// media, library, recipes, people...) an archive that left updated_at
+		// alone let an edit from a tab opened before it still save, with no
+		// conflict. Where a trigger exists it sets the same now().
 		assignments: sql`${archivedAssignment(sql, spec.archived)},
-			updated_by = ${viewer.userId}::uuid`,
+			updated_at = now(), updated_by = ${viewer.userId}::uuid`,
 		columns: spec.columns,
 		map: spec.map,
 		mayWrite: writableBy(viewer)
@@ -472,9 +477,9 @@ export async function householdToday(sql: Queryable, householdId: string): Promi
  * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
  * transaction — so a multi-step write (a foreign key checked and then used, a
  * log entry and the total it updates) is all-or-nothing on its own and still
- * composes inside a caller's transaction (rule 3 above). `food.ts` defined
- * this privately for itself first; it lives here now that a second and third
- * caller want the identical logic rather than a third private copy.
+ * composes inside a caller's transaction (rule 3 above). food.ts, media's
+ * viewing log in collections.ts and labs-visits.ts each grew an identical
+ * private copy first; one shared copy replaces all three.
  */
 export function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
 	// The driver types the result as UnwrapPromiseArray<T>, which is T for
