@@ -66,6 +66,14 @@ const TABLES = [
 	'people',
 	'media_items',
 	'bills',
+	// migration 0029: bill_payments has no household_id of its own — scoped
+	// through bills the same way medication_doses is scoped through
+	// medications — so it is listed here for real (a household's own payment
+	// history is still its data) even though data-mobility.test.ts's
+	// household_id scan would not have caught its absence.
+	'bill_payments',
+	'income_entries',
+	'savings_contributions',
 	'prep_tasks',
 	'wishlist_items',
 	'life_assessments',
@@ -172,6 +180,8 @@ async function rowsFor(db, table, id) {
 		case 'people':
 		case 'media_items':
 		case 'bills':
+		case 'income_entries':
+		case 'savings_contributions':
 		case 'prep_tasks':
 		case 'wishlist_items':
 		case 'life_assessments':
@@ -181,6 +191,8 @@ async function rowsFor(db, table, id) {
 		case 'lab_results':
 			// All carry household_id directly, so one branch serves them.
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
+		case 'bill_payments':
+			return db`select p.* from bill_payments p join bills b on b.id = p.bill_id where b.household_id = ${id}::uuid order by p.bill_id, p.paid_on, p.created_at`;
 		case 'daily_log_health':
 			return db`select h.* from daily_log_health h join daily_logs l on l.id = h.daily_log_id where l.household_id = ${id}::uuid order by h.daily_log_id, h.vocabulary_id`;
 		case 'medication_doses':
