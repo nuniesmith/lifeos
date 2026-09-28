@@ -191,7 +191,9 @@ test.describe('library capture', () => {
 		await expect(page).toHaveURL(/\/library\/[0-9a-f-]+$/);
 
 		await page.getByLabel('Add a topic').selectOption(TOPIC_NAME);
-		await page.getByRole('button', { name: 'Add' }).click();
+		// Exact: a name match is a case-insensitive substring by default, and
+		// the app shell's "Quick add" button would match "Add" too.
+		await page.getByRole('button', { name: 'Add', exact: true }).click();
 		await expect(page.getByRole('link', { name: TOPIC_NAME })).toBeVisible();
 		// Attached, so the picker no longer offers it — the household has only
 		// the one topic this spec made.
@@ -205,7 +207,7 @@ test.describe('library capture', () => {
 		// second successful attach in the same visit is the real regression
 		// test for the addFormKey-style fix, not just the first one.
 		await page.getByLabel('Add a topic').selectOption(TOPIC_NAME);
-		await page.getByRole('button', { name: 'Add' }).click();
+		await page.getByRole('button', { name: 'Add', exact: true }).click();
 		await expect(page.getByRole('link', { name: TOPIC_NAME })).toBeVisible();
 	});
 
