@@ -236,7 +236,10 @@ test.describe('the Financial Hub', () => {
 		await expect(income).toContainText('-CA$20.00');
 
 		// Money at a glance: received this month now includes the $1980 actual.
-		await expect(page.getByText('CA$1,980.00')).toBeVisible();
+		// Scoped, because the income row itself shows the same amount.
+		await expect(
+			page.getByRole('region', { name: 'Money at a glance' }).getByText('CA$1,980.00')
+		).toBeVisible();
 
 		// Archived, it leaves the list but not the page: its own archived list
 		// is the only way back for an income entry, so restore it from there.
