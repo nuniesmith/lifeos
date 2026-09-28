@@ -1,13 +1,53 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { Badge, Button, Card, EmptyState, Input, PageHeader, Textarea } from '$lib/components';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import {
+		Badge,
+		Button,
+		Card,
+		EmptyState,
+		Input,
+		PageHeader,
+		Select,
+		Textarea
+	} from '$lib/components';
 	import { appPath } from '$lib/components/nav';
+	import { FOOD_UNITS, formatFoodAmount } from '$lib/food-units';
+	import RecipeIngredientSheet from './RecipeIngredientSheet.svelte';
 
 	let { data, form } = $props();
 
 	const recipe = $derived(data.recipe);
 	const archived = $derived(recipe.archivedAt !== null);
+
+	const UNIT_OPTIONS = FOOD_UNITS.map((u) => ({ value: u, label: u }));
+
+	/** The structured amount when there is one, else the free text. */
+	const displayAmount = (item: (typeof data.ingredients)[number]): string | null =>
+		formatFoodAmount(item.amountValue, item.amountUnit) ?? item.amount;
+
+	let ingredientSheetOpen = $state(false);
+	let manageError = $state<string | undefined>();
+
+	/** Reads `result.data.error` rather than the page's own `form` prop, so
+	 *  one row's refusal cannot be mistaken for another's — every row shares
+	 *  this same page-level `form`, and only the closure knows which
+	 *  ingredient this particular submit was for. */
+	function manageSubmit(name: string, fallback: string): SubmitFunction {
+		return () => {
+			manageError = undefined;
+			return async ({ result, update }) => {
+				// Not a plain reset: the unit picker in the amount form would go
+				// back to whichever option this page happened to load with.
+				await update({ reset: false });
+				if (result.type === 'failure') {
+					const said = result.data?.error;
+					manageError = `${name}: ${typeof said === 'string' ? said : fallback}`;
+				}
+			};
+		};
+	}
 
 	/** A stored day as the household reads it, with no timezone in between. */
 	const longDay = (value: string) =>
@@ -190,17 +230,96 @@
 					icon="journal"
 				/>
 			{:else}
-				<ul class="ingredients">
+				<ul class="ingredients" aria-label="Ingredients">
 					{#each data.ingredients as item (item.id)}
+						{@const shown = displayAmount(item)}
 						<li>
 							<span class="name">{item.name}</span>
-							{#if item.amount}<span class="amount">{item.amount}</span>{/if}
+							{#if shown}<span class="amount">{shown}</span>{/if}
 							{#if STATUS[item.status]}<Badge tone="warn">{STATUS[item.status]}</Badge>{/if}
 						</li>
 					{/each}
 				</ul>
 			{/if}
 		</Card>
+
+		{#if data.canEdit && !archived}
+			<details class="panel">
+				<summary>Manage ingredients</summary>
+				<div class="manage">
+					{#if manageError}<p class="notice error" role="alert">{manageError}</p>{/if}
+
+					{#if data.ingredients.length > 0}
+						<ul class="manage-list" aria-label="Manage ingredients">
+							{#each data.ingredients as item (item.id)}
+								<li>
+									<span class="manage-name">{item.name}</span>
+									{#key `${item.amount ?? ''}|${item.amountValue ?? ''}|${item.amountUnit ?? ''}`}
+										<form
+											method="POST"
+											action="?/setAmount"
+											class="amount-form"
+											use:enhance={manageSubmit(item.name, 'could not save that amount.')}
+										>
+											<input type="hidden" name="ingredientId" value={item.id} />
+											<Input
+												label={`Amount for ${item.name}`}
+												labelHidden
+												name="amount"
+												value={item.amount ?? ''}
+												placeholder="2 cups, chopped"
+											/>
+											<Input
+												label={`Structured amount for ${item.name}`}
+												labelHidden
+												name="amountValue"
+												type="number"
+												inputmode="decimal"
+												step="0.01"
+												min="0"
+												value={item.amountValue?.toString() ?? ''}
+											/>
+											<Select
+												label={`Unit for ${item.name}`}
+												labelHidden
+												name="amountUnit"
+												options={UNIT_OPTIONS}
+												placeholder="No unit"
+												value={item.amountUnit ?? ''}
+											/>
+											<Button type="submit" size="sm" variant="secondary">Save</Button>
+										</form>
+									{/key}
+									<form
+										method="POST"
+										action="?/detach"
+										use:enhance={manageSubmit(item.name, 'could not detach that.')}
+									>
+										<input type="hidden" name="ingredientId" value={item.id} />
+										<Button
+											type="submit"
+											size="sm"
+											variant="ghost"
+											aria-label={`Detach ${item.name}`}
+										>
+											Detach
+										</Button>
+									</form>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+
+					<Button variant="secondary" icon="plus" onclick={() => (ingredientSheetOpen = true)}>
+						Add ingredient
+					</Button>
+				</div>
+			</details>
+			<RecipeIngredientSheet
+				bind:open={ingredientSheetOpen}
+				ingredients={data.pickableIngredients}
+			/>
+		{/if}
 	</div>
 
 	<div class="main">
@@ -683,6 +802,49 @@
 	.row-end {
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	.manage {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-4);
+		padding: var(--sp-4);
+	}
+	.manage-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-3);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.manage-list li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: var(--sp-2);
+		padding-bottom: var(--sp-3);
+		border-bottom: 1px solid var(--c-border);
+	}
+	.manage-list li:last-child {
+		padding-bottom: 0;
+		border-bottom: none;
+	}
+	.manage-name {
+		flex: 1 1 100%;
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+	.amount-form {
+		display: flex;
+		flex: 1 1 auto;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: var(--sp-2);
+	}
+	.amount-form :global(.field) {
+		flex: 1 1 6rem;
+		min-width: 0;
 	}
 	.muted {
 		margin: 0 0 var(--sp-3);

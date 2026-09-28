@@ -13,12 +13,18 @@
 		PageHeader
 	} from '$lib/components';
 	import { appPath } from '$lib/components/nav';
+	import { formatFoodAmount } from '$lib/food-units';
 	import PlanMealSheet from './PlanMealSheet.svelte';
 	import { describePlanShopping, describeUndo } from './shopping-summary';
 
 	let { data, form } = $props();
 
 	type Day = (typeof data.days)[number];
+
+	/** The structured quantity when there is one, else the free text — same
+	 *  display preference the recipe page applies to an ingredient's amount. */
+	const displayQuantity = (item: (typeof data.shopping)[number]): string | null =>
+		formatFoodAmount(item.quantityValue, item.quantityUnit) ?? item.quantity;
 
 	/**
 	 * "Aug 31 – Sep 6", so a week away from today still says where it is.
@@ -270,7 +276,10 @@
 
 	<div class="columns">
 		<section aria-labelledby="shopping-heading">
-			<h2 id="shopping-heading" class="section-title">Shopping list</h2>
+			<div class="shopping-head">
+				<h2 id="shopping-heading" class="section-title">Shopping list</h2>
+				<Button href="/food/ingredients" variant="secondary" size="sm">Ingredients</Button>
+			</div>
 			<Card flush>
 				{#if data.shopping.length === 0}
 					<EmptyState
@@ -284,7 +293,7 @@
 							<h3>{aisle}</h3>
 							<List label={`${aisle} items`}>
 								{#each items as item (item.id)}
-									<ListRow title={item.name} meta={item.quantity ?? undefined}>
+									<ListRow title={item.name} meta={displayQuantity(item) ?? undefined}>
 										{#snippet trail()}
 											<div class="row-actions">
 												{#if item.isStaple}<Badge tone="neutral">Staple</Badge>{/if}
@@ -601,6 +610,7 @@
 		font-size: var(--fs-xs);
 	}
 
+	.shopping-head,
 	.recipes-head {
 		display: flex;
 		flex-wrap: wrap;

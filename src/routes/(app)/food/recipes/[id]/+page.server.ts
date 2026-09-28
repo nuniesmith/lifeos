@@ -4,11 +4,15 @@ import { canWrite } from '$lib/server/auth/authz';
 import { sql } from '$lib/server/db';
 import { renderMarkdown, safeLinkUrl } from '$lib/server/markdown';
 import {
+	addRecipeIngredient,
+	attachNewIngredientToRecipe,
 	bodyImagesForPage,
 	coversForPages,
 	getRecipe,
 	householdToday,
 	ingredientsForRecipe,
+	listIngredients,
+	removeRecipeIngredient,
 	setRecipeArchived,
 	updateRecipe,
 	type WriteResult
@@ -37,8 +41,12 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// exists is itself the disclosure.
 	if (!recipe) error(404, 'Recipe not found');
 
-	const [ingredients, covers, bodyImages, today] = await Promise.all([
+	const [ingredients, allIngredients, covers, bodyImages, today] = await Promise.all([
 		ingredientsForRecipe(sql, viewer, recipe.id),
+		// For "attach an ingredient": every ingredient the household can see,
+		// so picking one is a client-side filter rather than a query per
+		// keystroke — the same trade-off the meal-plan sheet makes over recipes.
+		listIngredients(sql, viewer, { order: 'name', limit: 500 }),
 		// The display copy, not the list thumbnail: this one is drawn at card width.
 		coversForPages(sql, viewer, [recipe.notionPageId], 'display'),
 		bodyImagesForPage(sql, viewer, recipe.notionPageId),
@@ -59,12 +67,20 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	return {
 		recipe,
 		cover: cover ? { id: cover.id, width: cover.width, height: cover.height } : null,
-		ingredients: ingredients.map(({ ingredient, amount }) => ({
+		ingredients: ingredients.map(({ ingredient, amount, amountValue, amountUnit }) => ({
 			id: ingredient.id,
 			name: ingredient.name,
 			amount: amount?.trim() || null,
+			amountValue,
+			amountUnit,
 			status: ingredient.status
 		})),
+		// Ingredients not already on this recipe, for the "add" sheet's picker.
+		// Filtered here rather than in the component so the sheet never has to
+		// be told which ids are already attached.
+		pickableIngredients: allIngredients
+			.filter((i) => !ingredients.some((linked) => linked.ingredient.id === i.id))
+			.map((i) => ({ id: i.id, name: i.name, aisle: i.aisle, status: i.status })),
 		// Sanitized HTML, never Markdown: see $lib/server/markdown for what is
 		// allowed through. `# Method` in a body lands as an <h3>, under the
 		// card's own <h2>, rather than competing with the page's <h1>.
@@ -81,7 +97,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	};
 };
 
-type Action = 'save' | 'favourite' | 'made' | 'archive';
+type Action = 'save' | 'favourite' | 'made' | 'archive' | 'attachNew' | 'setAmount' | 'detach';
 
 /**
  * One refusal wording per reason, so every action explains itself the same
@@ -103,6 +119,22 @@ function refused(action: Action, result: Extract<WriteResult<unknown>, { ok: fal
 		default:
 			return fail(404, { action, error: 'Could not find that recipe.' });
 	}
+}
+
+/**
+ * `addRecipeIngredient` / `removeRecipeIngredient` never return `forbidden` or
+ * `conflict` — a pairing carries no version of its own, and the only scopes
+ * involved are checked inside the one statement that writes — so this covers
+ * just the two reasons they can actually give. `not_found` deliberately does
+ * not say which side of the pairing was the problem: a recipe that does not
+ * exist and an ingredient that is not the viewer's to see must read the same
+ * from here, or the message itself would be the disclosure.
+ */
+function ingredientRefused(action: Action, result: Extract<WriteResult<unknown>, { ok: false }>) {
+	if (result.reason === 'invalid') {
+		return fail(400, { action, error: result.message ?? 'That amount is not valid.' });
+	}
+	return fail(404, { action, error: 'Could not find that recipe or ingredient.' });
 }
 
 export const actions: Actions = {
@@ -170,5 +202,60 @@ export const actions: Actions = {
 		// brought back.
 		if (archived) redirect(303, '/food');
 		return { restored: true };
+	},
+
+	/**
+	 * Creates a new ingredient and attaches it in one step, for "or add a new
+	 * one" in the attach sheet. Only the name is required, matching how an
+	 * ingredient can be added everywhere else in the pantry.
+	 */
+	attachNew: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+
+		const result = await attachNewIngredientToRecipe(
+			sql,
+			viewer,
+			params.id,
+			{ name: form.get('name'), aisle: form.get('aisle') },
+			{ text: form.get('amount'), value: form.get('amountValue'), unit: form.get('amountUnit') }
+		);
+		if (!result.ok) return ingredientRefused('attachNew', result);
+		return { action: 'attachNew' as const };
+	},
+
+	/**
+	 * Attaches an existing ingredient with an amount, or — sent for one
+	 * already on the recipe — changes its amount: `addRecipeIngredient` is one
+	 * UPSERT either way (respecting `recipe_ingredients`'s primary key), so
+	 * "pick an ingredient" and "edit its amount" are the same action here.
+	 */
+	setAmount: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+
+		const result = await addRecipeIngredient(
+			sql,
+			viewer,
+			params.id,
+			String(form.get('ingredientId') ?? ''),
+			{ text: form.get('amount'), value: form.get('amountValue'), unit: form.get('amountUnit') }
+		);
+		if (!result.ok) return ingredientRefused('setAmount', result);
+		return { action: 'setAmount' as const };
+	},
+
+	detach: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+
+		const result = await removeRecipeIngredient(
+			sql,
+			viewer,
+			params.id,
+			String(form.get('ingredientId') ?? '')
+		);
+		if (!result.ok) return ingredientRefused('detach', result);
+		return { action: 'detach' as const };
 	}
 };
