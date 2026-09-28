@@ -392,8 +392,13 @@ export function archiveScoped<Row extends object, T extends OwnedRecord>(spec: {
 		readScope: readableScope(sql, viewer, spec.table),
 		writeScope: writableScope(sql, viewer, spec.table),
 		expectedUpdatedAt: spec.expectedUpdatedAt,
+		// updated_at is set here, not left to a trigger: only the tables of
+		// migration 0004 have one, and on every later table (ingredients,
+		// media, library, recipes, people...) an archive that left updated_at
+		// alone let an edit from a tab opened before it still save, with no
+		// conflict. Where a trigger exists it sets the same now().
 		assignments: sql`${archivedAssignment(sql, spec.archived)},
-			updated_by = ${viewer.userId}::uuid`,
+			updated_at = now(), updated_by = ${viewer.userId}::uuid`,
 		columns: spec.columns,
 		map: spec.map,
 		mayWrite: writableBy(viewer)

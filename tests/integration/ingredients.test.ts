@@ -145,6 +145,18 @@ describe('editing an ingredient', () => {
 		expect((await listIngredients(sql, viewer, { search: 'oats' }))[0]?.archivedAt).toBeNull();
 	});
 
+	it('refuses an edit from a tab opened before the ingredient was archived', async () => {
+		// ingredients has no updated_at trigger; archiving must bump it itself,
+		// or this stale save would pass its version check against the old value.
+		const flour = await ingredient('Stale tab flour');
+		const opened = flour.updatedAt;
+		ok(await setIngredientArchived(sql, viewer, flour.id, true), 'archive');
+
+		expect(
+			await updateIngredient(sql, viewer, flour.id, { store: 'Shop C' }, opened)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+	});
+
 	it('never archives another household’s ingredient', async () => {
 		const theirs = await ingredient('Not ours', {}, elsewhere);
 		expect(await setIngredientArchived(sql, viewer, theirs.id, true)).toMatchObject({
