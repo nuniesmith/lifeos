@@ -68,7 +68,11 @@
 			<List label="People and places">
 				{#each data.people as person (person.id)}
 					{@const gifts = data.giftsFor[person.id] ?? []}
-					<ListRow title={person.name} meta={person.groups.join(' · ') || undefined}>
+					<ListRow
+						title={person.name}
+						href={`/people/${person.id}`}
+						meta={person.groups.join(' · ') || undefined}
+					>
 						{#snippet lead()}<Badge tone="neutral">{KIND_LABELS[person.kind] ?? person.kind}</Badge
 							>{/snippet}
 						{#snippet trail()}

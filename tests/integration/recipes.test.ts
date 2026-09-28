@@ -369,7 +369,14 @@ describe('privacy', () => {
 		// And on the page itself.
 		const page = await loadPage(shared.id);
 		expect(page.ingredients).toEqual([
-			{ id: lettuce.id, name: 'Lettuce', amount: '1 head', status: 'in_stock' }
+			{
+				id: lettuce.id,
+				name: 'Lettuce',
+				amount: '1 head',
+				amountValue: null,
+				amountUnit: null,
+				status: 'in_stock'
+			}
 		]);
 	});
 
@@ -426,6 +433,13 @@ describe('the recipe page', () => {
 		expect((await act('favourite', theirs.id, { favourite: 'true' })).status).toBe(404);
 		expect((await act('made', theirs.id)).status).toBe(404);
 		expect((await act('archive', theirs.id, { archived: 'true' })).status).toBe(404);
+		expect((await act('attachNew', theirs.id, { name: 'Onions' })).status).toBe(404);
+		expect((await act('setAmount', theirs.id, { ingredientId: crypto.randomUUID() })).status).toBe(
+			404
+		);
+		expect((await act('detach', theirs.id, { ingredientId: crypto.randomUUID() })).status).toBe(
+			404
+		);
 
 		expect(await getRecipe(sql, partner, theirs.id)).toMatchObject({
 			name: 'Secret stew',
@@ -558,6 +572,64 @@ describe('the recipe page', () => {
 		expect(result.status).toBe(400);
 		expect(result.data.values.notes).toBe('A long method, typed out on a phone.');
 		expect(await listRecipes(sql, owner)).toEqual([]);
+	});
+});
+
+// ─── attaching, amending and detaching ingredients ─────────────────────────
+
+describe('the recipe page’s ingredients', () => {
+	it('attaches a new ingredient and shows it with its amount', async () => {
+		const soup = await recipe('Soup');
+		const result = await act('attachNew', soup.id, { name: 'Onions', amount: '2, sliced' });
+		expect(result).toEqual({ action: 'attachNew' });
+
+		const page = await loadPage(soup.id);
+		expect(page.ingredients).toMatchObject([{ name: 'Onions', amount: '2, sliced' }]);
+	});
+
+	it('changes an amount by attaching again, and detaches', async () => {
+		const soup = await recipe('Soup');
+		const onions = ok(await createIngredient(sql, owner, { name: 'Onions' }), 'create').record;
+		ok(await addRecipeIngredient(sql, owner, soup.id, onions.id, '1'), 'first amount');
+
+		const changed = await act('setAmount', soup.id, {
+			ingredientId: onions.id,
+			amountValue: '2',
+			amountUnit: 'piece'
+		});
+		expect(changed).toEqual({ action: 'setAmount' });
+		expect((await loadPage(soup.id)).ingredients).toMatchObject([
+			{ name: 'Onions', amountValue: 2, amountUnit: 'piece' }
+		]);
+
+		const detached = await act('detach', soup.id, { ingredientId: onions.id });
+		expect(detached).toEqual({ action: 'detach' });
+		expect((await loadPage(soup.id)).ingredients).toEqual([]);
+	});
+
+	it('refuses an amount that is not valid, without changing what was there', async () => {
+		const soup = await recipe('Soup');
+		const onions = ok(await createIngredient(sql, owner, { name: 'Onions' }), 'create').record;
+		ok(await addRecipeIngredient(sql, owner, soup.id, onions.id, '1'), 'first amount');
+
+		const refused = await act('setAmount', soup.id, { ingredientId: onions.id, amountValue: '0' });
+		expect(refused.status).toBe(400);
+		expect((await loadPage(soup.id)).ingredients).toMatchObject([{ amount: '1' }]);
+	});
+
+	it('does not offer attaching to a member who may only read', async () => {
+		const theirs = await recipe(
+			'Their curry',
+			{ visibility: 'household', ownerUserId: partner.userId },
+			partner
+		);
+		// 404 here rather than the 403 `favourite`/`archive` give for the same
+		// recipe: unlike `updateRecipe`, `attachNewIngredientToRecipe` checks
+		// `writableScope` directly in its one statement, with no second query to
+		// explain a miss — a coarser refusal, but never the wrong direction
+		// (rule 5 only forbids a 403 leaking a private record, never a 404
+		// where a 403 would have been more precise).
+		expect((await act('attachNew', theirs.id, { name: 'Rice' })).status).toBe(404);
 	});
 });
 

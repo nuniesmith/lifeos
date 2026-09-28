@@ -39,6 +39,20 @@
 	const filterHref = (kind: Kind | null): string =>
 		kind ? `/health/symptoms?kind=${kind}` : '/health/symptoms';
 
+	/*
+	 * Mood and energy words only ever arrive with a day imported from Notion.
+	 * The journal records mood and energy in fields of its own, and its "What
+	 * you noticed" card offers symptoms, activity and exercise only, so for
+	 * these two "tag a day in your journal" would send someone looking for a
+	 * control that does not exist.
+	 */
+	const IMPORTED_ONLY: Partial<Record<Kind, string>> = {
+		mood: 'Mood words come only from days imported from Notion. The journal records your mood in a field of its own, so new days do not add to this list.',
+		energy:
+			'Energy words come only from days imported from Notion. The journal records your energy in a field of its own, so new days do not add to this list.'
+	};
+	const importedOnly = $derived(data.kind ? (IMPORTED_ONLY[data.kind] ?? null) : null);
+
 	/** The busiest term sets the bar width; everything else is relative to it. */
 	const busiest = $derived(Math.max(1, ...data.frequencies.map((f) => f.days)));
 </script>
@@ -78,13 +92,23 @@
 		<section aria-labelledby="patterns-heading">
 			<h2 id="patterns-heading" class="section-title">Patterns</h2>
 			<Card flush>
-				{#if data.frequencies.length === 0}
+				{#if data.frequencies.length === 0 && importedOnly}
+					<EmptyState title="Nothing imported" description={importedOnly} icon="journal" />
+				{:else if data.frequencies.length === 0}
 					<EmptyState
 						title="Nothing logged yet"
 						description="Tag a day in your journal with what you noticed, and it will start showing up here."
 						icon="journal"
-					/>
+					>
+						{#snippet action()}
+							<!-- A plain path: Button resolves its own href, and resolving it
+								     twice throws while rendering on the server (the first call
+								     returns a relative "../journal"), which took this page down. -->
+							<Button href="/journal" size="sm">Open today’s journal</Button>
+						{/snippet}
+					</EmptyState>
 				{:else}
+					{#if importedOnly}<p class="patterns-note">{importedOnly}</p>{/if}
 					<List label="How often each has come up">
 						{#each data.frequencies as row (row.vocabularyId)}
 							<ListRow
@@ -156,6 +180,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-5);
+	}
+
+	.patterns-note {
+		margin: 0;
+		padding: var(--sp-3) var(--sp-4) 0;
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
 	}
 
 	.filters {
