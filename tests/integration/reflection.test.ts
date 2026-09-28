@@ -1,17 +1,26 @@
 import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { createMember } from '$lib/server/auth/admin';
 import { viewerOf } from '$lib/server/auth/authz';
 import { one } from '$lib/server/db/scalar';
 import {
+	archiveAssessment,
+	archiveEvent,
 	createArea,
 	createAssessment,
 	createDailyLog,
 	createEvent,
 	createGoal,
+	getAssessment,
+	getEvent,
 	listAssessments,
 	listEvents,
+	unarchiveAssessment,
+	unarchiveEvent,
+	updateAssessment,
+	updateEvent,
 	updateGoal,
 	yearInReview,
 	yearsOnRecord
@@ -102,6 +111,23 @@ describe('the wheel of life', () => {
 		expect(rated.focus).toBe('Physical health');
 	});
 
+	it('adds a rating with the year left blank, as the form sends it', async () => {
+		// The add form's Year is optional and submits ''. That used to be read
+		// as 0, which the table's CHECK (1900-2200) refused, so no rating could
+		// be added without a year.
+		const rated = ok(
+			await createAssessment(sql, owner, { focus: 'Sleep', rating: 5, year: '', period: '' }),
+			'assess with a blank year'
+		).record;
+		expect(rated.year).toBeNull();
+	});
+
+	it('refuses a year outside the range the table allows, as invalid rather than an error', async () => {
+		expect(
+			await createAssessment(sql, owner, { focus: 'Sleep', rating: 5, year: '150' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
 	it('refuses a rating outside one to ten', async () => {
 		for (const rating of [0, 11, -3]) {
 			expect(await createAssessment(sql, owner, { focus: 'x', rating })).toMatchObject({
@@ -135,6 +161,109 @@ describe('the wheel of life', () => {
 	});
 });
 
+describe('editing a rating', () => {
+	it('changes the fields that were sent and keeps the rest', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4, year: 2026 }),
+			'assess'
+		).record;
+		const area = ok(await createArea(sql, owner, { name: 'Career' }), 'area').record;
+
+		const edited = ok(
+			await updateAssessment(
+				sql,
+				owner,
+				created.id,
+				{ rating: 7, notes: 'Feeling better', areaId: area.id },
+				created.updatedAt
+			),
+			'edit'
+		).record;
+
+		expect(edited.rating).toBe(7);
+		expect(edited.notes).toBe('Feeling better');
+		expect(edited.areaName).toBe('Career');
+		// Untouched fields survive the partial edit.
+		expect(edited.focus).toBe('Fitness');
+		expect(edited.year).toBe(2026);
+	});
+
+	it('refuses a rating outside one to ten, the same as creating one', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4 }),
+			'assess'
+		).record;
+		expect(
+			await updateAssessment(sql, owner, created.id, { rating: 11 }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('refuses a stale edit as a conflict, not a silent overwrite', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4 }),
+			'assess'
+		).record;
+		ok(
+			await updateAssessment(sql, owner, created.id, { rating: 5 }, created.updatedAt),
+			'first edit'
+		);
+
+		// The same stale `updatedAt` a second, already-open tab would still have.
+		expect(
+			await updateAssessment(sql, owner, created.id, { rating: 9 }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+	});
+
+	it('is a 404 for the other member, never a 403, because it is private', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4 }),
+			'assess'
+		).record;
+		expect(await getAssessment(sql, partner, created.id)).toBeNull();
+		expect(
+			await updateAssessment(sql, partner, created.id, { rating: 9 }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'not_found' });
+	});
+
+	it('ignores an area id that is not even a uuid rather than crashing on the cast', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4 }),
+			'assess'
+		).record;
+		const edited = ok(
+			await updateAssessment(
+				sql,
+				owner,
+				created.id,
+				{ areaId: 'not-a-real-id' },
+				created.updatedAt
+			),
+			'edit with a garbage area id'
+		).record;
+		expect(edited.areaId).toBeNull();
+	});
+});
+
+describe('archiving a rating', () => {
+	it('leaves the wheel and comes back on restore', async () => {
+		const created = ok(
+			await createAssessment(sql, owner, { focus: 'Fitness', rating: 4, year: 2026 }),
+			'assess'
+		).record;
+
+		ok(await archiveAssessment(sql, owner, created.id), 'archive');
+		expect(await listAssessments(sql, owner, { year: 2026 })).toEqual([]);
+		// Archived is not gone: it can still be found and shown for restoring —
+		// only the live views (`listAssessments`) leave it out.
+		expect((await getAssessment(sql, owner, created.id))?.archivedAt).not.toBeNull();
+
+		ok(await unarchiveAssessment(sql, owner, created.id), 'restore');
+		expect((await listAssessments(sql, owner, { year: 2026 })).map((a) => a.id)).toEqual([
+			created.id
+		]);
+	});
+});
+
 describe('significant events', () => {
 	it('records something that happened on a day', async () => {
 		const event = ok(
@@ -158,6 +287,132 @@ describe('significant events', () => {
 			'event'
 		);
 		expect(await listEvents(sql, partner)).toHaveLength(1);
+	});
+});
+
+describe('editing an event', () => {
+	it('changes the fields that were sent and keeps the rest', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		const area = ok(await createArea(sql, owner, { name: 'Home' }), 'area').record;
+
+		const edited = ok(
+			await updateEvent(
+				sql,
+				owner,
+				created.id,
+				{ onDate: '2026-04-02', isFavourite: 'on', areaId: area.id },
+				created.updatedAt
+			),
+			'edit'
+		).record;
+
+		expect(edited.onDate).toBe('2026-04-02');
+		expect(edited.isFavourite).toBe(true);
+		expect(edited.areaName).toBe('Home');
+		// Untouched fields survive the partial edit.
+		expect(edited.title).toBe('Repainted the porch');
+	});
+
+	it('refuses a malformed date, the same as creating one', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		expect(
+			await updateEvent(sql, owner, created.id, { onDate: 'not a date' }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('refuses a stale edit as a conflict, not a silent overwrite', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		ok(
+			await updateEvent(
+				sql,
+				owner,
+				created.id,
+				{ title: 'Repainted the fence' },
+				created.updatedAt
+			),
+			'first edit'
+		);
+
+		// The same stale `updatedAt` a second, already-open tab would still have.
+		expect(
+			await updateEvent(sql, owner, created.id, { title: 'Repainted the shed' }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+	});
+
+	it('is editable by the other member too, because it is shared', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		const edited = ok(
+			await updateEvent(
+				sql,
+				partner,
+				created.id,
+				{ title: 'Repainted the fence' },
+				created.updatedAt
+			),
+			'partner edits a shared event'
+		).record;
+		expect(edited.title).toBe('Repainted the fence');
+	});
+
+	it('ignores an area id that is not even a uuid rather than crashing on the cast', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		const edited = ok(
+			await updateEvent(sql, owner, created.id, { areaId: 'not-a-real-id' }, created.updatedAt),
+			'edit with a garbage area id'
+		).record;
+		expect(edited.areaId).toBeNull();
+	});
+});
+
+describe('archiving an event', () => {
+	it('leaves the list and the year in review, and comes back on restore', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		expect((await yearInReview(sql, owner, 2026)).events).toBe(1);
+
+		ok(await archiveEvent(sql, owner, created.id), 'archive');
+		expect(await listEvents(sql, owner, { from: '2026-01-01', to: '2026-12-31' })).toEqual([]);
+		// Archived is not gone: it can still be found and shown for restoring —
+		// only the live views (`listEvents`, `yearInReview`) leave it out.
+		expect((await getEvent(sql, owner, created.id))?.archivedAt).not.toBeNull();
+		// The whole reason this figure is computed rather than a stored count:
+		// archiving is exactly the kind of underlying change it must reflect.
+		expect((await yearInReview(sql, owner, 2026)).events).toBe(0);
+
+		ok(await unarchiveEvent(sql, owner, created.id), 'restore');
+		expect((await yearInReview(sql, owner, 2026)).events).toBe(1);
+	});
+
+	it('moves out of the year in review when its date is edited off the year, not only when archived', async () => {
+		const created = ok(
+			await createEvent(sql, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+			'event'
+		).record;
+		expect((await yearInReview(sql, owner, 2026)).events).toBe(1);
+
+		ok(
+			await updateEvent(sql, owner, created.id, { onDate: '2027-04-01' }, created.updatedAt),
+			'move to next year'
+		);
+		expect((await yearInReview(sql, owner, 2026)).events).toBe(0);
+		expect((await yearInReview(sql, owner, 2027)).events).toBe(1);
 	});
 });
 
@@ -208,5 +463,59 @@ describe('the year in review', () => {
 		ok(await createEvent(sql, owner, { title: 'A thing', onDate: '2024-01-01' }), 'event');
 
 		expect(await yearsOnRecord(sql, owner)).toEqual([2026, 2024]);
+	});
+});
+
+describe('through a client configured the way the app’s is', () => {
+	it('edits and archives a rating', async () => {
+		// `$lib/server/db` hands its client to drizzle(), which replaces the
+		// driver's timestamp serializers with pass-throughs. The plain client
+		// above converts a JS Date parameter without complaint; this one is set
+		// up the way the app's is — see health-measurements.test.ts's version of
+		// this test for how that difference cost this project a production bug.
+		const appLike = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		drizzle(appLike);
+		try {
+			const created = ok(
+				await createAssessment(appLike, owner, { focus: 'Fitness', rating: 4, year: 2026 }),
+				'add a rating through the app-like client'
+			).record;
+			const edited = ok(
+				await updateAssessment(appLike, owner, created.id, { rating: 8 }, created.updatedAt),
+				'edit it through the app-like client'
+			).record;
+			expect(edited.rating).toBe(8);
+
+			ok(
+				await archiveAssessment(appLike, owner, edited.id),
+				'archive it through the app-like client'
+			);
+			expect(await listAssessments(appLike, owner, { year: 2026 })).toEqual([]);
+		} finally {
+			await appLike.end({ timeout: 5 });
+		}
+	});
+
+	it('edits and archives an event', async () => {
+		const appLike = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		drizzle(appLike);
+		try {
+			const created = ok(
+				await createEvent(appLike, owner, { title: 'Repainted the porch', onDate: '2026-04-01' }),
+				'add an event through the app-like client'
+			).record;
+			const edited = ok(
+				await updateEvent(appLike, owner, created.id, { onDate: '2026-04-02' }, created.updatedAt),
+				'edit it through the app-like client'
+			).record;
+			expect(edited.onDate).toBe('2026-04-02');
+
+			ok(await archiveEvent(appLike, owner, edited.id), 'archive it through the app-like client');
+			expect(await listEvents(appLike, owner, { from: '2026-01-01', to: '2026-12-31' })).toEqual(
+				[]
+			);
+		} finally {
+			await appLike.end({ timeout: 5 });
+		}
 	});
 });

@@ -1,10 +1,13 @@
 import { fail } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
 import {
+	archiveAssessment,
 	assessmentPeriods,
 	createAssessment,
 	listAreas,
-	listAssessments
+	listAssessments,
+	unarchiveAssessment,
+	updateAssessment
 } from '$lib/server/repositories';
 import { requireViewer } from '$lib/server/viewer';
 import type { Actions, PageServerLoad } from './$types';
@@ -22,11 +25,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const yearParam = Number(url.searchParams.get('year'));
 	const year = Number.isFinite(yearParam) && yearParam > 1900 ? yearParam : undefined;
 
-	const [assessments, periods, areas] = await Promise.all([
-		listAssessments(sql, viewer, { ...(year ? { year } : {}), limit: 200 }),
+	const [allAssessments, periods, areas] = await Promise.all([
+		// `includeArchived` plus a filter here, rather than a repository filter
+		// of its own: this page needs both halves of the same scoped result —
+		// the live wheel and the ones an "Archived" toggle can restore — the
+		// same idiom `projects.ts`'s own "archived" view uses.
+		listAssessments(sql, viewer, { ...(year ? { year } : {}), includeArchived: true, limit: 200 }),
 		assessmentPeriods(sql, viewer),
 		listAreas(sql, viewer, { order: 'name', limit: 100 })
 	]);
+	const assessments = allAssessments.filter((a) => a.archivedAt === null);
+	const archivedAssessments = allAssessments.filter((a) => a.archivedAt !== null);
 
 	const average =
 		assessments.length > 0
@@ -35,11 +44,20 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	return {
 		assessments,
+		archivedAssessments,
 		periods,
 		year: year ?? null,
 		average,
 		areas: areas.map((a) => ({ id: a.id, name: a.name }))
 	};
+};
+
+const str = (form: FormData, key: string): string => String(form.get(key) ?? '');
+/** Absent stays `undefined` rather than `''`, which `updateAssessment` would
+ *  try to parse as a timestamp and throw on — see the note on that parameter. */
+const optStr = (form: FormData, key: string): string | undefined => {
+	const v = form.get(key);
+	return v === null ? undefined : String(v);
 };
 
 export const actions: Actions = {
@@ -59,5 +77,57 @@ export const actions: Actions = {
 			});
 		}
 		return { added: result.record.id };
+	},
+
+	update: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const id = str(form, 'id');
+
+		const result = await updateAssessment(
+			sql,
+			viewer,
+			id,
+			{
+				focus: form.get('focus'),
+				rating: form.get('rating'),
+				period: form.get('period'),
+				year: form.get('year'),
+				areaId: form.get('areaId') || null,
+				isPriority: form.get('isPriority'),
+				notes: form.get('notes')
+			},
+			optStr(form, 'expectedUpdatedAt')
+		);
+		if (!result.ok) {
+			const status = result.reason === 'invalid' ? 400 : result.reason === 'conflict' ? 409 : 404;
+			const error =
+				result.reason === 'invalid'
+					? result.message
+					: result.reason === 'conflict'
+						? 'That rating changed elsewhere — reload and try again.'
+						: 'Could not update that rating.';
+			return fail(status, { action: 'update' as const, error });
+		}
+		return { action: 'update' as const, savedId: result.record.id };
+	},
+
+	/** One action for both directions, same as medications.ts's own
+	 *  `archiveMedication`: the hidden `archived` field says which way, so
+	 *  "Archive" on the edit sheet and "Restore" on the archived list can share
+	 *  one handler instead of two nearly-identical ones. */
+	archive: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const id = str(form, 'id');
+		const archived = str(form, 'archived') === 'true';
+
+		const result = archived
+			? await archiveAssessment(sql, viewer, id)
+			: await unarchiveAssessment(sql, viewer, id);
+		if (!result.ok) {
+			return fail(404, { action: 'archive' as const, error: 'Could not update that rating.' });
+		}
+		return { action: 'archive' as const, archived };
 	}
 };
