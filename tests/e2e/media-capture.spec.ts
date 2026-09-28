@@ -119,7 +119,10 @@ test.describe('the watchlist on a phone', () => {
 
 		// Feature 1: only a name is required, but this one takes the optional
 		// fields too.
-		await page.getByLabel('Name', { exact: true }).fill(name);
+		// By role, not by label: Field puts an aria-hidden "*" inside a required
+		// field's <label>, so the label's text is "Name *" and an exact
+		// getByLabel('Name') never matches, while the accessible name is "Name".
+		await page.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
 		await page.getByLabel('Type', { exact: true }).selectOption('tv');
 		await page.getByLabel('Streaming service', { exact: true }).fill('Testflix');
 		await page.getByRole('button', { name: 'Save title', exact: true }).click();
