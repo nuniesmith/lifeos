@@ -92,6 +92,10 @@ const TABLES = [
 	'medical_visits',
 	'lab_results',
 	'task_dependencies',
+	// migration 0023: item_a_id/item_b_id need no special remapping — ids are
+	// preserved verbatim, so library_links only has to land after
+	// library_items, whose id both columns carry.
+	'library_links',
 	'entity_tags',
 	'habit_logs',
 	'project_areas',
@@ -146,6 +150,10 @@ const ORDER = [
 	'medical_visits',
 	'lab_results',
 	'task_dependencies',
+	// migration 0023: item_a_id/item_b_id need no special remapping — ids are
+	// preserved verbatim, so library_links only has to land after
+	// library_items, whose id both columns carry.
+	'library_links',
 	'entity_tags',
 	'habit_logs',
 	'project_areas',

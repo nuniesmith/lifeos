@@ -15,12 +15,7 @@ import {
  * "in the library".
  */
 
-export const SHELF_LABELS = {
-	inbox: 'New',
-	reading_list: 'Reading list',
-	live: 'Kept',
-	archived_read: 'Finished'
-} as const;
+export { SHELF_LABELS } from './shelf-labels';
 
 export async function loadShelf(viewer: Viewer, filters: LibraryFilters) {
 	const [items, summary] = await Promise.all([

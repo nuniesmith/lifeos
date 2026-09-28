@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Card, LibraryList, PageHeader, appPath } from '$lib/components';
+	import { Button, Card, LibraryList, PageHeader, appPath } from '$lib/components';
 
 	let { data, form } = $props();
 
@@ -23,6 +23,9 @@
 <PageHeader title="Library" description="Everything worth keeping, in one place.">
 	{#snippet meta()}
 		<span>{data.summary.total} entries · {data.summary.highlights} highlights</span>
+	{/snippet}
+	{#snippet actions()}
+		<Button href="/library/new" variant="primary" icon="plus">New entry</Button>
 	{/snippet}
 </PageHeader>
 

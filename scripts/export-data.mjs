@@ -76,6 +76,12 @@ const TABLES = [
 	'medical_visits',
 	'lab_results',
 	'task_dependencies',
+	// migration 0023: library_links has no household_id of its own — scoped
+	// through library_items the same way task_dependencies is scoped through
+	// tasks — so it is listed here for real (a household's links between its
+	// own entries are still its data) even though data-mobility.test.ts's
+	// household_id scan would not have caught its absence.
+	'library_links',
 	'entity_tags',
 	'habit_logs',
 	'project_areas',
@@ -142,6 +148,8 @@ async function rowsFor(db, table, id) {
 			return db`select * from tags where household_id = ${id}::uuid order by id`;
 		case 'task_dependencies':
 			return db`select d.* from task_dependencies d join tasks t on t.id = d.blocked_task_id where t.household_id = ${id}::uuid order by d.blocked_task_id, d.blocking_task_id`;
+		case 'library_links':
+			return db`select l.* from library_links l join library_items t on t.id = l.item_a_id where t.household_id = ${id}::uuid order by l.item_a_id, l.item_b_id`;
 		case 'entity_tags':
 			return db`select e.* from entity_tags e where (e.entity_type = 'task' and exists (select 1 from tasks t where t.id = e.entity_id and t.household_id = ${id}::uuid)) or (e.entity_type = 'project' and exists (select 1 from projects p where p.id = e.entity_id and p.household_id = ${id}::uuid)) or (e.entity_type = 'goal' and exists (select 1 from goals g where g.id = e.entity_id and g.household_id = ${id}::uuid)) or (e.entity_type = 'area' and exists (select 1 from areas a where a.id = e.entity_id and a.household_id = ${id}::uuid)) or (e.entity_type = 'habit' and exists (select 1 from habits h where h.id = e.entity_id and h.household_id = ${id}::uuid)) or (e.entity_type = 'important_date' and exists (select 1 from important_dates d where d.id = e.entity_id and d.household_id = ${id}::uuid)) or (e.entity_type = 'daily_log' and exists (select 1 from daily_logs dl where dl.id = e.entity_id and dl.household_id = ${id}::uuid)) or (e.entity_type = 'library_item' and exists (select 1 from library_items li where li.id = e.entity_id and li.household_id = ${id}::uuid)) order by e.tag_id, e.entity_type, e.entity_id`;
 		case 'habit_logs':
