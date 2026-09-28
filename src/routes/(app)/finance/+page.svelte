@@ -296,6 +296,25 @@
 				</List>
 			{/if}
 		</Card>
+
+		{#if data.archivedIncome.length > 0}
+			<details class="panel">
+				<summary>Archived ({data.archivedIncome.length})</summary>
+				<List label="Archived income">
+					{#each data.archivedIncome as entry (entry.id)}
+						<ListRow title={entry.title} meta={longDay(entry.receivedOn)} muted>
+							{#snippet trail()}
+								<form method="POST" action="?/archiveIncome" use:enhance>
+									<input type="hidden" name="id" value={entry.id} />
+									<input type="hidden" name="archived" value="false" />
+									<Button type="submit" size="sm" variant="ghost">Restore</Button>
+								</form>
+							{/snippet}
+						</ListRow>
+					{/each}
+				</List>
+			</details>
+		{/if}
 	</section>
 
 	<section aria-labelledby="savings-heading">
@@ -384,6 +403,25 @@
 				</List>
 			{/if}
 		</Card>
+
+		{#if data.archivedSavings.length > 0}
+			<details class="panel">
+				<summary>Archived ({data.archivedSavings.length})</summary>
+				<List label="Archived savings">
+					{#each data.archivedSavings as contribution (contribution.id)}
+						<ListRow title={contribution.title} meta={longDay(contribution.contributedOn)} muted>
+							{#snippet trail()}
+								<form method="POST" action="?/archiveSavings" use:enhance>
+									<input type="hidden" name="id" value={contribution.id} />
+									<input type="hidden" name="archived" value="false" />
+									<Button type="submit" size="sm" variant="ghost">Restore</Button>
+								</form>
+							{/snippet}
+						</ListRow>
+					{/each}
+				</List>
+			</details>
+		{/if}
 	</section>
 </div>
 
@@ -645,6 +683,24 @@
 		font-weight: 600;
 	}
 
+	/* The same disclosure the bill page uses for its edit form: archived
+	   entries stay one tap away without taking room from the live list. */
+	.panel {
+		border: 1px solid var(--c-border);
+		border-radius: var(--radius);
+		background: var(--c-surface);
+	}
+	.panel summary {
+		display: flex;
+		align-items: center;
+		min-height: var(--tap);
+		padding: var(--sp-2) var(--sp-4);
+		font-weight: 650;
+		cursor: pointer;
+	}
+	.panel[open] summary {
+		border-bottom: 1px solid var(--c-border);
+	}
 	.notice {
 		padding: var(--sp-2) var(--sp-3);
 		border-radius: var(--radius-sm);

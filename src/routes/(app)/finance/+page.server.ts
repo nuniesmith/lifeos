@@ -53,17 +53,21 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const monthStart = `${today.slice(0, 7)}-01`;
 	const monthEnd = monthEndOf(today);
 
-	const [bills, commitment, income, incomeMonth, savings, savingsTotals, goals] = await Promise.all(
-		[
+	const [bills, commitment, incomeAll, incomeMonth, savingsAll, savingsTotals, goals] =
+		await Promise.all([
 			listBills(sql, viewer, { status: ['active', 'free_trial'], limit: 200 }),
 			monthlyCommitment(sql, viewer),
-			listIncomeEntries(sql, viewer, { limit: RECENT_LIMIT }),
+			// Archived rows travel with the live ones and are split below, rather
+			// than a second query: neither list is fetched again, and this page's
+			// only way back for an archived income entry or contribution is
+			// right here — unlike a bill, which also has its own detail page and
+			// is already reachable from the global Archive besides.
+			listIncomeEntries(sql, viewer, { limit: RECENT_LIMIT, includeArchived: true }),
 			incomeSummaryForMonth(sql, viewer, monthStart, monthEnd),
-			listSavingsContributions(sql, viewer, { limit: RECENT_LIMIT }),
+			listSavingsContributions(sql, viewer, { limit: RECENT_LIMIT, includeArchived: true }),
 			savingsSummary(sql, viewer, monthStart, monthEnd),
 			listGoals(sql, viewer, { limit: 200, order: 'title' })
-		]
-	);
+		]);
 
 	// Bills are already ordered "soonest due first" with nulls last (see
 	// listBills), so the first one with a date at all is the next one due.
@@ -73,9 +77,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 		today,
 		bills,
 		commitment,
-		income,
+		income: incomeAll.filter((e) => e.archivedAt === null),
+		archivedIncome: incomeAll.filter((e) => e.archivedAt !== null),
 		incomeMonth,
-		savings,
+		savings: savingsAll.filter((c) => c.archivedAt === null),
+		archivedSavings: savingsAll.filter((c) => c.archivedAt !== null),
 		savingsTotals,
 		goals: goals.map((g) => ({ id: g.id, title: g.title })),
 		nextBill,

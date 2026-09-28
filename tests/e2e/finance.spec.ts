@@ -222,7 +222,8 @@ test.describe('the Financial Hub', () => {
 		await addIncomeForm.getByRole('textbox', { name: 'Date', exact: true }).fill(today);
 		await addIncomeForm.getByRole('button', { name: 'Add income' }).click();
 
-		const income = page.getByRole('list', { name: 'Income' });
+		// Exact: the page's own "Archived income" list would match a bare 'Income'.
+		const income = page.getByRole('list', { name: 'Income', exact: true });
 		await expect(income).toContainText('Fictional Paycheque');
 
 		await income.getByRole('button', { name: 'Edit' }).click();
@@ -236,6 +237,23 @@ test.describe('the Financial Hub', () => {
 
 		// Money at a glance: received this month now includes the $1980 actual.
 		await expect(page.getByText('CA$1,980.00')).toBeVisible();
+
+		// Archived, it leaves the list but not the page: its own archived list
+		// is the only way back for an income entry, so restore it from there.
+		await income.getByRole('button', { name: 'Edit' }).click();
+		await page
+			.getByRole('dialog', { name: 'Edit income' })
+			.getByRole('button', { name: 'Archive' })
+			.click();
+		await expect(income).toHaveCount(0);
+		const incomeSection = page.getByRole('region', { name: 'Income', exact: true });
+		await incomeSection.getByText('Archived (1)', { exact: true }).click();
+		await page
+			.getByRole('list', { name: 'Archived income' })
+			.getByRole('button', { name: 'Restore' })
+			.click();
+		await expect(income).toContainText('Fictional Paycheque');
+		await expect(incomeSection.getByText('Archived (1)', { exact: true })).toHaveCount(0);
 	});
 
 	test('adds a savings contribution toward a goal and shows the total by goal', async ({
@@ -280,8 +298,18 @@ test.describe('the Financial Hub', () => {
 			.getByRole('dialog', { name: 'Edit contribution' })
 			.getByRole('button', { name: 'Archive' })
 			.click();
-		await expect(page.getByText('Fictional Transfer')).toHaveCount(0);
+		await expect(savings).toHaveCount(0);
 		await expect(page.getByRole('heading', { name: 'Saved by goal' })).toHaveCount(0);
+
+		// Restoring it from the section's archived list puts the money back.
+		const savingsSection = page.getByRole('region', { name: 'Savings', exact: true });
+		await savingsSection.getByText('Archived (1)', { exact: true }).click();
+		await page
+			.getByRole('list', { name: 'Archived savings' })
+			.getByRole('button', { name: 'Restore' })
+			.click();
+		await expect(savings).toContainText('Fictional Transfer');
+		await expect(perGoal).toContainText('CA$200.00');
 	});
 
 	test('the other household member cannot reach a private bill', async ({ page }) => {
