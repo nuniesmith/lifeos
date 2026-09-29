@@ -37,6 +37,7 @@
 		ingredient: 'Ingredient',
 		meal_plan: 'Meal plan',
 		prep_task: 'Prep',
+		food: 'Food',
 		library_item: 'Library',
 		person: 'Person',
 		wishlist_item: 'Wishlist',
