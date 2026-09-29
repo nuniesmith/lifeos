@@ -3,6 +3,7 @@ import type { Viewer } from '../auth/authz';
 import { toDate, toDateOrNull } from '../db/coerce';
 import {
 	InvalidInput,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -61,18 +62,6 @@ import {
  * (one row per read-through) and the TBR picker are R2; StoryGraph's CSV
  * import, challenges and insights are R3. Nothing here anticipates either.
  */
-
-// TODO: base.ts exports this once the Finance PR lands; this copy should be
-// deleted in favour of that one when it does.
-/**
- * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
- * transaction — so a book's row and its author/genre links commit or roll
- * back together, and still compose inside a caller's own transaction
- * (base.ts, rule 3). Copied from food.ts's private helper of the same name.
- */
-function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
-	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
-}
 
 // ─── pure helpers (unit tested directly) ───────────────────────────────────
 
