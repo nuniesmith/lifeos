@@ -162,6 +162,29 @@ describe('logging an entry', () => {
 		expect((await getFoodLogEntry(sql, owner, entry.id))?.name).toBe('Fictional Protein Bar');
 	});
 
+	it('survives the food being removed outright — the FK sets null, the snapshot stays', async () => {
+		const food = ok(
+			await createFood(sql, owner, { name: 'Fictional Granola' }),
+			'create food'
+		).record;
+		const entry = ok(
+			await createFoodLogEntry(sql, owner, {
+				foodId: food.id,
+				meal: 'breakfast',
+				eatenOn: '2026-09-20'
+			}),
+			'log entry'
+		).record;
+
+		// The app itself only ever archives a food; this proves the schema's own
+		// safety net (migration 0032's `on delete set null`) for the case where
+		// a row is removed some other way — a database cleanup, say.
+		await sql`delete from foods where id = ${food.id}::uuid`;
+
+		const survived = await getFoodLogEntry(sql, owner, entry.id);
+		expect(survived).toMatchObject({ foodId: null, name: 'Fictional Granola' });
+	});
+
 	it('requires a typed name and refuses picking both a food and a recipe', async () => {
 		const quick = await createFoodLogEntry(sql, owner, { meal: 'lunch', eatenOn: '2026-09-20' });
 		expect(quick).toMatchObject({ ok: false, reason: 'invalid' });
