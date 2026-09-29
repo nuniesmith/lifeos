@@ -41,7 +41,11 @@
 		person: 'Person',
 		wishlist_item: 'Wishlist',
 		media_item: 'Watchlist',
-		bill: 'Bill'
+		bill: 'Bill',
+		book: 'Book',
+		author: 'Author',
+		book_series: 'Series',
+		genre: 'Genre'
 	};
 
 	/**

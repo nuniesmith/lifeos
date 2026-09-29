@@ -59,7 +59,11 @@ export const ARCHIVE_KINDS = [
 	'person',
 	'wishlist_item',
 	'media_item',
-	'bill'
+	'bill',
+	'book',
+	'author',
+	'book_series',
+	'genre'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
@@ -300,7 +304,39 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		title: column('name'),
 		path: listPage('/entertainment')
 	},
-	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') }
+	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') },
+
+	// Reading Tracker (migration 0030). A book is a full owned record, like
+	// everything above; authors, series and genres have neither owner nor
+	// visibility of their own — household isolation is the whole rule for
+	// them, the same as `tag` above. A genre has no page of its own, but
+	// unlike a tag it does have a list that shows it (/reading/genres, where
+	// rename and archive both happen inline), so it gets a link there rather
+	// than none.
+	book: {
+		table: 'books',
+		scope: 'visibility',
+		title: column('title'),
+		path: detailPage('/reading/books/')
+	},
+	author: {
+		table: 'authors',
+		scope: 'household',
+		title: column('name'),
+		path: detailPage('/reading/authors/')
+	},
+	book_series: {
+		table: 'book_series',
+		scope: 'household',
+		title: column('name'),
+		path: detailPage('/reading/series/')
+	},
+	genre: {
+		table: 'genres',
+		scope: 'household',
+		title: column('name'),
+		path: listPage('/reading/genres')
+	}
 };
 
 /**

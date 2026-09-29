@@ -11,9 +11,13 @@ import {
 	archivedCounts,
 	createArea,
 	createAssessment,
+	createAuthor,
 	createBill,
+	createBook,
+	createBookSeries,
 	createDailyLog,
 	createEvent,
+	createGenre,
 	createGoal,
 	createHabit,
 	createHealthMeasurement,
@@ -38,7 +42,11 @@ import {
 	listTasks,
 	restore,
 	setAreaArchived,
+	setAuthorArchived,
+	setBookArchived,
+	setBookSeriesArchived,
 	setDailyLogArchived,
+	setGenreArchived,
 	setGoalArchived,
 	setHabitArchived,
 	setHealthMeasurementArchived,
@@ -245,7 +253,16 @@ async function oneOfEach(
 			        ${viewer.userId}::uuid)
 			returning id
 		`),
-		bill: await made(createBill(sql, viewer, { name: 'Internet', ...own }), 'bill')
+		bill: await made(createBill(sql, viewer, { name: 'Internet', ...own }), 'bill'),
+		book: await made(createBook(sql, viewer, { title: 'The Sample Saga', ...own }), 'book'),
+		// Authors, series and genres carry no owner or visibility to give them,
+		// the same as tags above.
+		author: await made(createAuthor(sql, viewer, { name: 'Fictional Author' }), 'author'),
+		book_series: await made(
+			createBookSeries(sql, viewer, { name: 'The Sample Chronicles' }),
+			'book_series'
+		),
+		genre: await made(createGenre(sql, viewer, { name: 'Speculative Fiction' }), 'genre')
 	};
 }
 
@@ -276,7 +293,11 @@ const TITLES: Record<ArchiveKind, string> = {
 	person: 'Robin Quill',
 	wishlist_item: 'Rain jacket',
 	media_item: 'Harbour Lights',
-	bill: 'Internet'
+	bill: 'Internet',
+	book: 'The Sample Saga',
+	author: 'Fictional Author',
+	book_series: 'The Sample Chronicles',
+	genre: 'Speculative Fiction'
 };
 
 type Archiver = (
@@ -302,7 +323,11 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	lab_result: setLabResultArchived,
 	health_measurement: setHealthMeasurementArchived,
 	health_term: setHealthTermArchived,
-	recipe: setRecipeArchived
+	recipe: setRecipeArchived,
+	book: setBookArchived,
+	author: setAuthorArchived,
+	book_series: setBookSeriesArchived,
+	genre: setGenreArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {
@@ -516,6 +541,13 @@ describe('every kind the archive holds', () => {
 		expect(paths.library_item).toBe(`/library/${ids.library_item}`);
 		expect(paths.recipe).toBe(`/food/recipes/${ids.recipe}`);
 		expect(paths.daily_log).toBe('/journal/2026-04-17');
+		expect(paths.book).toBe(`/reading/books/${ids.book}`);
+		expect(paths.author).toBe(`/reading/authors/${ids.author}`);
+		expect(paths.book_series).toBe(`/reading/series/${ids.book_series}`);
+		// Genre has no page of its own; /reading/genres is the list that shows
+		// it, the same way ingredients and prep tasks link to a list rather than
+		// a page named after the record.
+		expect(paths.genre).toBe('/reading/genres');
 	});
 
 	it('searches the titles as shown, including ones built from several columns', async () => {
