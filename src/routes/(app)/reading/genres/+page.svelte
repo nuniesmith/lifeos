@@ -41,14 +41,14 @@
 						<input type="hidden" name="id" value={genre.id} />
 						<input type="hidden" name="updatedAt" value={genre.updatedAt.toISOString()} />
 						<Input
-							label="Genre name"
+							label={`Rename ${genre.name}`}
 							name="name"
 							labelHidden
 							value={genre.name}
 							required
 							maxlength={100}
 						/>
-						<Button type="submit" size="sm">Rename</Button>
+						<Button type="submit" size="sm" aria-label={`Rename ${genre.name}`}>Rename</Button>
 					</form>
 
 					<a class="count" href={resolve(appPath(`/reading/books?genre=${genre.id}`))}>
@@ -58,7 +58,9 @@
 					<form method="POST" action="?/archive" use:enhance>
 						<input type="hidden" name="id" value={genre.id} />
 						<input type="hidden" name="archived" value="true" />
-						<Button type="submit" size="sm" variant="ghost">Archive</Button>
+						<Button type="submit" size="sm" variant="ghost" aria-label={`Archive ${genre.name}`}>
+							Archive
+						</Button>
 					</form>
 
 					{#if errorFor(genre.id, 'rename')}
