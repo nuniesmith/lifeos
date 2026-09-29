@@ -24,7 +24,8 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 			{ label: 'Inbox', icon: 'inbox', href: '/inbox' },
 			{ label: 'Brain dump', icon: 'audit', href: '/brain-dump' },
 			{ label: 'Tasks', icon: 'tasks', href: '/tasks' },
-			{ label: 'Habits', icon: 'habits', href: '/habits' }
+			{ label: 'Habits', icon: 'habits', href: '/habits' },
+			{ label: 'Routines', icon: 'habits', href: '/routines' }
 		]
 	},
 	{
