@@ -158,6 +158,50 @@ beforeAll(async () => {
 			insert into routine_step_completions (step_id, user_id, completed_on, version)
 			values (${steps[0]!.id}::uuid, ${sourceUser}::uuid, '2026-09-06', 'average')
 		`;
+
+		// migration 0029 (PACK4-002): a bill with a payment against it, an
+		// income entry, and a savings contribution attached to a goal — the
+		// finance pack's own tables, exercising both the bill_payments child
+		// table (scoped through bills, no household_id of its own) and the
+		// goal_id link a savings contribution carries.
+		const bills = await source<{ id: string }[]>`
+			insert into bills (
+				household_id, name, type, amount, frequency, next_due_on, url, trial_price,
+				created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, 'Fictional Internet Co', 'subscription', 64.99, 'monthly',
+				'2026-10-01', 'https://example.com/fictional-internet', 0,
+				${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into bill_payments (bill_id, amount_paid, paid_on, note, previous_next_due_on, created_by)
+			values (${bills[0]!.id}::uuid, 64.99, '2026-09-01', 'Paid by card', '2026-09-01', ${sourceUser}::uuid)
+		`;
+		await source`
+			insert into income_entries (
+				household_id, owner_user_id, title, expected_amount, actual_amount, received_on,
+				created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional Paycheque', 2000, 1980,
+				'2026-09-15', ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+		`;
+		const goals = await source<{ id: string }[]>`
+			insert into goals (household_id, title, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Fictional Emergency Fund', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		await source`
+			insert into savings_contributions (
+				household_id, owner_user_id, title, amount, contributed_on, goal_id,
+				created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional transfer', 150, '2026-09-20',
+				${goals[0]!.id}::uuid, ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+		`;
 	} finally {
 		await source.end({ timeout: 5 });
 	}
@@ -424,6 +468,38 @@ describe('portable data mobility', () => {
 			`;
 			expect(completions).toEqual([{ user_id: targetUser, version: 'average' }]);
 
+			// Finance (migration 0029): the bill, its payment, the income entry
+			// and the savings contribution all travelled, owner columns remapped
+			// to the target account, and the payment/contribution still resolve
+			// through their links (bill_payments.bill_id, savings_contributions.
+			// goal_id) rather than landing before the row they point at.
+			const bill = await restored<{ name: string; type: string; owner_user_id: string | null }[]>`
+				select name, type, owner_user_id::text as owner_user_id from bills
+				where name = 'Fictional Internet Co'
+			`;
+			expect(bill[0]).toMatchObject({ name: 'Fictional Internet Co', type: 'subscription' });
+
+			const payment = await restored<{ amount_paid: string; bill_name: string }[]>`
+				select p.amount_paid, b.name as bill_name
+				from bill_payments p join bills b on b.id = p.bill_id
+			`;
+			expect(payment[0]?.bill_name).toBe('Fictional Internet Co');
+			expect(Number(payment[0]?.amount_paid)).toBe(64.99);
+
+			const income = await restored<{ title: string; owner_user_id: string }[]>`
+				select title, owner_user_id::text as owner_user_id from income_entries
+			`;
+			expect(income[0]).toMatchObject({ title: 'Fictional Paycheque', owner_user_id: targetUser });
+
+			const saving = await restored<{ title: string; goal_title: string }[]>`
+				select s.title, g.title as goal_title
+				from savings_contributions s join goals g on g.id = s.goal_id
+			`;
+			expect(saving[0]).toMatchObject({
+				title: 'Fictional transfer',
+				goal_title: 'Fictional Emergency Fund'
+			});
+
 			const otherHouseholds = await restored<{ id: string }[]>`
 				insert into households (name) values ('Other target') returning id
 			`;
@@ -452,7 +528,12 @@ describe('portable data mobility', () => {
 					targetUrl,
 					join(workspace, 'target-uploads')
 				)
-			).rejects.toMatchObject({ stderr: expect.stringContaining('refusing to move tasks') });
+				// Not pinned to a specific table: which one collides first depends on
+				// ORDER, and migration 0029's fixture rows above added a `goals` row
+				// that now collides before `tasks` does. The guard itself — refusing
+				// to move ANY row into a household that is not the one that already
+				// has it — is what this proves, not which table happens to hit it.
+			).rejects.toMatchObject({ stderr: expect.stringContaining('refusing to move') });
 		} finally {
 			await restored.end({ timeout: 5 });
 		}

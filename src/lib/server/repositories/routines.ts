@@ -4,6 +4,7 @@ import { toDate, toDateOrNull } from '../db/coerce';
 import {
 	InvalidInput,
 	archiveScoped,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -57,12 +58,6 @@ import {
  * routine's own fields or its steps is stricter, and goes through
  * `writableScope` like everywhere else a record's structure changes.
  */
-
-// TODO: base.ts exports `atomically` once the Finance PR lands; this is a
-// private copy of food.ts's version until then.
-function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
-	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
-}
 
 export const TIME_OF_DAY = ['morning', 'afternoon', 'evening', 'anytime'] as const;
 export type TimeOfDay = (typeof TIME_OF_DAY)[number];

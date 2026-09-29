@@ -5,6 +5,7 @@ import { isDay } from './dates';
 import {
 	InvalidInput,
 	archiveScoped,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -1190,17 +1191,6 @@ export async function unplanMeal(
 // silent and never final: the result names every ingredient moved, and
 // {@link undoPlanShopping} puts exactly those back — only while they are
 // still on the list, so an undo after "Got it" cannot un-buy anything.
-
-/**
- * Runs `fn` as one transaction, or as a savepoint when `sql` is already a
- * transaction — so the writes are all-or-nothing on their own and still
- * compose inside a caller's transaction (base.ts, rule 3).
- */
-function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
-	// The driver types the result as UnwrapPromiseArray<T>, which is T for
-	// anything that is not an array of promises — and nothing here is.
-	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
-}
 
 /** What adding a stretch of the plan to the shopping list did. */
 export interface PlanShopping {

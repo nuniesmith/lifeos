@@ -42,7 +42,9 @@
 		wishlist_item: 'Wishlist',
 		media_item: 'Watchlist',
 		bill: 'Bill',
-		routine: 'Routine'
+		income_entry: 'Income',
+		routine: 'Routine',
+		savings_contribution: 'Savings'
 	};
 
 	/**

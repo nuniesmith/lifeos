@@ -19,6 +19,7 @@ import {
 	createHealthMeasurement,
 	createHealthTerm,
 	createImportantDate,
+	createIncomeEntry,
 	createIngredient,
 	createLabMarker,
 	createLabResult,
@@ -29,6 +30,7 @@ import {
 	createProject,
 	createRecipe,
 	createRoutine,
+	createSavingsContribution,
 	createTag,
 	createTask,
 	createWishlistItem,
@@ -45,6 +47,7 @@ import {
 	setHealthMeasurementArchived,
 	setHealthTermArchived,
 	setImportantDateArchived,
+	setIncomeEntryArchived,
 	setLabMarkerArchived,
 	setLabResultArchived,
 	setMedicalVisitArchived,
@@ -52,6 +55,7 @@ import {
 	setProjectArchived,
 	setRecipeArchived,
 	setRoutineArchived,
+	setSavingsContributionArchived,
 	setTagArchived,
 	setTaskArchived,
 	type ArchiveKind,
@@ -248,9 +252,27 @@ async function oneOfEach(
 			returning id
 		`),
 		bill: await made(createBill(sql, viewer, { name: 'Internet', ...own }), 'bill'),
+		income_entry: await made(
+			createIncomeEntry(sql, viewer, {
+				title: 'Paycheque',
+				actualAmount: 100,
+				receivedOn: '2026-04-17',
+				...own
+			}),
+			'income_entry'
+		),
 		routine: await made(
 			createRoutine(sql, viewer, { name: 'Fictional Morning Routine', ...own }),
 			'routine'
+		),
+		savings_contribution: await made(
+			createSavingsContribution(sql, viewer, {
+				title: 'Rainy day',
+				amount: 25,
+				contributedOn: '2026-04-18',
+				...own
+			}),
+			'savings_contribution'
 		)
 	};
 }
@@ -283,7 +305,9 @@ const TITLES: Record<ArchiveKind, string> = {
 	wishlist_item: 'Rain jacket',
 	media_item: 'Harbour Lights',
 	bill: 'Internet',
-	routine: 'Fictional Morning Routine'
+	income_entry: 'Paycheque — 17 Apr 2026',
+	routine: 'Fictional Morning Routine',
+	savings_contribution: 'Rainy day — 18 Apr 2026'
 };
 
 type Archiver = (
@@ -310,7 +334,9 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	health_measurement: setHealthMeasurementArchived,
 	health_term: setHealthTermArchived,
 	recipe: setRecipeArchived,
-	routine: setRoutineArchived
+	income_entry: setIncomeEntryArchived,
+	routine: setRoutineArchived,
+	savings_contribution: setSavingsContributionArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {
