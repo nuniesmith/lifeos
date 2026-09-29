@@ -1,5 +1,5 @@
 import type { Viewer } from '../auth/authz';
-import { readableScope, type Queryable } from './base';
+import { householdScope, readableScope, type Queryable } from './base';
 import { HEALTH_KINDS } from './health';
 
 /**
@@ -43,7 +43,17 @@ export const SEARCH_KINDS = [
 	// anyone would type a word to find.
 	'medication',
 	'lab_marker',
-	'medical_visit'
+	'medical_visit',
+	// Finance, reading, routines and food, which each arrived after the list
+	// above -- and a book, a food or a routine is looked for by name just as a
+	// recipe is.
+	'income_entry',
+	'savings_contribution',
+	'book',
+	'author',
+	'book_series',
+	'routine',
+	'food'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -260,6 +270,107 @@ export async function search(
 			       (t.archived_at is not null) as archived,
 			       '/finance' as path
 			from bills t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('income_entry')) {
+		branches.push(sql`
+			select 'income_entry' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.source,'')
+			           || ' ' || coalesce(t.type,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.source, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/finance' as path
+			from income_entries t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('savings_contribution')) {
+		branches.push(sql`
+			select 'savings_contribution' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       coalesce(t.notes, '') as body,
+			       (t.archived_at is not null) as archived,
+			       '/finance' as path
+			from savings_contributions t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('book')) {
+		// Found by its authors' names too: "the new Tana French" is how a book
+		// is remembered at least as often as by its title.
+		branches.push(sql`
+			select 'book' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.subtitle,'')
+			           || ' ' || coalesce((
+			               select string_agg(a.name, ' ') from book_authors ba
+			               join authors a on a.id = ba.author_id where ba.book_id = t.id
+			           ), '')
+			           || ' ' || coalesce(t.description,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.subtitle, t.description, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/reading/books/' || t.id as path
+			from books t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('author')) {
+		// Household-wide reference data with no owner, like tags: the household
+		// is the whole scope (see reading.ts).
+		branches.push(sql`
+			select 'author' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       coalesce(t.notes, '') as body,
+			       (t.archived_at is not null) as archived,
+			       '/reading/authors/' || t.id as path
+			from authors t
+			where ${householdScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('book_series')) {
+		branches.push(sql`
+			select 'book_series' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       coalesce(t.notes, '') as body,
+			       (t.archived_at is not null) as archived,
+			       '/reading/series/' || t.id as path
+			from book_series t
+			where ${householdScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('routine')) {
+		// Its live steps' titles count as its words: "stretch" should find the
+		// morning routine that has a Stretch step.
+		branches.push(sql`
+			select 'routine' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.notes,'')
+			           || ' ' || coalesce((
+			               select string_agg(s.title, ' ') from routine_steps s
+			               where s.routine_id = t.id and s.archived_at is null
+			           ), '')) as doc,
+			       coalesce(t.notes, '') as body,
+			       (t.archived_at is not null) as archived,
+			       '/routines/' || t.id as path
+			from routines t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('food')) {
+		branches.push(sql`
+			select 'food' as kind, t.id, t.name as title,
+			       to_tsvector('english', coalesce(t.name,'') || ' ' || coalesce(t.brand,'')
+			           || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.brand, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/food/library' as path
+			from foods t
 			where ${readableScope(sql, viewer, 't')}
 		`);
 	}

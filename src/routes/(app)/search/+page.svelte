@@ -27,7 +27,15 @@
 		health_measurement: 'Reading',
 		medication: 'Medication',
 		lab_marker: 'Lab marker',
-		medical_visit: 'Visit'
+		medical_visit: 'Visit',
+		income_entry: 'Income',
+		savings_contribution: 'Savings',
+		// Not "Reading": that is already a health measurement's label, above.
+		book: 'Book',
+		author: 'Author',
+		book_series: 'Series',
+		routine: 'Routine',
+		food: 'Food'
 	};
 
 	/**
