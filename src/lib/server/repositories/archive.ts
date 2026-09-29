@@ -59,7 +59,9 @@ export const ARCHIVE_KINDS = [
 	'person',
 	'wishlist_item',
 	'media_item',
-	'bill'
+	'bill',
+	'income_entry',
+	'savings_contribution'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
@@ -300,7 +302,21 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		title: column('name'),
 		path: listPage('/entertainment')
 	},
-	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') }
+	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') },
+	// Named with their day: "Paycheque" or "Transfer to savings" recurs every
+	// few weeks, so a title alone cannot tell one archived entry from the next.
+	income_entry: {
+		table: 'income_entries',
+		scope: 'visibility',
+		title: (sql) => sql`t.title || ' — ' || ${day(sql, sql`t.received_on`)}`,
+		path: listPage('/finance')
+	},
+	savings_contribution: {
+		table: 'savings_contributions',
+		scope: 'visibility',
+		title: (sql) => sql`t.title || ' — ' || ${day(sql, sql`t.contributed_on`)}`,
+		path: listPage('/finance')
+	}
 };
 
 /**

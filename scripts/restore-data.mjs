@@ -86,6 +86,12 @@ const TABLES = [
 	// remapped generically, the same as owner_user_id below.
 	'media_viewings',
 	'bills',
+	// migration 0029: bill_payments references bills, so it must land after it;
+	// income_entries has no dependency of its own; savings_contributions may
+	// reference goals, which is already restored far earlier in this list.
+	'bill_payments',
+	'income_entries',
+	'savings_contributions',
 	'prep_tasks',
 	'wishlist_items',
 	'life_assessments',
@@ -151,6 +157,12 @@ const ORDER = [
 	// remapped generically, the same as owner_user_id below.
 	'media_viewings',
 	'bills',
+	// migration 0029: bill_payments references bills, so it must land after it;
+	// income_entries has no dependency of its own; savings_contributions may
+	// reference goals, which is already restored far earlier in this list.
+	'bill_payments',
+	'income_entries',
+	'savings_contributions',
 	'prep_tasks',
 	'wishlist_items',
 	'life_assessments',
