@@ -61,7 +61,12 @@ export const ARCHIVE_KINDS = [
 	'wishlist_item',
 	'media_item',
 	'bill',
+	'book',
+	'author',
+	'book_series',
+	'genre',
 	'income_entry',
+	'routine',
 	'savings_contribution'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
@@ -318,11 +323,49 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		title: (sql) => sql`t.title || ' — ' || ${day(sql, sql`t.received_on`)}`,
 		path: listPage('/finance')
 	},
+	routine: {
+		table: 'routines',
+		scope: 'visibility',
+		title: column('name'),
+		path: detailPage('/routines/')
+	},
 	savings_contribution: {
 		table: 'savings_contributions',
 		scope: 'visibility',
 		title: (sql) => sql`t.title || ' — ' || ${day(sql, sql`t.contributed_on`)}`,
 		path: listPage('/finance')
+	},
+
+	// Reading Tracker (migration 0030). A book is a full owned record, like
+	// everything above; authors, series and genres have neither owner nor
+	// visibility of their own — household isolation is the whole rule for
+	// them, the same as `tag` above. A genre has no page of its own, but
+	// unlike a tag it does have a list that shows it (/reading/genres, where
+	// rename and archive both happen inline), so it gets a link there rather
+	// than none.
+	book: {
+		table: 'books',
+		scope: 'visibility',
+		title: column('title'),
+		path: detailPage('/reading/books/')
+	},
+	author: {
+		table: 'authors',
+		scope: 'household',
+		title: column('name'),
+		path: detailPage('/reading/authors/')
+	},
+	book_series: {
+		table: 'book_series',
+		scope: 'household',
+		title: column('name'),
+		path: detailPage('/reading/series/')
+	},
+	genre: {
+		table: 'genres',
+		scope: 'household',
+		title: column('name'),
+		path: listPage('/reading/genres')
 	}
 };
 
@@ -336,7 +379,14 @@ export const NOT_IN_THE_ARCHIVE: Readonly<Record<string, string>> = {
 	attachments:
 		'a stored file, not a record: it is reached only through the record that embeds it, has no ' +
 		'owner or visibility of its own to scope a listing by, and archived files are on their own ' +
-		'clock (`purge_after`) towards physical deletion once backups no longer need them'
+		'clock (`purge_after`) towards physical deletion once backups no longer need them',
+	routine_steps:
+		'like attachments, it has no household_id, owner or visibility of its own to scope a listing ' +
+		'by, and it is reached only through the routine that holds it. `setStepArchived` is reversible ' +
+		'at the repository layer the same way every other set*Archived is, but a standalone archive ' +
+		'entry for one step -- with its own link to a page that would show a single step in isolation ' +
+		'-- is not a page this application has; the routine around it is what the global Archive ' +
+		'restores, and re-typing a short step is cheaper than a second recovery mechanism for it alone'
 };
 
 /** The table behind each kind, for the test that holds the list above true. */

@@ -376,6 +376,37 @@ export function logHabit(
 	});
 }
 
+/**
+ * Records a check-in only if the day has none yet, and says whether it did.
+ *
+ * For a check-in made on someone's behalf -- a routine step linked to this
+ * habit -- rather than by the person on /habits. `logHabit`'s upsert would
+ * overwrite a check-in they already made (clearing its note), so this
+ * inserts or does nothing. The `true` it returns is what lets the caller
+ * undo exactly the check-in it made, and never one it didn't. Readability is
+ * gated the same way `logHabit` gates it, through the habits table in the
+ * same statement.
+ */
+export async function logHabitIfAbsent(
+	sql: Queryable,
+	viewer: Viewer,
+	input: { habitId: string; onDate: string }
+): Promise<boolean> {
+	if (!isUuid(input.habitId)) return false;
+	const onDate = requiredDay(input.onDate, 'date');
+	const rows = await sql<{ id: string }[]>`
+		insert into habit_logs (habit_id, user_id, on_date, completed)
+		select h.id, ${viewer.userId}::uuid, ${onDate}::date, true
+		from habits h
+		where h.id = ${input.habitId}::uuid
+		  and h.archived_at is null
+		  and ${readableScope(sql, viewer, 'h')}
+		on conflict (habit_id, user_id, on_date) do nothing
+		returning id
+	`;
+	return rows.length > 0;
+}
+
 /** Removes a check-in. Missing is success: the day ends up unlogged either way. */
 export async function unlogHabit(
 	sql: Queryable,

@@ -62,6 +62,14 @@ const TABLES = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of "Habits & Routines", so
+	// they land right after habits, which routine_steps.habit_id may
+	// reference. created_by/updated_by need no special remapping -- that is
+	// already generic below -- so routines only has to land after habits,
+	// routine_steps after routines, and routine_step_completions after both.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before dependants; the
 	// link tables after both of their sides, so a foreign key never lands
@@ -100,6 +108,12 @@ const TABLES = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	// Reading Tracker (migration 0030): book_series, authors and genres have
+	// no dependency on each other; books references book_series.
+	'book_series',
+	'authors',
+	'genres',
+	'books',
 	'attachments',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
@@ -121,6 +135,11 @@ const TABLES = [
 	'recipe_ingredients',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
+	// migration 0030: book_authors/book_genres need no special remapping — ids
+	// are preserved verbatim, so they only have to land after books, whose id
+	// both carry (the same shape as library_links above).
+	'book_authors',
+	'book_genres',
 	'attachment_links'
 ];
 
@@ -137,6 +156,14 @@ const ORDER = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of "Habits & Routines", so
+	// they land right after habits, which routine_steps.habit_id may
+	// reference. created_by/updated_by need no special remapping -- that is
+	// already generic below -- so routines only has to land after habits,
+	// routine_steps after routines, and routine_step_completions after both.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before dependants; the
 	// link tables after both of their sides, so a foreign key never lands
@@ -175,6 +202,10 @@ const ORDER = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	'book_series',
+	'authors',
+	'genres',
+	'books',
 	'attachments',
 	'lab_markers',
 	'medical_visits',
@@ -194,6 +225,8 @@ const ORDER = [
 	'recipe_ingredients',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
+	'book_authors',
+	'book_genres',
 	'attachment_links'
 ];
 
@@ -250,7 +283,9 @@ function mappedValue(table, column, value, targetOwner) {
 	if (column === 'sha256' && typeof value === 'string') return Buffer.from(value, 'hex');
 	if (['owner_user_id', 'created_by', 'updated_by', 'started_by', 'logged_by'].includes(column))
 		return targetOwner;
-	if (table === 'habit_logs' && column === 'user_id') return targetOwner;
+	if (['habit_logs', 'routine_step_completions'].includes(table) && column === 'user_id') {
+		return targetOwner;
+	}
 	return value;
 }
 

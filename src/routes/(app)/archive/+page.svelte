@@ -44,7 +44,12 @@
 		media_item: 'Watchlist',
 		bill: 'Bill',
 		income_entry: 'Income',
-		savings_contribution: 'Savings'
+		routine: 'Routine',
+		savings_contribution: 'Savings',
+		book: 'Book',
+		author: 'Author',
+		book_series: 'Series',
+		genre: 'Genre'
 	};
 
 	/**

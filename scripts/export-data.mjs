@@ -45,6 +45,14 @@ const TABLES = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of the source's "Habits &
+	// Routines", so they sit right beside habits here. steps and completions
+	// carry no household_id of their own -- scoped through routines the way
+	// medication_doses is scoped through medications below -- and land right
+	// after it for the same reason.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before the tables that
 	// reference them; the link tables come after both of their sides.
@@ -86,6 +94,14 @@ const TABLES = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	// Reading Tracker (migration 0030): book_series, authors and genres have
+	// no dependency on each other; books references book_series, and its two
+	// joins (below, with the other link tables) come after both of their
+	// sides.
+	'book_series',
+	'authors',
+	'genres',
+	'books',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
 	'lab_markers',
@@ -108,6 +124,13 @@ const TABLES = [
 	'recipe_ingredients',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
+	// migration 0030: book_authors/book_genres have no household_id of their
+	// own — scoped through books the same way recipe_ingredients is scoped
+	// through recipes — so they are listed here for real even though
+	// data-mobility.test.ts's household_id scan would not have caught their
+	// absence.
+	'book_authors',
+	'book_genres',
 	'attachments',
 	'attachment_links'
 ];
@@ -160,6 +183,12 @@ async function rowsFor(db, table, id) {
 			return db`select * from daily_logs where household_id = ${id}::uuid order by id`;
 		case 'habits':
 			return db`select * from habits where household_id = ${id}::uuid order by id`;
+		case 'routines':
+			return db`select * from routines where household_id = ${id}::uuid order by id`;
+		case 'routine_steps':
+			return db`select s.* from routine_steps s join routines r on r.id = s.routine_id where r.household_id = ${id}::uuid order by s.routine_id, s.position`;
+		case 'routine_step_completions':
+			return db`select c.* from routine_step_completions c join routine_steps s on s.id = c.step_id join routines r on r.id = s.routine_id where r.household_id = ${id}::uuid order by c.step_id, c.user_id, c.completed_on`;
 		case 'tags':
 			return db`select * from tags where household_id = ${id}::uuid order by id`;
 		case 'task_dependencies':
@@ -200,10 +229,18 @@ async function rowsFor(db, table, id) {
 		case 'medical_visits':
 		case 'lab_results':
 		case 'media_viewings':
+		case 'book_series':
+		case 'authors':
+		case 'genres':
+		case 'books':
 			// All carry household_id directly, so one branch serves them.
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'bill_payments':
 			return db`select p.* from bill_payments p join bills b on b.id = p.bill_id where b.household_id = ${id}::uuid order by p.bill_id, p.paid_on, p.created_at`;
+		case 'book_authors':
+			return db`select ba.* from book_authors ba join books b on b.id = ba.book_id where b.household_id = ${id}::uuid order by ba.book_id, ba.author_id`;
+		case 'book_genres':
+			return db`select bg.* from book_genres bg join books b on b.id = bg.book_id where b.household_id = ${id}::uuid order by bg.book_id, bg.genre_id`;
 		case 'daily_log_health':
 			return db`select h.* from daily_log_health h join daily_logs l on l.id = h.daily_log_id where l.household_id = ${id}::uuid order by h.daily_log_id, h.vocabulary_id`;
 		case 'medication_doses':

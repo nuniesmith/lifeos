@@ -11,10 +11,14 @@ import {
 	archivedCounts,
 	createArea,
 	createAssessment,
+	createAuthor,
 	createBill,
+	createBook,
+	createBookSeries,
 	createDailyLog,
 	createEvent,
 	createFood,
+	createGenre,
 	createGoal,
 	createHabit,
 	createHealthMeasurement,
@@ -30,6 +34,7 @@ import {
 	createPerson,
 	createProject,
 	createRecipe,
+	createRoutine,
 	createSavingsContribution,
 	createTag,
 	createTask,
@@ -41,8 +46,12 @@ import {
 	listTasks,
 	restore,
 	setAreaArchived,
+	setAuthorArchived,
+	setBookArchived,
+	setBookSeriesArchived,
 	setDailyLogArchived,
 	setFoodArchived,
+	setGenreArchived,
 	setGoalArchived,
 	setHabitArchived,
 	setHealthMeasurementArchived,
@@ -55,6 +64,7 @@ import {
 	setMedicationArchived,
 	setProjectArchived,
 	setRecipeArchived,
+	setRoutineArchived,
 	setSavingsContributionArchived,
 	setTagArchived,
 	setTaskArchived,
@@ -262,6 +272,10 @@ async function oneOfEach(
 			}),
 			'income_entry'
 		),
+		routine: await made(
+			createRoutine(sql, viewer, { name: 'Fictional Morning Routine', ...own }),
+			'routine'
+		),
 		savings_contribution: await made(
 			createSavingsContribution(sql, viewer, {
 				title: 'Rainy day',
@@ -270,7 +284,16 @@ async function oneOfEach(
 				...own
 			}),
 			'savings_contribution'
-		)
+		),
+		book: await made(createBook(sql, viewer, { title: 'The Sample Saga', ...own }), 'book'),
+		// Authors, series and genres carry no owner or visibility to give them,
+		// the same as tags above.
+		author: await made(createAuthor(sql, viewer, { name: 'Fictional Author' }), 'author'),
+		book_series: await made(
+			createBookSeries(sql, viewer, { name: 'The Sample Chronicles' }),
+			'book_series'
+		),
+		genre: await made(createGenre(sql, viewer, { name: 'Speculative Fiction' }), 'genre')
 	};
 }
 
@@ -304,7 +327,12 @@ const TITLES: Record<ArchiveKind, string> = {
 	media_item: 'Harbour Lights',
 	bill: 'Internet',
 	income_entry: 'Paycheque — 17 Apr 2026',
-	savings_contribution: 'Rainy day — 18 Apr 2026'
+	routine: 'Fictional Morning Routine',
+	savings_contribution: 'Rainy day — 18 Apr 2026',
+	book: 'The Sample Saga',
+	author: 'Fictional Author',
+	book_series: 'The Sample Chronicles',
+	genre: 'Speculative Fiction'
 };
 
 type Archiver = (
@@ -333,7 +361,12 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	recipe: setRecipeArchived,
 	food: setFoodArchived,
 	income_entry: setIncomeEntryArchived,
-	savings_contribution: setSavingsContributionArchived
+	routine: setRoutineArchived,
+	savings_contribution: setSavingsContributionArchived,
+	book: setBookArchived,
+	author: setAuthorArchived,
+	book_series: setBookSeriesArchived,
+	genre: setGenreArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {
@@ -547,6 +580,13 @@ describe('every kind the archive holds', () => {
 		expect(paths.library_item).toBe(`/library/${ids.library_item}`);
 		expect(paths.recipe).toBe(`/food/recipes/${ids.recipe}`);
 		expect(paths.daily_log).toBe('/journal/2026-04-17');
+		expect(paths.book).toBe(`/reading/books/${ids.book}`);
+		expect(paths.author).toBe(`/reading/authors/${ids.author}`);
+		expect(paths.book_series).toBe(`/reading/series/${ids.book_series}`);
+		// Genre has no page of its own; /reading/genres is the list that shows
+		// it, the same way ingredients and prep tasks link to a list rather than
+		// a page named after the record.
+		expect(paths.genre).toBe('/reading/genres');
 	});
 
 	it('searches the titles as shown, including ones built from several columns', async () => {
@@ -599,13 +639,22 @@ describe('privacy, for every kind', () => {
 		await archiveEach(partner, theirs);
 
 		expect(owner.role).toBe('admin');
-		// Tags have no owner and are shared by design, so they are the one kind
-		// the other member may see here.
-		expect((await listArchived(sql, owner, { limit: 300 })).map((r) => r.kind)).toEqual(['tag']);
-		expect(await archivedCounts(sql, owner)).toEqual({ ...every(0), tag: 1 });
+		// Tags, authors, series and genres have no owner and are shared by
+		// design, so they are the kinds the other member may see here.
+		expect((await listArchived(sql, owner, { limit: 300 })).map((r) => r.kind).sort()).toEqual(
+			['author', 'book_series', 'genre', 'tag'].sort()
+		);
+		expect(await archivedCounts(sql, owner)).toEqual({
+			...every(0),
+			tag: 1,
+			author: 1,
+			book_series: 1,
+			genre: 1
+		});
 
+		const noOwner = new Set<ArchiveKind>(['tag', 'author', 'book_series', 'genre']);
 		for (const kind of ARCHIVE_KINDS) {
-			if (kind === 'tag') continue;
+			if (noOwner.has(kind)) continue;
 			expect(await restore(sql, owner, kind, theirs[kind]), kind).toMatchObject({
 				ok: false,
 				reason: 'not_found'
@@ -631,8 +680,11 @@ describe('privacy, for every kind', () => {
 		expect(seen).toEqual(ARCHIVE_KINDS.filter((k) => k !== 'daily_log').sort());
 
 		for (const kind of ARCHIVE_KINDS) {
-			// Household-wide: either member may restore a tag.
-			if (kind === 'tag') continue;
+			// Household-wide: either member may restore a tag, an author, a
+			// series or a genre — none of them carry an owner to check.
+			if (kind === 'tag' || kind === 'author' || kind === 'book_series' || kind === 'genre') {
+				continue;
+			}
 			expect(await restore(sql, owner, kind, theirs[kind]), kind).toMatchObject({
 				ok: false,
 				reason: 'not_found'

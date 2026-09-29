@@ -152,6 +152,31 @@ beforeAll(async () => {
 			values (${habitId}::uuid, ${sourceUser}::uuid, '2026-09-06')
 		`;
 
+		// migration 0031: a routine with one step linked to the habit above (so
+		// the restore's generic id preservation is what has to make the link
+		// resolve), and one completion -- the household-scoped table plus both
+		// of the child tables that are scoped through it instead.
+		const routines = await source<{ id: string }[]>`
+			insert into routines (household_id, owner_user_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional Morning Routine',
+			        ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const routineId = routines[0]!.id;
+		const steps = await source<{ id: string }[]>`
+			insert into routine_steps (
+				routine_id, position, title, average_version, habit_id, created_by, updated_by
+			) values (
+				${routineId}::uuid, 1, 'Drink water', 'Drink a full glass of water', ${habitId}::uuid,
+				${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into routine_step_completions (step_id, user_id, completed_on, version)
+			values (${steps[0]!.id}::uuid, ${sourceUser}::uuid, '2026-09-06', 'average')
+		`;
+
 		// migration 0029 (PACK4-002): a bill with a payment against it, an
 		// income entry, and a savings contribution attached to a goal — the
 		// finance pack's own tables, exercising both the bill_payments child
@@ -194,6 +219,46 @@ beforeAll(async () => {
 				${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional transfer', 150, '2026-09-20',
 				${goals[0]!.id}::uuid, ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
+		`;
+
+		// Reading Tracker (migration 0030): a series, an author and a genre —
+		// none scoped through a parent, all three carry their own household_id
+		// — a book belonging to all three, and both of the joins between them
+		// (book_authors/book_genres, scoped through books the way
+		// recipe_ingredients is scoped through recipes).
+		const readingSeries = await source<{ id: string }[]>`
+			insert into book_series (household_id, name, planned_count, created_by, updated_by)
+			values (
+				${sourceHousehold}::uuid, 'The Fictional Chronicles', 3, ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		const readingAuthors = await source<{ id: string }[]>`
+			insert into authors (household_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Fictional Author', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const readingGenres = await source<{ id: string }[]>`
+			insert into genres (household_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Speculative Fiction', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const readingBooks = await source<{ id: string }[]>`
+			insert into books (
+				household_id, title, series_id, series_position, status, created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, 'The Sample Saga', ${readingSeries[0]!.id}::uuid, 1, 'reading',
+				${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into book_authors (book_id, author_id, position)
+			values (${readingBooks[0]!.id}::uuid, ${readingAuthors[0]!.id}::uuid, 0)
+		`;
+		await source`
+			insert into book_genres (book_id, genre_id)
+			values (${readingBooks[0]!.id}::uuid, ${readingGenres[0]!.id}::uuid)
 		`;
 	} finally {
 		await source.end({ timeout: 5 });
@@ -272,7 +337,10 @@ const NOT_PORTABLE: Record<string, string> = {
 	change_log: 'an audit of edits to rows that are themselves being copied',
 	backup_runs: 'bookkeeping about this install\u2019s backups',
 	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id',
-	medication_doses: 'exported, but scoped through medications rather than by household_id'
+	medication_doses: 'exported, but scoped through medications rather than by household_id',
+	routine_steps: 'exported, but scoped through routines rather than by household_id',
+	routine_step_completions:
+		'exported, but scoped through routine_steps and routines rather than by household_id'
 };
 
 describe('everything household-scoped is portable', () => {
@@ -335,6 +403,14 @@ describe('everything household-scoped is portable', () => {
 		before('daily_log_health', 'daily_logs');
 		before('daily_log_health', 'health_vocabulary');
 		before('health_measurements', 'daily_logs');
+		before('books', 'book_series');
+		before('book_authors', 'books');
+		before('book_authors', 'authors');
+		before('book_genres', 'books');
+		before('book_genres', 'genres');
+		before('routine_steps', 'routines');
+		before('routine_steps', 'habits');
+		before('routine_step_completions', 'routine_steps');
 
 		expect(listOf('TABLES').sort()).toEqual([...order].sort());
 	});
@@ -469,6 +545,26 @@ describe('portable data mobility', () => {
 			const logs = await restored`select user_id::text as user_id from habit_logs`;
 			expect(logs).toEqual([{ user_id: targetUser }]);
 
+			// migration 0031: the routine and its habit-linked step travel with
+			// their ids preserved verbatim (the same discipline the daily log
+			// link above already relies on), so the step's habit_id still names
+			// the very row that habit_logs.habit_id above does. The
+			// completion's user_id is remapped the same way habit_logs' is.
+			const routine = await restored<{ name: string }[]>`select name from routines`;
+			expect(routine[0]?.name).toBe('Fictional Morning Routine');
+
+			const [habitRow] = await restored<{ id: string }[]>`select id from habits`;
+			const step = await restored<{ title: string; habit_id: string | null }[]>`
+				select title, habit_id::text as habit_id from routine_steps
+			`;
+			expect(step[0]).toMatchObject({ title: 'Drink water' });
+			expect(step[0]?.habit_id).toBe(habitRow?.id);
+
+			const completions = await restored<{ user_id: string; version: string }[]>`
+				select user_id::text as user_id, version from routine_step_completions
+			`;
+			expect(completions).toEqual([{ user_id: targetUser, version: 'average' }]);
+
 			// Finance (migration 0029): the bill, its payment, the income entry
 			// and the savings contribution all travelled, owner columns remapped
 			// to the target account, and the payment/contribution still resolve
@@ -499,6 +595,34 @@ describe('portable data mobility', () => {
 			expect(saving[0]).toMatchObject({
 				title: 'Fictional transfer',
 				goal_title: 'Fictional Emergency Fund'
+			});
+
+			// Reading Tracker (migration 0030): the book, its series and both
+			// joins (book_authors/book_genres) travelled, resolving through the
+			// same ids restore-data.mjs preserves verbatim rather than landing
+			// before the rows they point at.
+			const book = await restored<
+				{
+					title: string;
+					series_name: string;
+					author_name: string;
+					genre_name: string;
+				}[]
+			>`
+				select bk.title, bs.name as series_name, a.name as author_name, g.name as genre_name
+				from books bk
+				join book_series bs on bs.id = bk.series_id
+				join book_authors ba on ba.book_id = bk.id
+				join authors a on a.id = ba.author_id
+				join book_genres bg on bg.book_id = bk.id
+				join genres g on g.id = bg.genre_id
+				where bk.title = 'The Sample Saga'
+			`;
+			expect(book[0]).toMatchObject({
+				title: 'The Sample Saga',
+				series_name: 'The Fictional Chronicles',
+				author_name: 'Fictional Author',
+				genre_name: 'Speculative Fiction'
 			});
 
 			const otherHouseholds = await restored<{ id: string }[]>`
