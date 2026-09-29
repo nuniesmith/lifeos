@@ -9,7 +9,11 @@ import { compactPositions, resolveStepVersion } from '$lib/server/repositories/r
  */
 
 describe('resolveStepVersion', () => {
-	const step = { highVersion: 'Sprint 5k', averageVersion: 'Walk 20 minutes', minimalVersion: null };
+	const step = {
+		highVersion: 'Sprint 5k',
+		averageVersion: 'Walk 20 minutes',
+		minimalVersion: null
+	};
 
 	it('shows the average version by default', () => {
 		expect(resolveStepVersion(step, 'average')).toBe('Walk 20 minutes');

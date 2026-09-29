@@ -774,7 +774,11 @@ export function completeStep(
 				select habit_id from routine_steps where id = ${stepId}::uuid
 			`;
 			if (step?.habit_id) {
-				await logHabit(tx, viewer, { habitId: step.habit_id, onDate: completedOn, completed: true });
+				await logHabit(tx, viewer, {
+					habitId: step.habit_id,
+					onDate: completedOn,
+					completed: true
+				});
 			}
 
 			return { ok: true, record: mapCompletion(row) };
