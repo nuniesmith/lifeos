@@ -42,6 +42,8 @@
 		wishlist_item: 'Wishlist',
 		media_item: 'Watchlist',
 		bill: 'Bill',
+		income_entry: 'Income',
+		savings_contribution: 'Savings',
 		book: 'Book',
 		author: 'Author',
 		book_series: 'Series',

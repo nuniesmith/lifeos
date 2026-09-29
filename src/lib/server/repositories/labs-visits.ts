@@ -3,6 +3,7 @@ import type { Viewer } from '../auth/authz';
 import { toDate } from '../db/coerce';
 import {
 	InvalidInput,
+	atomically,
 	baseColumns,
 	getScoped,
 	guarded,
@@ -903,11 +904,6 @@ const PEOPLE = 'people';
 
 /** Table `provider_person_id`/`location_place_id`/`pet_id` each require (migration 0028). */
 type VisitLinkKind = 'person' | 'place' | 'pet';
-
-/** Local to this file rather than exported from ./base -- see the identical helper and comment in ./food.ts. */
-function atomically<T>(sql: Queryable, fn: (tx: Queryable) => Promise<T>): Promise<T> {
-	return ('savepoint' in sql ? sql.savepoint(fn) : sql.begin(fn)) as Promise<T>;
-}
 
 /** What {@link resolveVisitLink} decides: either the id to write, or a refusal. */
 type LinkResolution = { ok: true; id: string | null } | { ok: false };
