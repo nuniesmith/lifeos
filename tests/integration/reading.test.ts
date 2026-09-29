@@ -184,6 +184,23 @@ describe('authors', () => {
 			await updateAuthor(sql, elsewhere, created.id, { name: 'Hijacked' }, created.updatedAt)
 		).toMatchObject({ ok: false, reason: 'not_found' });
 	});
+
+	it('refuses a stale write', async () => {
+		// authors is not one of migration 0004's tables, so nothing sets
+		// updated_at on this row unless updateAuthor does it itself — this is
+		// the test that would fail silently (no conflict, ever) if it stopped.
+		const created = ok(
+			await createAuthor(sql, owner, { name: 'Fictional Author' }),
+			'create'
+		).record;
+		ok(
+			await updateAuthor(sql, owner, created.id, { notes: 'First edit' }, created.updatedAt),
+			'first edit'
+		);
+		expect(
+			await updateAuthor(sql, owner, created.id, { notes: 'Second edit' }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+	});
 });
 
 describe('series', () => {
@@ -240,6 +257,20 @@ describe('series', () => {
 		ok(await setBookSeriesArchived(sql, owner, created.id, false), 'restore');
 		expect((await getBookSeries(sql, owner, created.id))?.archivedAt).toBeNull();
 	});
+
+	it('refuses a stale write', async () => {
+		const created = ok(
+			await createBookSeries(sql, owner, { name: 'The Sample Chronicles' }),
+			'create'
+		).record;
+		ok(
+			await updateBookSeries(sql, owner, created.id, { plannedCount: 5 }, created.updatedAt),
+			'first edit'
+		);
+		expect(
+			await updateBookSeries(sql, owner, created.id, { plannedCount: 6 }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+	});
 });
 
 describe('genres', () => {
@@ -275,6 +306,17 @@ describe('genres', () => {
 		expect((await getGenre(sql, owner, created.id))?.archivedAt).not.toBeNull();
 		ok(await setGenreArchived(sql, owner, created.id, false), 'restore');
 		expect((await getGenre(sql, owner, created.id))?.archivedAt).toBeNull();
+	});
+
+	it('refuses a stale write', async () => {
+		const created = ok(await createGenre(sql, owner, { name: 'Cozy Mystery' }), 'create').record;
+		ok(
+			await updateGenre(sql, owner, created.id, { name: 'Cosy Mystery' }, created.updatedAt),
+			'first edit'
+		);
+		expect(
+			await updateGenre(sql, owner, created.id, { name: 'Cozy Mysteries' }, created.updatedAt)
+		).toMatchObject({ ok: false, reason: 'conflict' });
 	});
 });
 
