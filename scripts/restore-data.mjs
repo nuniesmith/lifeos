@@ -76,6 +76,10 @@ const TABLES = [
 	'health_measurements',
 	'ingredients',
 	'recipes',
+	// migration 0032: foods before food_log_entries, whose food_id it carries
+	// (food_log_entries also carries recipe_id, already above it).
+	'foods',
+	'food_log_entries',
 	'meal_plans',
 	'library_items',
 	'people',
@@ -147,6 +151,10 @@ const ORDER = [
 	'health_measurements',
 	'ingredients',
 	'recipes',
+	// migration 0032: foods before food_log_entries, whose food_id it carries
+	// (food_log_entries also carries recipe_id, already above it).
+	'foods',
+	'food_log_entries',
 	'meal_plans',
 	'library_items',
 	'people',

@@ -96,6 +96,24 @@ beforeAll(async () => {
 			insert into recipe_ingredients (recipe_id, ingredient_id, amount)
 			values (${recipes[0]!.id}::uuid, ${ingredients[0]!.id}::uuid, '2 heads')
 		`;
+		// migration 0032: a food with its per-serving nutrients, and a log entry
+		// against it that also exercises a per-entry override — owner_user_id is
+		// NOT NULL here (unlike recipes/ingredients above), so this also proves
+		// the generic owner remap (mappedValue) reaches a required column, not
+		// only the optional ones the other fixtures below use.
+		const foods = await source<{ id: string }[]>`
+			insert into foods (household_id, name, protein_g, kcal_per_serving)
+			values (${sourceHousehold}::uuid, 'Fictional Protein Bar', 20, 200)
+			returning id
+		`;
+		await source`
+			insert into food_log_entries (
+				household_id, owner_user_id, eaten_on, meal, food_id, name, servings, kcal_override
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, '2026-09-20', 'snack',
+				${foods[0]!.id}::uuid, 'Fictional Protein Bar', 1.5, 999
+			)
+		`;
 		const terms = await source<{ id: string }[]>`
 			insert into health_vocabulary (household_id, kind, name)
 			values (${sourceHousehold}::uuid, 'symptom', 'Nausea')
@@ -310,6 +328,8 @@ describe('everything household-scoped is portable', () => {
 		before('significant_events', 'areas');
 		before('recipe_ingredients', 'ingredients');
 		before('recipe_ingredients', 'recipes');
+		before('food_log_entries', 'foods');
+		before('food_log_entries', 'recipes');
 		before('meal_plan_recipes', 'meal_plans');
 		before('meal_plan_recipes', 'recipes');
 		before('daily_log_health', 'daily_logs');
@@ -393,6 +413,38 @@ describe('portable data mobility', () => {
 				from recipe_ingredients ri join ingredients i on i.id = ri.ingredient_id
 			`;
 			expect(pairing[0]).toEqual({ amount: '2 heads', ingredient: 'Broccoli' });
+
+			// migration 0032: the food, and the entry logged against it — its
+			// food_id still resolves (ids are preserved verbatim), its override
+			// travelled, and its owner_user_id — NOT NULL, unlike ingredients'
+			// or recipes' optional owner above — was remapped to the target
+			// account the same way tasks' owner_user_id was.
+			const food = await restored<{ name: string; protein_g: string }[]>`
+				select name, protein_g from foods
+			`;
+			expect(food[0]?.name).toBe('Fictional Protein Bar');
+			expect(Number(food[0]?.protein_g)).toBe(20);
+
+			const entry = await restored<
+				{
+					name: string;
+					servings: string;
+					kcal_override: string;
+					owner_user_id: string;
+					food_name: string;
+				}[]
+			>`
+				select e.name, e.servings, e.kcal_override, e.owner_user_id::text as owner_user_id,
+				       f.name as food_name
+				from food_log_entries e join foods f on f.id = e.food_id
+			`;
+			expect(entry[0]).toMatchObject({
+				name: 'Fictional Protein Bar',
+				owner_user_id: targetUser,
+				food_name: 'Fictional Protein Bar'
+			});
+			expect(Number(entry[0]?.kcal_override)).toBe(999);
+			expect(Number(entry[0]?.servings)).toBe(1.5);
 
 			const logged = await restored<{ name: string }[]>`
 				select v.name from daily_log_health h
