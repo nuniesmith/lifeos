@@ -59,7 +59,8 @@ export const ARCHIVE_KINDS = [
 	'person',
 	'wishlist_item',
 	'media_item',
-	'bill'
+	'bill',
+	'routine'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
@@ -300,7 +301,13 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		title: column('name'),
 		path: listPage('/entertainment')
 	},
-	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') }
+	bill: { table: 'bills', scope: 'visibility', title: column('name'), path: listPage('/finance') },
+	routine: {
+		table: 'routines',
+		scope: 'visibility',
+		title: column('name'),
+		path: detailPage('/routines/')
+	}
 };
 
 /**
@@ -313,7 +320,14 @@ export const NOT_IN_THE_ARCHIVE: Readonly<Record<string, string>> = {
 	attachments:
 		'a stored file, not a record: it is reached only through the record that embeds it, has no ' +
 		'owner or visibility of its own to scope a listing by, and archived files are on their own ' +
-		'clock (`purge_after`) towards physical deletion once backups no longer need them'
+		'clock (`purge_after`) towards physical deletion once backups no longer need them',
+	routine_steps:
+		'like attachments, it has no household_id, owner or visibility of its own to scope a listing ' +
+		'by, and it is reached only through the routine that holds it. `setStepArchived` is reversible ' +
+		'at the repository layer the same way every other set*Archived is, but a standalone archive ' +
+		'entry for one step -- with its own link to a page that would show a single step in isolation ' +
+		'-- is not a page this application has; the routine around it is what the global Archive ' +
+		'restores, and re-typing a short step is cheaper than a second recovery mechanism for it alone'
 };
 
 /** The table behind each kind, for the test that holds the list above true. */

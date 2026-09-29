@@ -28,6 +28,7 @@ import {
 	createPerson,
 	createProject,
 	createRecipe,
+	createRoutine,
 	createTag,
 	createTask,
 	createWishlistItem,
@@ -50,6 +51,7 @@ import {
 	setMedicationArchived,
 	setProjectArchived,
 	setRecipeArchived,
+	setRoutineArchived,
 	setTagArchived,
 	setTaskArchived,
 	type ArchiveKind,
@@ -245,7 +247,11 @@ async function oneOfEach(
 			        ${viewer.userId}::uuid)
 			returning id
 		`),
-		bill: await made(createBill(sql, viewer, { name: 'Internet', ...own }), 'bill')
+		bill: await made(createBill(sql, viewer, { name: 'Internet', ...own }), 'bill'),
+		routine: await made(
+			createRoutine(sql, viewer, { name: 'Fictional Morning Routine', ...own }),
+			'routine'
+		)
 	};
 }
 
@@ -276,7 +282,8 @@ const TITLES: Record<ArchiveKind, string> = {
 	person: 'Robin Quill',
 	wishlist_item: 'Rain jacket',
 	media_item: 'Harbour Lights',
-	bill: 'Internet'
+	bill: 'Internet',
+	routine: 'Fictional Morning Routine'
 };
 
 type Archiver = (
@@ -302,7 +309,8 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	lab_result: setLabResultArchived,
 	health_measurement: setHealthMeasurementArchived,
 	health_term: setHealthTermArchived,
-	recipe: setRecipeArchived
+	recipe: setRecipeArchived,
+	routine: setRoutineArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {

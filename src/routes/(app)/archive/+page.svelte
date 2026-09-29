@@ -41,7 +41,8 @@
 		person: 'Person',
 		wishlist_item: 'Wishlist',
 		media_item: 'Watchlist',
-		bill: 'Bill'
+		bill: 'Bill',
+		routine: 'Routine'
 	};
 
 	/**
