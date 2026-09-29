@@ -58,6 +58,7 @@ export * from './projects';
 export * from './reading';
 export * from './reflection';
 export * from './review';
+export * from './routines';
 export * from './savings';
 export * from './search';
 export * from './tags';

@@ -186,12 +186,12 @@
 	<Card title="Notes">
 		{#if data.notesHtml}
 			<!--
-				The only other {@html} in the application besides the recipe
-				method, and safe for the same reason: `data.notesHtml` is built on
-				the server by renderMarkdown ($lib/server/markdown), which runs
-				DOMPurify over an explicit tag and attribute allowlist and keeps
-				only http(s)/mailto/tel links and images served from /api/media.
-				The entry's own notes never reach this tag; only that output does.
+				Safe for the same reason as the recipe method's {@html}:
+				`data.notesHtml` is built on the server by renderMarkdown
+				($lib/server/markdown), which runs DOMPurify over an explicit tag
+				and attribute allowlist and keeps only http(s)/mailto/tel links
+				and images served from /api/media. The entry's own notes never
+				reach this tag; only that output does.
 			-->
 			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 			<div class="prose">{@html data.notesHtml}</div>

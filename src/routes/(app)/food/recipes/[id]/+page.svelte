@@ -326,12 +326,13 @@
 		<Card title="Instructions">
 			{#if data.instructions}
 				<!--
-					The only {@html} in the application, and safe because of where
-					the string comes from: `data.instructions` is built on the server
-					by renderMarkdown ($lib/server/markdown), which runs DOMPurify
-					over an explicit tag and attribute allowlist and then keeps only
-					http(s)/mailto/tel links and images served from /api/media. The
-					recipe's own notes never reach this tag; only that output does.
+					Safe because of where the string comes from, the same reason every
+					other {@html} in the application is safe: `data.instructions` is
+					built on the server by renderMarkdown ($lib/server/markdown),
+					which runs DOMPurify over an explicit tag and attribute allowlist
+					and then keeps only http(s)/mailto/tel links and images served
+					from /api/media. The recipe's own notes never reach this tag; only
+					that output does.
 				-->
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				<div class="prose">{@html data.instructions}</div>

@@ -62,6 +62,14 @@ const TABLES = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of "Habits & Routines", so
+	// they land right after habits, which routine_steps.habit_id may
+	// reference. created_by/updated_by need no special remapping -- that is
+	// already generic below -- so routines only has to land after habits,
+	// routine_steps after routines, and routine_step_completions after both.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before dependants; the
 	// link tables after both of their sides, so a foreign key never lands
@@ -144,6 +152,14 @@ const ORDER = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of "Habits & Routines", so
+	// they land right after habits, which routine_steps.habit_id may
+	// reference. created_by/updated_by need no special remapping -- that is
+	// already generic below -- so routines only has to land after habits,
+	// routine_steps after routines, and routine_step_completions after both.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before dependants; the
 	// link tables after both of their sides, so a foreign key never lands
@@ -259,7 +275,9 @@ function mappedValue(table, column, value, targetOwner) {
 	if (column === 'sha256' && typeof value === 'string') return Buffer.from(value, 'hex');
 	if (['owner_user_id', 'created_by', 'updated_by', 'started_by', 'logged_by'].includes(column))
 		return targetOwner;
-	if (table === 'habit_logs' && column === 'user_id') return targetOwner;
+	if (['habit_logs', 'routine_step_completions'].includes(table) && column === 'user_id') {
+		return targetOwner;
+	}
 	return value;
 }
 

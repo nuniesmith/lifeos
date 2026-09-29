@@ -33,6 +33,7 @@ import {
 	createPerson,
 	createProject,
 	createRecipe,
+	createRoutine,
 	createSavingsContribution,
 	createTag,
 	createTask,
@@ -61,6 +62,7 @@ import {
 	setMedicationArchived,
 	setProjectArchived,
 	setRecipeArchived,
+	setRoutineArchived,
 	setSavingsContributionArchived,
 	setTagArchived,
 	setTaskArchived,
@@ -267,6 +269,10 @@ async function oneOfEach(
 			}),
 			'income_entry'
 		),
+		routine: await made(
+			createRoutine(sql, viewer, { name: 'Fictional Morning Routine', ...own }),
+			'routine'
+		),
 		savings_contribution: await made(
 			createSavingsContribution(sql, viewer, {
 				title: 'Rainy day',
@@ -317,6 +323,7 @@ const TITLES: Record<ArchiveKind, string> = {
 	media_item: 'Harbour Lights',
 	bill: 'Internet',
 	income_entry: 'Paycheque — 17 Apr 2026',
+	routine: 'Fictional Morning Routine',
 	savings_contribution: 'Rainy day — 18 Apr 2026',
 	book: 'The Sample Saga',
 	author: 'Fictional Author',
@@ -349,6 +356,7 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	health_term: setHealthTermArchived,
 	recipe: setRecipeArchived,
 	income_entry: setIncomeEntryArchived,
+	routine: setRoutineArchived,
 	savings_contribution: setSavingsContributionArchived,
 	book: setBookArchived,
 	author: setAuthorArchived,

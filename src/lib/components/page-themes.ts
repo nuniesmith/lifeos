@@ -188,6 +188,8 @@ export function pageThemeFor(pathname: string): PageTheme | null {
 	if (pathname.startsWith('/projects')) return THEMES.projects!;
 	if (pathname.startsWith('/goals')) return THEMES.goals!;
 	if (pathname.startsWith('/habits')) return THEMES.habits!;
+	// Routines share the habits banner, whose own alt text already names them.
+	if (pathname.startsWith('/routines')) return THEMES.habits!;
 	if (pathname.startsWith('/areas')) return THEMES.areas!;
 	if (pathname.startsWith('/journal')) return THEMES.journal!;
 	if (pathname.startsWith('/health')) return THEMES.health!;
