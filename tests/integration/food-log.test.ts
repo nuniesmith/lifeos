@@ -14,6 +14,7 @@ import {
 	householdToday,
 	listFoodLogEntriesForDay,
 	listFoods,
+	mealTotals,
 	nutritionTotals,
 	proteinByMonth,
 	setFoodArchived,
@@ -367,6 +368,56 @@ describe('nutritionTotals', () => {
 			carbsG: null,
 			carbsGUnknown: 1
 		});
+	});
+});
+
+describe('mealTotals', () => {
+	it('groups kcal and protein by meal, own entries only', async () => {
+		const food = ok(
+			await createFood(sql, owner, {
+				name: 'Fictional Protein Bar',
+				proteinG: 20,
+				kcalPerServing: 200
+			}),
+			'create food'
+		).record;
+		await ok(
+			await createFoodLogEntry(sql, owner, {
+				foodId: food.id,
+				servings: 1,
+				meal: 'breakfast',
+				eatenOn: '2026-09-20'
+			}),
+			'log breakfast'
+		);
+		await ok(
+			await createFoodLogEntry(sql, owner, {
+				meal: 'dinner',
+				eatenOn: '2026-09-20',
+				name: 'Fictional takeout',
+				kcalOverride: 700
+			}),
+			'log dinner'
+		);
+		// A shared entry of the partner's, same day and meal — must not merge
+		// into the owner's own breakfast total.
+		await ok(
+			await createFoodLogEntry(sql, partner, {
+				meal: 'breakfast',
+				eatenOn: '2026-09-20',
+				name: 'Partner’s breakfast',
+				visibility: 'household',
+				kcalOverride: 900
+			}),
+			'partner logs a shared breakfast'
+		);
+
+		const totals = await mealTotals(sql, owner, '2026-09-20');
+		const byMeal = Object.fromEntries(totals.map((t) => [t.meal, t]));
+		expect(byMeal.breakfast).toMatchObject({ kcal: 200, kcalUnknown: 0, proteinG: 20 });
+		expect(byMeal.dinner).toMatchObject({ kcal: 700, kcalUnknown: 0, proteinGUnknown: 1 });
+		expect(byMeal.lunch).toBeUndefined();
+		expect(byMeal.snack).toBeUndefined();
 	});
 });
 

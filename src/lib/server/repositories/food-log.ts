@@ -734,6 +734,66 @@ export async function deleteFoodLogEntry(
 
 // ─── totals ────────────────────────────────────────────────────────────────
 
+export interface FoodLogMealTotals {
+	meal: MealSlot;
+	kcal: number | null;
+	kcalUnknown: number;
+	proteinG: number | null;
+	proteinGUnknown: number;
+}
+
+interface MealTotalsRow {
+	meal: string;
+	kcal: string | null;
+	kcal_unknown: number;
+	protein_g: string | null;
+	protein_g_unknown: number;
+}
+
+/**
+ * Kcal and protein per meal, for one day — only the two nutrients `/food/log`
+ * puts on each meal's own heading; the day total below carries all seven.
+ * Strictly the viewer's own entries, the same as `nutritionTotals` and for
+ * the same reason: a total must never count another member's entries, shared
+ * or not, which is a narrower rule than what the day's entry *list* shows
+ * with its household-visibility toggle.
+ */
+export async function mealTotals(
+	sql: Queryable,
+	viewer: Viewer,
+	day: string
+): Promise<FoodLogMealTotals[]> {
+	if (!isDay(day)) return [];
+	const rows = await sql<MealTotalsRow[]>`
+		select
+			e.meal,
+			sum(coalesce(e.kcal_override, e.servings * coalesce(f.kcal_per_serving, r.kcal_per_serving)))
+				as kcal,
+			count(*) filter (
+				where e.kcal_override is null and coalesce(f.kcal_per_serving, r.kcal_per_serving) is null
+			)::int as kcal_unknown,
+			sum(coalesce(e.protein_g_override, e.servings * coalesce(f.protein_g, r.protein_g)))
+				as protein_g,
+			count(*) filter (
+				where e.protein_g_override is null and coalesce(f.protein_g, r.protein_g) is null
+			)::int as protein_g_unknown
+		from ${sql(ENTRIES)} e
+		left join ${sql(FOODS)} f on f.id = e.food_id
+		left join recipes r on r.id = e.recipe_id
+		where e.household_id = ${viewer.householdId}::uuid
+		  and e.owner_user_id = ${viewer.userId}::uuid
+		  and e.eaten_on = ${day}::date
+		group by e.meal
+	`;
+	return rows.map((row) => ({
+		meal: row.meal as MealSlot,
+		kcal: toNumberOrNull(row.kcal),
+		kcalUnknown: row.kcal_unknown,
+		proteinG: toNumberOrNull(row.protein_g),
+		proteinGUnknown: row.protein_g_unknown
+	}));
+}
+
 export interface FoodLogDayTotals {
 	day: string;
 	kcal: number | null;

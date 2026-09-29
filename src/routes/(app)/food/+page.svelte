@@ -150,6 +150,10 @@
 			{data.summary.openPrep} to prep
 		</span>
 	{/snippet}
+	{#snippet actions()}
+		<Button href="/food/log" icon="today">Food log</Button>
+		<Button href="/food/library" variant="secondary">Food library</Button>
+	{/snippet}
 </PageHeader>
 
 {#if form?.error}
