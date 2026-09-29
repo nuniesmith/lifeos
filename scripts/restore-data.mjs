@@ -96,6 +96,12 @@ const TABLES = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	// Reading Tracker (migration 0030): book_series, authors and genres have
+	// no dependency on each other; books references book_series.
+	'book_series',
+	'authors',
+	'genres',
+	'books',
 	'attachments',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
@@ -117,6 +123,11 @@ const TABLES = [
 	'recipe_ingredients',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
+	// migration 0030: book_authors/book_genres need no special remapping — ids
+	// are preserved verbatim, so they only have to land after books, whose id
+	// both carry (the same shape as library_links above).
+	'book_authors',
+	'book_genres',
 	'attachment_links'
 ];
 
@@ -167,6 +178,10 @@ const ORDER = [
 	'wishlist_items',
 	'life_assessments',
 	'significant_events',
+	'book_series',
+	'authors',
+	'genres',
+	'books',
 	'attachments',
 	'lab_markers',
 	'medical_visits',
@@ -186,6 +201,8 @@ const ORDER = [
 	'recipe_ingredients',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
+	'book_authors',
+	'book_genres',
 	'attachment_links'
 ];
 
