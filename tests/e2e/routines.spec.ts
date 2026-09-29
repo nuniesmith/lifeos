@@ -120,6 +120,15 @@ async function addRoutine(page: Page, name: string, timeOfDay = 'morning'): Prom
 }
 
 /**
+ * A step's own line in the edit sheet ("2. Stretch"), matched whole. A bare
+ * getByText(title) also matches the Linked habit picker's <option>s ("Read"
+ * is inside "Read a page", and two habits can both say "Stretch"), which
+ * failed strict mode the first time this spec ran.
+ */
+const stepLine = (title: string) =>
+	new RegExp(`^\\d+\\. ${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+
+/**
  * Adds a step from the edit sheet. `averageVersion` is required, and its
  * label reads "Average version *" once the required marker is in — the
  * exact trap the brief's own locator lesson names, so this goes through
@@ -143,7 +152,7 @@ async function addStep(
 		await form.getByLabel('Linked habit').selectOption({ label: fields.habit });
 	}
 	await form.getByRole('button', { name: 'Add step' }).click();
-	await expect(sheet.getByText(fields.title)).toBeVisible();
+	await expect(sheet.getByText(stepLine(fields.title))).toBeVisible();
 	await sheet.getByRole('button', { name: 'Close' }).click();
 }
 
@@ -313,7 +322,7 @@ test.describe('routines', () => {
 			.fill('Do the first thing');
 		await form.getByLabel('Linked habit').selectOption({ label: habitName });
 		await form.getByRole('button', { name: 'Add step' }).click();
-		await expect(editSheet(page).getByText('First step')).toBeVisible();
+		await expect(editSheet(page).getByText(stepLine('First step'))).toBeVisible();
 
 		// The form the second step is typed into is the freshly-drawn one, not
 		// the one that still held "Fictional Picker Habit" a moment ago.
@@ -325,7 +334,7 @@ test.describe('routines', () => {
 			.getByRole('textbox', { name: 'Average version', exact: true })
 			.fill('Do the second thing');
 		await addStepForm(page).getByRole('button', { name: 'Add step' }).click();
-		await expect(editSheet(page).getByText('Second step')).toBeVisible();
+		await expect(editSheet(page).getByText(stepLine('Second step'))).toBeVisible();
 		await editSheet(page).getByRole('button', { name: 'Close' }).click();
 
 		const secondStep = doItNowList(page).getByRole('listitem').filter({ hasText: 'Second step' });
