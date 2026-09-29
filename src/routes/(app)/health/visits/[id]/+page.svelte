@@ -306,7 +306,8 @@
 				</form>
 			{/if}
 			<p class="muted small">
-				New symptoms are added from <a href={resolve(appPath('/health'))}>Health</a>.
+				New symptoms are added on
+				<a href={resolve(appPath('/health/symptoms'))}>Symptoms &amp; mood</a>.
 			</p>
 		</Card>
 
