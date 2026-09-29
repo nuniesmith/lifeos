@@ -626,13 +626,22 @@ describe('privacy, for every kind', () => {
 		await archiveEach(partner, theirs);
 
 		expect(owner.role).toBe('admin');
-		// Tags have no owner and are shared by design, so they are the one kind
-		// the other member may see here.
-		expect((await listArchived(sql, owner, { limit: 300 })).map((r) => r.kind)).toEqual(['tag']);
-		expect(await archivedCounts(sql, owner)).toEqual({ ...every(0), tag: 1 });
+		// Tags, authors, series and genres have no owner and are shared by
+		// design, so they are the kinds the other member may see here.
+		expect((await listArchived(sql, owner, { limit: 300 })).map((r) => r.kind).sort()).toEqual(
+			['author', 'book_series', 'genre', 'tag'].sort()
+		);
+		expect(await archivedCounts(sql, owner)).toEqual({
+			...every(0),
+			tag: 1,
+			author: 1,
+			book_series: 1,
+			genre: 1
+		});
 
+		const noOwner = new Set<ArchiveKind>(['tag', 'author', 'book_series', 'genre']);
 		for (const kind of ARCHIVE_KINDS) {
-			if (kind === 'tag') continue;
+			if (noOwner.has(kind)) continue;
 			expect(await restore(sql, owner, kind, theirs[kind]), kind).toMatchObject({
 				ok: false,
 				reason: 'not_found'
@@ -658,8 +667,11 @@ describe('privacy, for every kind', () => {
 		expect(seen).toEqual(ARCHIVE_KINDS.filter((k) => k !== 'daily_log').sort());
 
 		for (const kind of ARCHIVE_KINDS) {
-			// Household-wide: either member may restore a tag.
-			if (kind === 'tag') continue;
+			// Household-wide: either member may restore a tag, an author, a
+			// series or a genre — none of them carry an owner to check.
+			if (kind === 'tag' || kind === 'author' || kind === 'book_series' || kind === 'genre') {
+				continue;
+			}
 			expect(await restore(sql, owner, kind, theirs[kind]), kind).toMatchObject({
 				ok: false,
 				reason: 'not_found'
