@@ -13,6 +13,7 @@ import {
 	getRoutine,
 	getRoutineWithSteps,
 	listHabitLogs,
+	logHabit,
 	listRoutineSteps,
 	listRoutines,
 	moveStep,
@@ -369,6 +370,50 @@ describe('completing a step', () => {
 		expect(
 			await listHabitLogs(sql, owner, habit.id, { from: '2026-09-21', to: '2026-09-21' })
 		).toHaveLength(0);
+	});
+
+	it('leaves a check-in made on /habits alone: completing keeps its note, and undoing keeps it', async () => {
+		const routine = await makeRoutine(owner);
+		const habit = ok(await createHabit(sql, owner, { name: 'Stretch' }), 'create habit').record;
+		const step = await makeStep(owner, routine.id, { habitId: habit.id });
+		ok(
+			await logHabit(sql, owner, { habitId: habit.id, onDate: '2026-09-21', note: 'Before work' }),
+			'check in on /habits first'
+		);
+		const day = { from: '2026-09-21', to: '2026-09-21' };
+
+		const completed = ok(
+			await completeStep(sql, owner, step.id, '2026-09-21', 'average'),
+			'complete the linked step'
+		).record;
+		// Nothing was logged on the step's behalf: the check-in was already there.
+		expect(completed.loggedHabitId).toBeNull();
+		expect(await listHabitLogs(sql, owner, habit.id, day)).toMatchObject([{ note: 'Before work' }]);
+
+		await uncompleteStep(sql, owner, step.id, '2026-09-21');
+		expect(await listHabitLogs(sql, owner, habit.id, day)).toMatchObject([{ note: 'Before work' }]);
+	});
+
+	it('undoing removes the check-in it logged, even after the step is relinked to another habit', async () => {
+		const routine = await makeRoutine(owner);
+		const first = ok(await createHabit(sql, owner, { name: 'Walk' }), 'create first habit').record;
+		const second = ok(
+			await createHabit(sql, owner, { name: 'Read' }),
+			'create second habit'
+		).record;
+		const step = await makeStep(owner, routine.id, { habitId: first.id });
+		const day = { from: '2026-09-21', to: '2026-09-21' };
+
+		ok(await completeStep(sql, owner, step.id, '2026-09-21', 'average'), 'complete');
+		ok(await updateStep(sql, owner, step.id, { habitId: second.id }), 'relink the step');
+		ok(
+			await logHabit(sql, owner, { habitId: second.id, onDate: '2026-09-21' }),
+			'check in the second habit on /habits'
+		);
+
+		await uncompleteStep(sql, owner, step.id, '2026-09-21');
+		expect(await listHabitLogs(sql, owner, first.id, day)).toHaveLength(0);
+		expect(await listHabitLogs(sql, owner, second.id, day)).toHaveLength(1);
 	});
 
 	it('a routine shared with the household can be completed by either member', async () => {

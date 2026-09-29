@@ -29,7 +29,7 @@ import {
 	type RecordBase,
 	type WriteResult
 } from './base';
-import { logHabit, unlogHabit } from './habits';
+import { logHabitIfAbsent, unlogHabit } from './habits';
 import {
 	oneOf,
 	optionalId,
@@ -694,6 +694,8 @@ export interface RoutineStepCompletionRecord {
 	userId: string;
 	completedOn: string;
 	version: StepVersion;
+	/** The habit whose check-in this completion recorded, if any. */
+	loggedHabitId: string | null;
 	createdAt: Date;
 }
 
@@ -703,11 +705,12 @@ interface RoutineStepCompletionRow {
 	user_id: string;
 	completed_on: string;
 	version: string;
+	logged_habit_id: string | null;
 	created_at: unknown;
 }
 
 const completionColumns = (sql: Queryable): Fragment =>
-	sql`id, step_id, user_id, completed_on::text as completed_on, version, created_at`;
+	sql`id, step_id, user_id, completed_on::text as completed_on, version, logged_habit_id, created_at`;
 
 function mapCompletion(row: RoutineStepCompletionRow): RoutineStepCompletionRecord {
 	return {
@@ -716,6 +719,7 @@ function mapCompletion(row: RoutineStepCompletionRow): RoutineStepCompletionReco
 		userId: row.user_id,
 		completedOn: toDay(row.completed_on),
 		version: row.version as StepVersion,
+		loggedHabitId: row.logged_habit_id,
 		createdAt: toDate(row.created_at)
 	};
 }
@@ -727,16 +731,16 @@ function mapCompletion(row: RoutineStepCompletionRow): RoutineStepCompletionReco
  * routine is something both members do, and doing your own run of it must
  * not depend on being the one who happens to own the routine's definition.
  *
- * When the step names a habit, that habit's own check-in is recorded too, in
- * the same transaction, with the existing `logHabit` from habits.ts -- one
- * tap on the routine is one fact about the habit as well, not two separate
- * ones a person has to remember to keep in sync. If the habit is no longer
- * readable by this viewer (made private after the two were linked, say),
- * `logHabit` itself returns `not_found` rather than throwing, and that
- * outcome is deliberately ignored here: the step's own completion must not
- * fail merely because the habit behind it changed visibility.
- * `uncompleteStep` mirrors this with `unlogHabit`, which already no-ops the
- * same way for the same reason.
+ * When the step names a habit, that habit's check-in is recorded too, in the
+ * same transaction -- one tap on the routine is one fact about the habit as
+ * well, not two separate ones a person has to keep in sync. Only when the
+ * day has no check-in yet (`logHabitIfAbsent`): one the person already made
+ * on /habits is theirs, and `logHabit`'s upsert would overwrite it, clearing
+ * its note. The completion remembers the habit it did log
+ * (`logged_habit_id`), so `uncompleteStep` removes exactly that check-in and
+ * never one it didn't make. A habit this viewer can no longer read (made
+ * private after the two were linked, say) is simply not logged: the step's
+ * own completion must not fail merely because the habit behind it changed.
  */
 export function completeStep(
 	sql: Queryable,
@@ -765,15 +769,24 @@ export function completeStep(
 			const row = rows[0];
 			if (!row) return { ok: false, reason: 'not_found' };
 
-			const [step] = await tx<{ habit_id: string | null }[]>`
-				select habit_id from routine_steps where id = ${stepId}::uuid
-			`;
-			if (step?.habit_id) {
-				await logHabit(tx, viewer, {
-					habitId: step.habit_id,
-					onDate: completedOn,
-					completed: true
-				});
+			// A repeat completion the same day (another energy level) keeps the
+			// check-in it already logged rather than logging a second.
+			if (row.logged_habit_id === null) {
+				const [step] = await tx<{ habit_id: string | null }[]>`
+					select habit_id from routine_steps where id = ${stepId}::uuid
+				`;
+				if (
+					step?.habit_id &&
+					(await logHabitIfAbsent(tx, viewer, { habitId: step.habit_id, onDate: completedOn }))
+				) {
+					const [logged] = await tx<RoutineStepCompletionRow[]>`
+						update routine_step_completions set logged_habit_id = ${step.habit_id}::uuid
+						where id = ${row.id}::uuid
+						returning ${completionColumns(tx)}
+					`;
+					if (!logged) throw new Error('completion vanished mid-write');
+					return { ok: true, record: mapCompletion(logged) };
+				}
 			}
 
 			return { ok: true, record: mapCompletion(row) };
@@ -781,7 +794,8 @@ export function completeStep(
 	);
 }
 
-/** Undoes a completion, and the habit check-in that came with it if any.
+/** Undoes a completion, and the habit check-in it recorded if it recorded
+ *  one (see `completeStep`) -- never a check-in the person made themselves.
  *  Missing is success either way -- the day ends up undone, which is what
  *  was asked for, the same idempotence `unlogHabit` itself already has. */
 export function uncompleteStep(
@@ -794,17 +808,17 @@ export function uncompleteStep(
 
 	return atomically(sql, async (tx) => {
 		const completedOn = requiredDay(day, 'date');
-		const rows = await tx<{ habit_id: string | null }[]>`
+		const rows = await tx<{ logged_habit_id: string | null }[]>`
 			delete from routine_step_completions c
 			using routine_steps s, routines r
 			where c.step_id = s.id and s.routine_id = r.id
 			  and c.step_id = ${stepId}::uuid and c.user_id = ${viewer.userId}::uuid
 			  and c.completed_on = ${completedOn}::date and ${readableScope(tx, viewer, 'r')}
-			returning s.habit_id
+			returning c.logged_habit_id
 		`;
 		const row = rows[0];
 		if (!row) return false;
-		if (row.habit_id) await unlogHabit(tx, viewer, row.habit_id, completedOn);
+		if (row.logged_habit_id) await unlogHabit(tx, viewer, row.logged_habit_id, completedOn);
 		return true;
 	});
 }

@@ -108,6 +108,13 @@ create table routine_step_completions (
     -- the server's -- the same discipline `habit_logs.on_date` follows.
     completed_on date not null,
     version      text not null check (version in ('high', 'average', 'minimal')),
+    -- The habit check-in THIS completion recorded, if any, so undoing it
+    -- removes that one and nothing else. A check-in the person had already
+    -- made that day (on /habits, perhaps with a note) is left exactly as it
+    -- was, both when the step is completed and when it is undone. It holds
+    -- the habit's id rather than a flag because the step can be relinked to
+    -- another habit in between, and undo must still reach the one it logged.
+    logged_habit_id uuid references habits(id) on delete set null,
     created_at   timestamptz not null default now(),
 
     unique (step_id, user_id, completed_on)
