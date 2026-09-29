@@ -676,6 +676,67 @@ describe('books: editing', () => {
 		).toMatchObject({ ok: false, reason: 'conflict' });
 	});
 
+	it('rolls a refused edit back whole, leaving no new series behind', async () => {
+		const created = ok(await createBook(sql, owner, { title: 'The Sample Saga' }), 'create').record;
+		ok(await updateBook(sql, owner, created.id, { pages: 100 }, created.updatedAt), 'first edit');
+
+		// Stale, and naming a series that does not exist yet: the series is
+		// found-or-created before the book row is written, so a refusal that
+		// did not roll back would leave it behind.
+		expect(
+			await updateBook(
+				sql,
+				owner,
+				created.id,
+				{ seriesName: 'Fictional Orphan Series', seriesPosition: 1 },
+				created.updatedAt
+			)
+		).toMatchObject({ ok: false, reason: 'conflict' });
+		expect((await listBookSeries(sql, owner)).map((s) => s.name)).not.toContain(
+			'Fictional Orphan Series'
+		);
+	});
+
+	it('stores an ISBN-10 whose check character is X', async () => {
+		const created = ok(
+			await createBook(sql, owner, { title: 'The Sample Saga', isbn: '0-8044-2957-x' }),
+			'create'
+		).record;
+		expect(created.isbn).toBe('080442957X');
+	});
+
+	it('lands a new author named in two writes at once on one row, inside the book’s transaction', async () => {
+		// Hold an uncommitted insert of the same new name open while a book
+		// save names it: the save's own look-up cannot see it, its insert then
+		// waits on the unique index and fails once this commits, and the retry
+		// has to find the committed row -- which it can only do if that failed
+		// insert did not abort the book's whole transaction.
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		const holder = sql.begin(async (tx) => {
+			await tx`
+				insert into authors (household_id, name, created_by, updated_by)
+				values (${owner.householdId}::uuid, 'Fictional Race Author', ${owner.userId}::uuid, ${owner.userId}::uuid)
+			`;
+			await held;
+		});
+		const saving = createBook(sql, owner, {
+			title: 'The Sample Saga',
+			authorNames: 'Fictional Race Author'
+		});
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		release();
+		await holder;
+
+		const saved = ok(await saving, 'save the book naming the new author').record;
+		const authors = await listAuthorsForBook(sql, owner, saved.id);
+		expect(authors.map((a) => a.name)).toEqual(['Fictional Race Author']);
+		const [count] = await sql<{ n: number }[]>`
+			select count(*)::int as n from authors where lower(name) = 'fictional race author'
+		`;
+		expect(count?.n).toBe(1);
+	});
+
 	it('refuses to edit another member’s private book as not_found, never forbidden', async () => {
 		const theirs = ok(
 			await createBook(sql, partner, {

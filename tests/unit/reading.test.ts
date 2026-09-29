@@ -63,10 +63,15 @@ describe('optionalIsbn', () => {
 		expect(() => optionalIsbn('123456789012')).toThrow(InvalidInput);
 	});
 
-	it('rejects the check-digit letter some ISBN-10s end in', () => {
-		// The repository accepts 10 or 13 DIGITS, deliberately not the X some
-		// ISBN-10 check digits use — see the comment on this function.
-		expect(() => optionalIsbn('006231609X')).toThrow(InvalidInput);
+	it('accepts the X check character an ISBN-10 can end in, uppercased', () => {
+		// X stands for 10; about one ISBN-10 in eleven ends in it.
+		expect(optionalIsbn('0-8044-2957-X')).toBe('080442957X');
+		expect(optionalIsbn('080442957x')).toBe('080442957X');
+	});
+
+	it('takes X only as an ISBN-10 check character, nowhere else', () => {
+		expect(() => optionalIsbn('08044X9570')).toThrow(InvalidInput);
+		expect(() => optionalIsbn('978006231609X')).toThrow(InvalidInput);
 	});
 
 	it('rejects non-digit characters other than hyphens and spaces', () => {

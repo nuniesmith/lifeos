@@ -115,20 +115,22 @@ export function optionalQuarterRating(value: unknown, field = 'rating'): number 
 }
 
 /**
- * ISBN-10 or ISBN-13, stored as digits only. Hyphens and spaces are how both
- * are usually printed or copied, so stripping them is what "the same ISBN"
- * means to a household typing one in, not a second fact about the book. The
- * check digit is not verified — some of what lands here is copied off a
- * book's back cover with a typo already in it, and this repository is not
- * the place to catch that.
+ * ISBN-10 or ISBN-13, stored without hyphens or spaces. Both are how an
+ * ISBN is usually printed or copied, so stripping them is what "the same
+ * ISBN" means to a household typing one in, not a second fact about the
+ * book. An ISBN-10's check character can be X (it stands for 10: about one
+ * in eleven ISBN-10s end in one), so that last place alone takes it,
+ * uppercased. The check digit itself is not verified — some of what lands
+ * here is copied off a book's back cover with a typo already in it, and this
+ * repository is not the place to catch that.
  */
 export function optionalIsbn(value: unknown, field = 'ISBN'): string | null {
 	if (value === null || value === undefined) return null;
 	if (typeof value !== 'string') throw new InvalidInput(`${field} must be text`);
-	const stripped = value.replace(/[-\s]/g, '');
+	const stripped = value.replace(/[-\s]/g, '').toUpperCase();
 	if (!stripped) return null;
-	if (!/^\d{10}$|^\d{13}$/.test(stripped)) {
-		throw new InvalidInput(`${field} must be 10 or 13 digits`);
+	if (!/^\d{9}[\dX]$|^\d{13}$/.test(stripped)) {
+		throw new InvalidInput(`${field} must be 10 characters (the last may be X) or 13 digits`);
 	}
 	return stripped;
 }
@@ -650,6 +652,19 @@ export function createBook(
 	);
 }
 
+/**
+ * Carries `updateBook`'s refusal (a stale edit, a book the viewer may read
+ * but not edit) out of its transaction as a throw, so the transaction rolls
+ * back — the same device as food.ts's `AttachFailure`. The series named in
+ * the edit is found-or-created before the book row is written, so returning
+ * the refusal as data would commit a brand-new series that nothing uses.
+ */
+class BookWriteRefused extends Error {
+	constructor(readonly result: Extract<WriteResult<Book>, { ok: false }>) {
+		super('book write refused');
+	}
+}
+
 export function updateBook(
 	sql: Queryable,
 	viewer: Viewer,
@@ -657,33 +672,49 @@ export function updateBook(
 	patch: BookInput,
 	expectedUpdatedAt?: Date | string
 ): Promise<WriteResult<Book>> {
-	return guarded<Book>(() =>
-		atomically(sql, async (tx) => {
-			const current = await getBook(tx, viewer, id);
-			if (!current) return { ok: false, reason: 'not_found' };
+	return guarded<Book>(async () => {
+		try {
+			return await updateBookAtomically(sql, viewer, id, patch, expectedUpdatedAt);
+		} catch (err) {
+			if (err instanceof BookWriteRefused) return err.result;
+			throw err;
+		}
+	});
+}
 
-			const title = patched(patch, 'title', current.title, (v) => requiredText(v, 'title', 300));
-			const fields = bookFieldsFrom(patch, current);
-			const series =
-				'seriesName' in patch && patch.seriesName !== undefined
-					? await resolveSeries(tx, viewer, patch.seriesName, patch.seriesPosition)
-					: { seriesId: current.seriesId, seriesPosition: current.seriesPosition };
-			const tbrAddedOn = patched(patch, 'tbrAddedOn', current.tbrAddedOn, (v) =>
-				optionalDay(v, 'added to TBR')
-			);
-			const ownership = resolveOwnership(viewer, patch, {
-				ownerUserId: current.ownerUserId,
-				visibility: current.visibility
-			});
+function updateBookAtomically(
+	sql: Queryable,
+	viewer: Viewer,
+	id: string,
+	patch: BookInput,
+	expectedUpdatedAt?: Date | string
+): Promise<WriteResult<Book>> {
+	return atomically(sql, async (tx) => {
+		const current = await getBook(tx, viewer, id);
+		if (!current) return { ok: false, reason: 'not_found' };
 
-			const result = await writeScoped<BookRow, Book>({
-				sql: tx,
-				table: BOOKS,
-				id,
-				readScope: readableScope(tx, viewer, BOOKS),
-				writeScope: writableScope(tx, viewer, BOOKS),
-				...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
-				assignments: tx`
+		const title = patched(patch, 'title', current.title, (v) => requiredText(v, 'title', 300));
+		const fields = bookFieldsFrom(patch, current);
+		const series =
+			'seriesName' in patch && patch.seriesName !== undefined
+				? await resolveSeries(tx, viewer, patch.seriesName, patch.seriesPosition)
+				: { seriesId: current.seriesId, seriesPosition: current.seriesPosition };
+		const tbrAddedOn = patched(patch, 'tbrAddedOn', current.tbrAddedOn, (v) =>
+			optionalDay(v, 'added to TBR')
+		);
+		const ownership = resolveOwnership(viewer, patch, {
+			ownerUserId: current.ownerUserId,
+			visibility: current.visibility
+		});
+
+		const result = await writeScoped<BookRow, Book>({
+			sql: tx,
+			table: BOOKS,
+			id,
+			readScope: readableScope(tx, viewer, BOOKS),
+			writeScope: writableScope(tx, viewer, BOOKS),
+			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			assignments: tx`
 					title = ${title}, subtitle = ${fields.subtitle},
 					series_id = ${series.seriesId}::uuid, series_position = ${series.seriesPosition},
 					status = ${fields.status}, category = ${fields.category}, audience = ${fields.audience},
@@ -698,17 +729,16 @@ export function updateBook(
 					tbr_added_on = ${tbrAddedOn},
 					owner_user_id = ${ownership.ownerUserId}::uuid, visibility = ${ownership.visibility},
 					updated_at = now(), updated_by = ${viewer.userId}::uuid`,
-				columns: bookColumns(tx),
-				map: mapBook,
-				mayWrite: writableBy(viewer)
-			});
-			if (!result.ok) return result;
+			columns: bookColumns(tx),
+			map: mapBook,
+			mayWrite: writableBy(viewer)
+		});
+		if (!result.ok) throw new BookWriteRefused(result);
 
-			if ('authorNames' in patch) await replaceBookAuthors(tx, viewer, id, patch.authorNames);
-			if ('genreNames' in patch) await replaceBookGenres(tx, viewer, id, patch.genreNames);
-			return result;
-		})
-	);
+		if ('authorNames' in patch) await replaceBookAuthors(tx, viewer, id, patch.authorNames);
+		if ('genreNames' in patch) await replaceBookGenres(tx, viewer, id, patch.genreNames);
+		return result;
+	});
 }
 
 export function setBookArchived(
@@ -822,11 +852,17 @@ async function findOrCreateByName<Row extends { id: string }, Rec>(
 		const existing = await find();
 		if (existing[0]) return { ok: true, record: map(existing[0]) };
 		try {
-			const rows = await sql<Row[]>`
-				insert into ${sql(table)} (household_id, name, created_by, updated_by)
-				values (${viewer.householdId}::uuid, ${name}, ${viewer.userId}::uuid, ${viewer.userId}::uuid)
-				returning ${columns}
-			`;
+			// In its own savepoint when `sql` is already a transaction (the book
+			// form's is): a unique violation aborts the whole transaction it
+			// happens in, and the retry below could then not even select.
+			const rows = await atomically(
+				sql,
+				(tx) => tx<Row[]>`
+					insert into ${tx(table)} (household_id, name, created_by, updated_by)
+					values (${viewer.householdId}::uuid, ${name}, ${viewer.userId}::uuid, ${viewer.userId}::uuid)
+					returning ${columns}
+				`
+			);
 			const row = rows[0];
 			if (!row) throw new Error('insert returned no row');
 			return { ok: true, record: map(row) };

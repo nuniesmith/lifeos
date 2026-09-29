@@ -118,7 +118,7 @@ create table books (
     audiobook_minutes integer check (audiobook_minutes is null or audiobook_minutes > 0),
     -- Hyphens and spaces stripped, 10 or 13 digits. The check digit is not
     -- verified here or in the repository — see reading.ts's `optionalIsbn`.
-    isbn              text check (isbn is null or isbn ~ '^[0-9]{10}$|^[0-9]{13}$'),
+    isbn              text check (isbn is null or isbn ~ '^[0-9]{9}[0-9X]$|^[0-9]{13}$'),
     release_date      date,
 
     -- StoryGraph rates in quarter stars: `rating * 4` must land on a whole
