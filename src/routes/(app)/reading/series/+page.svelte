@@ -3,10 +3,15 @@
 
 	let { data } = $props();
 
-	const metaOf = (s: (typeof data.series)[number]): string =>
-		s.plannedCount !== null
-			? `${s.bookCount} of ${s.plannedCount} book${s.plannedCount === 1 ? '' : 's'}`
-			: `${s.bookCount} book${s.bookCount === 1 ? '' : 's'}`;
+	// "3 of 5 read" is the viewer's own progress (Reading Tracker R2's
+	// finishedCount); plannedCount only earns a place beside it when the
+	// series is expected to run longer than what is catalogued so far.
+	const metaOf = (s: (typeof data.series)[number]): string => {
+		const read = `${s.finishedCount} of ${s.bookCount} read`;
+		return s.plannedCount !== null && s.plannedCount !== s.bookCount
+			? `${read} · ${s.plannedCount} planned`
+			: read;
+	};
 </script>
 
 <svelte:head><title>Series · Reading Tracker · LifeOS</title></svelte:head>
