@@ -179,10 +179,11 @@ test.describe('the reading log', () => {
 		await expect(page.getByText(/^Read \d+ times?\.$/)).toHaveCount(0);
 
 		await expect(page.getByRole('heading', { name: 'Read history', exact: true })).toBeVisible();
-		// A substring match, not exact: the history row's meta line joins
-		// dates and format with this word ("Started … · DNF"), so the row's
-		// own text node is never *only* "DNF".
-		await expect(page.getByText(/DNF/)).toBeVisible();
+		// The history row's meta line ends with it ("2026-09-30 – 2026-09-30 ·
+		// DNF"). Anchored on the "· " before it, because a bare /DNF/ also
+		// matches the edit sheet's Status <option>, which failed strict mode
+		// the first time this spec ran.
+		await expect(page.getByText(/· DNF$/)).toBeVisible();
 
 		await page.goto('/reading');
 		await expect(page.getByRole('region', { name: 'Currently reading' })).toContainText(
