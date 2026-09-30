@@ -10,6 +10,24 @@ import { advanceDueDate, type BillFrequency } from '$lib/server/repositories/col
  */
 
 describe('advanceDueDate', () => {
+	it('keeps a bill due on the 31st on each month’s last day, not the 28th forever', () => {
+		expect(advanceDueDate('2026-01-31', 'monthly', 31)).toBe('2026-02-28');
+		expect(advanceDueDate('2026-02-28', 'monthly', 31)).toBe('2026-03-31');
+		expect(advanceDueDate('2026-03-31', 'monthly', 31)).toBe('2026-04-30');
+		expect(advanceDueDate('2026-04-30', 'monthly', 31)).toBe('2026-05-31');
+	});
+
+	it('anchors quarterly and annual periods the same way, leap days included', () => {
+		expect(advanceDueDate('2025-11-30', 'quarterly', 30)).toBe('2026-02-28');
+		expect(advanceDueDate('2026-02-28', 'quarterly', 30)).toBe('2026-05-30');
+		expect(advanceDueDate('2028-02-29', 'annual', 29)).toBe('2029-02-28');
+		expect(advanceDueDate('2031-02-28', 'annual', 29)).toBe('2032-02-29');
+	});
+
+	it('anchors on the current date’s own day when no due day is known', () => {
+		expect(advanceDueDate('2026-02-28', 'monthly')).toBe('2026-03-28');
+	});
+
 	it('leaves a null due date null, whatever the frequency', () => {
 		const frequencies: (BillFrequency | null)[] = [
 			null,
