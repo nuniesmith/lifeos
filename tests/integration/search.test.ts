@@ -6,8 +6,16 @@ import { viewerOf } from '$lib/server/auth/authz';
 import { one } from '$lib/server/db/scalar';
 import {
 	SEARCH_KINDS,
+	addStep,
 	createArea,
+	createAuthor,
 	createBill,
+	createBook,
+	createBookSeries,
+	createFood,
+	createIncomeEntry,
+	createRoutine,
+	createSavingsContribution,
 	createDailyLog,
 	createHabit,
 	createHealthMeasurement,
@@ -150,14 +158,42 @@ describe('every search result links somewhere real', () => {
 			}),
 			'medical visit'
 		).record;
-		// Media items are import-only — there is no create path — so this one is
-		// inserted directly rather than skipped, which would leave its branch
-		// unchecked.
+		// Inserted directly, as it was when media items were import-only: the
+		// app's own create path now exists (/entertainment/new), but this keeps
+		// the check independent of it.
 		await sql`
 			insert into media_items (household_id, owner_user_id, name, status, created_by)
 			values (${owner.householdId}::uuid, ${owner.userId}::uuid, ${word + ' series'},
 			        'watching', ${owner.userId}::uuid)
 		`;
+
+		ok(
+			await createIncomeEntry(sql, owner, {
+				title: `${word} bonus`,
+				actualAmount: 10,
+				receivedOn: '2026-04-05'
+			}),
+			'income entry'
+		);
+		ok(
+			await createSavingsContribution(sql, owner, {
+				title: `${word} jar`,
+				amount: 5,
+				contributedOn: '2026-04-06'
+			}),
+			'savings contribution'
+		);
+		const book = ok(await createBook(sql, owner, { title: `${word} novel` }), 'book').record;
+		const author = ok(await createAuthor(sql, owner, { name: `${word} writer` }), 'author').record;
+		const series = ok(
+			await createBookSeries(sql, owner, { name: `${word} saga` }),
+			'book series'
+		).record;
+		const routine = ok(
+			await createRoutine(sql, owner, { name: `${word} morning` }),
+			'routine'
+		).record;
+		ok(await createFood(sql, owner, { name: `${word} bar` }), 'food');
 
 		const hits = await search(sql, owner, word);
 		const routes = routeMatchers();
@@ -184,6 +220,36 @@ describe('every search result links somewhere real', () => {
 		expect(pathOf('recipe')).toBe(`/food/recipes/${recipe.id}`);
 		// Important dates are shown on the calendar; /areas never lists them.
 		expect(pathOf('important_date')).toBe('/calendar');
+		expect(pathOf('book')).toBe(`/reading/books/${book.id}`);
+		expect(pathOf('author')).toBe(`/reading/authors/${author.id}`);
+		expect(pathOf('book_series')).toBe(`/reading/series/${series.id}`);
+		expect(pathOf('routine')).toBe(`/routines/${routine.id}`);
+	});
+
+	it('finds a book by its author’s name, and a routine by one of its steps', async () => {
+		ok(
+			await createBook(sql, owner, { title: 'The Sample Saga', authorNames: 'Fictional Wren' }),
+			'book'
+		);
+		const kinds = (hits: Awaited<ReturnType<typeof search>>) =>
+			hits.map((h) => `${h.kind}:${h.title}`).sort();
+		expect(kinds(await search(sql, owner, 'wren'))).toEqual([
+			'author:Fictional Wren',
+			'book:The Sample Saga'
+		]);
+
+		const routine = ok(
+			await createRoutine(sql, owner, { name: 'Fictional Evening' }),
+			'routine'
+		).record;
+		ok(
+			await addStep(sql, owner, routine.id, {
+				title: 'Stretch hamstrings',
+				averageVersion: 'Ten minutes'
+			}),
+			'step'
+		);
+		expect(kinds(await search(sql, owner, 'hamstrings'))).toEqual(['routine:Fictional Evening']);
 	});
 });
 
@@ -337,6 +403,34 @@ describe('search', () => {
 			expect(owner.role).toBe('admin');
 			expect(await search(sql, owner, 'hangover')).toEqual([]);
 			expect(titles(await search(sql, partner, 'hangover'))).toEqual(['Hangover cure']);
+		});
+
+		it('never returns another member’s private book, food, routine or money', async () => {
+			const own = { visibility: 'private', ownerUserId: partner.userId } as const;
+			ok(await createBook(sql, partner, { title: 'Secret novel', ...own }), 'book');
+			ok(await createFood(sql, partner, { name: 'Secret snack', ...own }), 'food');
+			ok(await createRoutine(sql, partner, { name: 'Secret routine', ...own }), 'routine');
+			ok(
+				await createIncomeEntry(sql, partner, {
+					title: 'Secret bonus',
+					actualAmount: 1,
+					receivedOn: '2026-04-07',
+					...own
+				}),
+				'income'
+			);
+			ok(
+				await createSavingsContribution(sql, partner, {
+					title: 'Secret jar',
+					amount: 1,
+					contributedOn: '2026-04-07',
+					...own
+				}),
+				'savings'
+			);
+
+			expect(await search(sql, owner, 'secret')).toEqual([]);
+			expect(await search(sql, partner, 'secret')).toHaveLength(5);
 		});
 
 		it('never returns another member’s private medication, marker or visit', async () => {

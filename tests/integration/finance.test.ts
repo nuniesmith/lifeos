@@ -218,6 +218,52 @@ describe('bills', () => {
 });
 
 describe('bill payments', () => {
+	it('keeps a bill due on the 31st anchored through a short month and an unrelated edit', async () => {
+		const bill = ok(
+			await createBill(sql, owner, {
+				name: 'Fictional Rent',
+				amount: 1000,
+				frequency: 'monthly',
+				nextDueOn: '2026-01-31'
+			}),
+			'create'
+		).record;
+		expect(bill.dueDay).toBe(31);
+
+		const february = ok(
+			await recordBillPayment(sql, owner, bill.id, { paidOn: '2026-01-30' }),
+			'pay January'
+		).record;
+		expect(february.bill.nextDueOn).toBe('2026-02-28');
+
+		// The edit form resubmits the clamped date with every save: fixing the
+		// amount must not re-anchor the bill on the 28th.
+		const edited = ok(
+			await updateBill(
+				sql,
+				owner,
+				bill.id,
+				{ amount: 1050, nextDueOn: '2026-02-28' },
+				february.bill.updatedAt
+			),
+			'edit the amount'
+		).record;
+		expect(edited.dueDay).toBe(31);
+
+		const march = ok(
+			await recordBillPayment(sql, owner, bill.id, { paidOn: '2026-02-27' }),
+			'pay February'
+		).record;
+		expect(march.bill.nextDueOn).toBe('2026-03-31');
+
+		// Moving the date on purpose re-anchors it on the new day.
+		const moved = ok(
+			await updateBill(sql, owner, bill.id, { nextDueOn: '2026-04-15' }, march.bill.updatedAt),
+			'move the due date'
+		).record;
+		expect(moved.dueDay).toBe(15);
+	});
+
 	it('marks a bill paid, defaulting the amount and date, and advances the due date by one period', async () => {
 		const bill = ok(
 			await createBill(sql, owner, {
@@ -253,7 +299,9 @@ describe('bill payments', () => {
 			paidOn: '2026-02-20',
 			note: 'Price went up'
 		});
-		expect(second.bill.nextDueOn).toBe('2026-03-28');
+		// Back on the 31st: the bill's due day, not February's clamped 28th, is
+		// what each advance starts from (migration 0034).
+		expect(second.bill.nextDueOn).toBe('2026-03-31');
 
 		// Most recent PAID date first, not most recently recorded: the two
 		// calls above were made in that order, and the list still leads with
