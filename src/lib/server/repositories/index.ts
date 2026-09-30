@@ -57,6 +57,7 @@ export * from './medications';
 export * from './projects';
 export * from './reflection';
 export * from './review';
+export * from './routines';
 export * from './savings';
 export * from './search';
 export * from './tags';

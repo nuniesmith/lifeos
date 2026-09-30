@@ -133,6 +133,13 @@
 			<Button type="submit" variant="primary" full>Add habit</Button>
 		</form>
 	</Card>
+
+	<!-- The source's "Habits & Routines" is two databases; this is the other
+	     one -- a step-by-step sequence rather than a single daily tick. -->
+	<Card title="Routines">
+		<p class="muted">Morning, evening, or any sequence of steps done at a time of day.</p>
+		<Button href="/routines" size="sm" variant="ghost">Open</Button>
+	</Card>
 </div>
 
 <style>
@@ -157,6 +164,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--sp-4);
+	}
+	.muted {
+		margin: 0 0 var(--sp-3);
+		color: var(--c-text-muted);
 	}
 	/* Two short fields sit side by side even on a phone: "3" and "per week"
 	   are one thought and splitting them over two rows reads as two. */

@@ -45,6 +45,14 @@ const TABLES = [
 	'important_dates',
 	'daily_logs',
 	'habits',
+	// migration 0031: routines are the second half of the source's "Habits &
+	// Routines", so they sit right beside habits here. steps and completions
+	// carry no household_id of their own -- scoped through routines the way
+	// medication_doses is scoped through medications below -- and land right
+	// after it for the same reason.
+	'routines',
+	'routine_steps',
+	'routine_step_completions',
 	'tags',
 	// Feature packs (migrations 0011-0015). Parents before the tables that
 	// reference them; the link tables come after both of their sides.
@@ -156,6 +164,12 @@ async function rowsFor(db, table, id) {
 			return db`select * from daily_logs where household_id = ${id}::uuid order by id`;
 		case 'habits':
 			return db`select * from habits where household_id = ${id}::uuid order by id`;
+		case 'routines':
+			return db`select * from routines where household_id = ${id}::uuid order by id`;
+		case 'routine_steps':
+			return db`select s.* from routine_steps s join routines r on r.id = s.routine_id where r.household_id = ${id}::uuid order by s.routine_id, s.position`;
+		case 'routine_step_completions':
+			return db`select c.* from routine_step_completions c join routine_steps s on s.id = c.step_id join routines r on r.id = s.routine_id where r.household_id = ${id}::uuid order by c.step_id, c.user_id, c.completed_on`;
 		case 'tags':
 			return db`select * from tags where household_id = ${id}::uuid order by id`;
 		case 'task_dependencies':

@@ -134,6 +134,31 @@ beforeAll(async () => {
 			values (${habitId}::uuid, ${sourceUser}::uuid, '2026-09-06')
 		`;
 
+		// migration 0031: a routine with one step linked to the habit above (so
+		// the restore's generic id preservation is what has to make the link
+		// resolve), and one completion -- the household-scoped table plus both
+		// of the child tables that are scoped through it instead.
+		const routines = await source<{ id: string }[]>`
+			insert into routines (household_id, owner_user_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional Morning Routine',
+			        ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const routineId = routines[0]!.id;
+		const steps = await source<{ id: string }[]>`
+			insert into routine_steps (
+				routine_id, position, title, average_version, habit_id, created_by, updated_by
+			) values (
+				${routineId}::uuid, 1, 'Drink water', 'Drink a full glass of water', ${habitId}::uuid,
+				${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into routine_step_completions (step_id, user_id, completed_on, version)
+			values (${steps[0]!.id}::uuid, ${sourceUser}::uuid, '2026-09-06', 'average')
+		`;
+
 		// migration 0029 (PACK4-002): a bill with a payment against it, an
 		// income entry, and a savings contribution attached to a goal — the
 		// finance pack's own tables, exercising both the bill_payments child
@@ -254,7 +279,10 @@ const NOT_PORTABLE: Record<string, string> = {
 	change_log: 'an audit of edits to rows that are themselves being copied',
 	backup_runs: 'bookkeeping about this install\u2019s backups',
 	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id',
-	medication_doses: 'exported, but scoped through medications rather than by household_id'
+	medication_doses: 'exported, but scoped through medications rather than by household_id',
+	routine_steps: 'exported, but scoped through routines rather than by household_id',
+	routine_step_completions:
+		'exported, but scoped through routine_steps and routines rather than by household_id'
 };
 
 describe('everything household-scoped is portable', () => {
@@ -315,6 +343,9 @@ describe('everything household-scoped is portable', () => {
 		before('daily_log_health', 'daily_logs');
 		before('daily_log_health', 'health_vocabulary');
 		before('health_measurements', 'daily_logs');
+		before('routine_steps', 'routines');
+		before('routine_steps', 'habits');
+		before('routine_step_completions', 'routine_steps');
 
 		expect(listOf('TABLES').sort()).toEqual([...order].sort());
 	});
@@ -416,6 +447,26 @@ describe('portable data mobility', () => {
 
 			const logs = await restored`select user_id::text as user_id from habit_logs`;
 			expect(logs).toEqual([{ user_id: targetUser }]);
+
+			// migration 0031: the routine and its habit-linked step travel with
+			// their ids preserved verbatim (the same discipline the daily log
+			// link above already relies on), so the step's habit_id still names
+			// the very row that habit_logs.habit_id above does. The
+			// completion's user_id is remapped the same way habit_logs' is.
+			const routine = await restored<{ name: string }[]>`select name from routines`;
+			expect(routine[0]?.name).toBe('Fictional Morning Routine');
+
+			const [habitRow] = await restored<{ id: string }[]>`select id from habits`;
+			const step = await restored<{ title: string; habit_id: string | null }[]>`
+				select title, habit_id::text as habit_id from routine_steps
+			`;
+			expect(step[0]).toMatchObject({ title: 'Drink water' });
+			expect(step[0]?.habit_id).toBe(habitRow?.id);
+
+			const completions = await restored<{ user_id: string; version: string }[]>`
+				select user_id::text as user_id, version from routine_step_completions
+			`;
+			expect(completions).toEqual([{ user_id: targetUser, version: 'average' }]);
 
 			// Finance (migration 0029): the bill, its payment, the income entry
 			// and the savings contribution all travelled, owner columns remapped

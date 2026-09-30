@@ -43,6 +43,7 @@
 		media_item: 'Watchlist',
 		bill: 'Bill',
 		income_entry: 'Income',
+		routine: 'Routine',
 		savings_contribution: 'Savings'
 	};
 
