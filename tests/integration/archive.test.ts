@@ -33,6 +33,7 @@ import {
 	createMedication,
 	createPerson,
 	createProject,
+	createReadingChallenge,
 	createRecipe,
 	createRoutine,
 	createSavingsContribution,
@@ -63,6 +64,7 @@ import {
 	setMedicalVisitArchived,
 	setMedicationArchived,
 	setProjectArchived,
+	setReadingChallengeArchived,
 	setRecipeArchived,
 	setRoutineArchived,
 	setSavingsContributionArchived,
@@ -293,7 +295,17 @@ async function oneOfEach(
 			createBookSeries(sql, viewer, { name: 'The Sample Chronicles' }),
 			'book_series'
 		),
-		genre: await made(createGenre(sql, viewer, { name: 'Speculative Fiction' }), 'genre')
+		genre: await made(createGenre(sql, viewer, { name: 'Speculative Fiction' }), 'genre'),
+		reading_challenge: await made(
+			createReadingChallenge(sql, viewer, {
+				title: 'The Sample Reading Challenge',
+				year: 2026,
+				kind: 'count',
+				targetCount: 10,
+				...own
+			}),
+			'reading_challenge'
+		)
 	};
 }
 
@@ -332,7 +344,8 @@ const TITLES: Record<ArchiveKind, string> = {
 	book: 'The Sample Saga',
 	author: 'Fictional Author',
 	book_series: 'The Sample Chronicles',
-	genre: 'Speculative Fiction'
+	genre: 'Speculative Fiction',
+	reading_challenge: 'The Sample Reading Challenge'
 };
 
 type Archiver = (
@@ -366,7 +379,8 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	book: setBookArchived,
 	author: setAuthorArchived,
 	book_series: setBookSeriesArchived,
-	genre: setGenreArchived
+	genre: setGenreArchived,
+	reading_challenge: setReadingChallengeArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {

@@ -53,7 +53,8 @@ export const SEARCH_KINDS = [
 	'author',
 	'book_series',
 	'routine',
-	'food'
+	'food',
+	'reading_challenge'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -358,6 +359,20 @@ export async function search(
 			       (t.archived_at is not null) as archived,
 			       '/routines/' || t.id as path
 			from routines t
+			where ${readableScope(sql, viewer, 't')}
+		`);
+	}
+
+	if (wanted('reading_challenge')) {
+		// A challenge's own title and notes count as its words, the same shape
+		// `routine`'s branch above takes for a routine's name and notes.
+		branches.push(sql`
+			select 'reading_challenge' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.notes,'')) as doc,
+			       coalesce(t.notes, '') as body,
+			       (t.archived_at is not null) as archived,
+			       '/reading/challenges/' || t.id as path
+			from reading_challenges t
 			where ${readableScope(sql, viewer, 't')}
 		`);
 	}

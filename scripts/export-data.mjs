@@ -108,6 +108,13 @@ const TABLES = [
 	// reading history is still its data) even though data-mobility.test.ts's
 	// household_id scan would not have caught its absence.
 	'book_reads',
+	// migration 0035 (Reading Tracker R3): reading_challenges carries
+	// household_id directly, like books above it; reading_challenge_items has
+	// none of its own — scoped through reading_challenges the same way
+	// book_reads is scoped through books — so it too is listed here for real
+	// even though the household_id scan would not have caught its absence.
+	'reading_challenges',
+	'reading_challenge_items',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
 	'lab_markers',
@@ -239,6 +246,7 @@ async function rowsFor(db, table, id) {
 		case 'authors':
 		case 'genres':
 		case 'books':
+		case 'reading_challenges':
 			// All carry household_id directly, so one branch serves them.
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'bill_payments':
@@ -249,6 +257,8 @@ async function rowsFor(db, table, id) {
 			return db`select ba.* from book_authors ba join books b on b.id = ba.book_id where b.household_id = ${id}::uuid order by ba.book_id, ba.author_id`;
 		case 'book_genres':
 			return db`select bg.* from book_genres bg join books b on b.id = bg.book_id where b.household_id = ${id}::uuid order by bg.book_id, bg.genre_id`;
+		case 'reading_challenge_items':
+			return db`select i.* from reading_challenge_items i join reading_challenges c on c.id = i.challenge_id where c.household_id = ${id}::uuid order by i.challenge_id, i.position`;
 		case 'daily_log_health':
 			return db`select h.* from daily_log_health h join daily_logs l on l.id = h.daily_log_id where l.household_id = ${id}::uuid order by h.daily_log_id, h.vocabulary_id`;
 		case 'medication_doses':

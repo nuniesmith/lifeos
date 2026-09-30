@@ -35,7 +35,8 @@
 		author: 'Author',
 		book_series: 'Series',
 		routine: 'Routine',
-		food: 'Food'
+		food: 'Food',
+		reading_challenge: 'Challenge'
 	};
 
 	/**

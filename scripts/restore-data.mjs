@@ -118,6 +118,13 @@ const TABLES = [
 	// must land after it; reader_user_id is remapped below the same way
 	// habit_logs.user_id and routine_step_completions.user_id already are.
 	'book_reads',
+	// migration 0035 (Reading Tracker R3): reading_challenges references no
+	// other table but the household/owner, remapped generically below;
+	// reading_challenge_items references it (challenge_id) and optionally a
+	// book (book_id) -- both already restored above -- so it lands right
+	// after book_reads, the same place export-data.mjs puts it.
+	'reading_challenges',
+	'reading_challenge_items',
 	'attachments',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
@@ -211,6 +218,8 @@ const ORDER = [
 	'genres',
 	'books',
 	'book_reads',
+	'reading_challenges',
+	'reading_challenge_items',
 	'attachments',
 	'lab_markers',
 	'medical_visits',
