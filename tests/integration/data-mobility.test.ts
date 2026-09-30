@@ -260,6 +260,20 @@ beforeAll(async () => {
 			insert into book_genres (book_id, genre_id)
 			values (${readingBooks[0]!.id}::uuid, ${readingGenres[0]!.id}::uuid)
 		`;
+		// migration 0033 (Reading Tracker R2): a finished read of that same
+		// book, scoped through it exactly the way bill_payments is scoped
+		// through bills — no household_id of its own — and carrying a NOT
+		// NULL reader_user_id that has to be remapped the same way
+		// food_log_entries.owner_user_id already is.
+		await source`
+			insert into book_reads (
+				book_id, reader_user_id, status, started_on, finished_on, format, rating, review,
+				created_by, updated_by
+			) values (
+				${readingBooks[0]!.id}::uuid, ${sourceUser}::uuid, 'finished', '2026-08-20', '2026-08-30',
+				'ebook', 4.5, 'A satisfying read.', ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+		`;
 	} finally {
 		await source.end({ timeout: 5 });
 	}
@@ -408,6 +422,7 @@ describe('everything household-scoped is portable', () => {
 		before('book_authors', 'authors');
 		before('book_genres', 'books');
 		before('book_genres', 'genres');
+		before('book_reads', 'books');
 		before('routine_steps', 'routines');
 		before('routine_steps', 'habits');
 		before('routine_step_completions', 'routine_steps');
@@ -624,6 +639,39 @@ describe('portable data mobility', () => {
 				author_name: 'Fictional Author',
 				genre_name: 'Speculative Fiction'
 			});
+
+			// migration 0033 (Reading Tracker R2): the read travelled, resolving
+			// through book_id the same way the joins above resolve, and its
+			// reader_user_id — NOT NULL, like food_log_entries.owner_user_id — was
+			// remapped to the target account rather than left pointing at a user
+			// that does not exist on this database.
+			const read = await restored<
+				{
+					status: string;
+					started_on: string;
+					finished_on: string;
+					format: string;
+					rating: string;
+					review: string;
+					reader_user_id: string;
+					book_title: string;
+				}[]
+			>`
+				select r.status, r.started_on::text as started_on, r.finished_on::text as finished_on,
+				       r.format, r.rating, r.review, r.reader_user_id::text as reader_user_id,
+				       bk.title as book_title
+				from book_reads r join books bk on bk.id = r.book_id
+			`;
+			expect(read[0]).toMatchObject({
+				status: 'finished',
+				started_on: '2026-08-20',
+				finished_on: '2026-08-30',
+				format: 'ebook',
+				review: 'A satisfying read.',
+				reader_user_id: targetUser,
+				book_title: 'The Sample Saga'
+			});
+			expect(Number(read[0]?.rating)).toBe(4.5);
 
 			const otherHouseholds = await restored<{ id: string }[]>`
 				insert into households (name) values ('Other target') returning id
