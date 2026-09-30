@@ -294,7 +294,10 @@ export interface BookFilters extends PageOptions {
 	/** Matches against the title only. */
 	search?: string;
 	includeArchived?: boolean;
-	order?: 'title' | 'tbr_added' | 'updated' | 'series_position';
+	// 'tbr_added' is newest-first (the home page's "Up next"); 'tbr_added_asc'
+	// is its mirror, oldest-first, for the TBR pile itself — a queue you work
+	// through front-to-back, not a feed of what was most recently added to it.
+	order?: 'title' | 'tbr_added' | 'tbr_added_asc' | 'updated' | 'series_position';
 	// The three below exist for reading-log.ts's `pickTbr`, which is
 	// otherwise just this query with `status: 'tbr'` and a random pick in JS
 	// over the result — see `pickMediaToWatch` in collections.ts for the same
@@ -330,11 +333,13 @@ export async function listBooks(
 	const order =
 		filters.order === 'tbr_added'
 			? sql`b.tbr_added_on desc nulls last, lower(b.title) asc`
-			: filters.order === 'updated'
-				? sql`b.updated_at desc`
-				: filters.order === 'series_position'
-					? sql`b.series_position asc nulls last, lower(b.title) asc`
-					: sql`lower(b.title) asc, b.id asc`;
+			: filters.order === 'tbr_added_asc'
+				? sql`b.tbr_added_on asc nulls last, lower(b.title) asc`
+				: filters.order === 'updated'
+					? sql`b.updated_at desc`
+					: filters.order === 'series_position'
+						? sql`b.series_position asc nulls last, lower(b.title) asc`
+						: sql`lower(b.title) asc, b.id asc`;
 
 	const rows = await sql<BookSummaryRow[]>`
 		select ${bookColumns(sql)},
