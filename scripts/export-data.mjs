@@ -69,6 +69,10 @@ const TABLES = [
 	'health_measurements',
 	'ingredients',
 	'recipes',
+	// migration 0032: foods before food_log_entries, whose food_id it carries
+	// (food_log_entries also carries recipe_id, already above it).
+	'foods',
+	'food_log_entries',
 	'meal_plans',
 	'library_items',
 	'people',
@@ -208,6 +212,8 @@ async function rowsFor(db, table, id) {
 		case 'health_measurements':
 		case 'ingredients':
 		case 'recipes':
+		case 'foods':
+		case 'food_log_entries':
 		case 'meal_plans':
 		case 'library_items':
 		case 'people':

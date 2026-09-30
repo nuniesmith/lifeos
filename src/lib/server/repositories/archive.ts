@@ -55,6 +55,7 @@ export const ARCHIVE_KINDS = [
 	'ingredient',
 	'meal_plan',
 	'prep_task',
+	'food',
 	'library_item',
 	'person',
 	'wishlist_item',
@@ -281,6 +282,12 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		scope: 'visibility',
 		title: column('name'),
 		path: listPage('/food')
+	},
+	food: {
+		table: 'foods',
+		scope: 'visibility',
+		title: column('name'),
+		path: listPage('/food/library')
 	},
 
 	library_item: {

@@ -43,6 +43,7 @@ export * from './areas';
 export * from './collections';
 export * from './daily-logs';
 export * from './food';
+export * from './food-log';
 export * from './goals';
 export * from './health';
 export * from './health-measurements';

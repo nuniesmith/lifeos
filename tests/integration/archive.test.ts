@@ -17,6 +17,7 @@ import {
 	createBookSeries,
 	createDailyLog,
 	createEvent,
+	createFood,
 	createGenre,
 	createGoal,
 	createHabit,
@@ -49,6 +50,7 @@ import {
 	setBookArchived,
 	setBookSeriesArchived,
 	setDailyLogArchived,
+	setFoodArchived,
 	setGenreArchived,
 	setGoalArchived,
 	setHabitArchived,
@@ -244,6 +246,7 @@ async function oneOfEach(
 			        ${viewer.userId}::uuid)
 			returning id
 		`),
+		food: await made(createFood(sql, viewer, { name: 'Fictional Protein Bar', ...own }), 'food'),
 		library_item: await made(
 			createLibraryItem(sql, viewer, { title: 'A field guide to moss', ...own }),
 			'library_item'
@@ -317,6 +320,7 @@ const TITLES: Record<ArchiveKind, string> = {
 	ingredient: 'Red lentils',
 	meal_plan: 'Meal plan — 18 Apr 2026',
 	prep_task: 'Soak the beans',
+	food: 'Fictional Protein Bar',
 	library_item: 'A field guide to moss',
 	person: 'Robin Quill',
 	wishlist_item: 'Rain jacket',
@@ -355,6 +359,7 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	health_measurement: setHealthMeasurementArchived,
 	health_term: setHealthTermArchived,
 	recipe: setRecipeArchived,
+	food: setFoodArchived,
 	income_entry: setIncomeEntryArchived,
 	routine: setRoutineArchived,
 	savings_contribution: setSavingsContributionArchived,
