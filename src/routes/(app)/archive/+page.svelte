@@ -44,7 +44,11 @@
 		bill: 'Bill',
 		income_entry: 'Income',
 		routine: 'Routine',
-		savings_contribution: 'Savings'
+		savings_contribution: 'Savings',
+		book: 'Book',
+		author: 'Author',
+		book_series: 'Series',
+		genre: 'Genre'
 	};
 
 	/**

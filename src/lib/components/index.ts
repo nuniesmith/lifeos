@@ -7,6 +7,7 @@
 
 export { default as CoverThumb } from './CoverThumb.svelte';
 export { default as Badge } from './Badge.svelte';
+export { default as BookList } from './BookList.svelte';
 export { default as BottomNav } from './BottomNav.svelte';
 export { default as Button } from './Button.svelte';
 export { default as Card } from './Card.svelte';
@@ -31,6 +32,7 @@ export { default as Textarea } from './Textarea.svelte';
 export type { FieldContext } from './Field.svelte';
 export type { Option } from './Select.svelte';
 export type { ShelfItem } from './LibraryList.svelte';
+export type { BookListEntry } from './BookList.svelte';
 export { ICONS, type IconName } from './icons';
 export {
 	ADMIN_DESTINATIONS,

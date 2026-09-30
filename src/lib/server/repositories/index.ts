@@ -55,6 +55,7 @@ export * from './library';
 export * from './media';
 export * from './medications';
 export * from './projects';
+export * from './reading';
 export * from './reflection';
 export * from './review';
 export * from './routines';

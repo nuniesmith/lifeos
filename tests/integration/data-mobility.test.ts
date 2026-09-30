@@ -202,6 +202,46 @@ beforeAll(async () => {
 				${goals[0]!.id}::uuid, ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
 		`;
+
+		// Reading Tracker (migration 0030): a series, an author and a genre —
+		// none scoped through a parent, all three carry their own household_id
+		// — a book belonging to all three, and both of the joins between them
+		// (book_authors/book_genres, scoped through books the way
+		// recipe_ingredients is scoped through recipes).
+		const readingSeries = await source<{ id: string }[]>`
+			insert into book_series (household_id, name, planned_count, created_by, updated_by)
+			values (
+				${sourceHousehold}::uuid, 'The Fictional Chronicles', 3, ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		const readingAuthors = await source<{ id: string }[]>`
+			insert into authors (household_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Fictional Author', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const readingGenres = await source<{ id: string }[]>`
+			insert into genres (household_id, name, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Speculative Fiction', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const readingBooks = await source<{ id: string }[]>`
+			insert into books (
+				household_id, title, series_id, series_position, status, created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, 'The Sample Saga', ${readingSeries[0]!.id}::uuid, 1, 'reading',
+				${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into book_authors (book_id, author_id, position)
+			values (${readingBooks[0]!.id}::uuid, ${readingAuthors[0]!.id}::uuid, 0)
+		`;
+		await source`
+			insert into book_genres (book_id, genre_id)
+			values (${readingBooks[0]!.id}::uuid, ${readingGenres[0]!.id}::uuid)
+		`;
 	} finally {
 		await source.end({ timeout: 5 });
 	}
@@ -343,6 +383,11 @@ describe('everything household-scoped is portable', () => {
 		before('daily_log_health', 'daily_logs');
 		before('daily_log_health', 'health_vocabulary');
 		before('health_measurements', 'daily_logs');
+		before('books', 'book_series');
+		before('book_authors', 'books');
+		before('book_authors', 'authors');
+		before('book_genres', 'books');
+		before('book_genres', 'genres');
 		before('routine_steps', 'routines');
 		before('routine_steps', 'habits');
 		before('routine_step_completions', 'routine_steps');
@@ -498,6 +543,34 @@ describe('portable data mobility', () => {
 			expect(saving[0]).toMatchObject({
 				title: 'Fictional transfer',
 				goal_title: 'Fictional Emergency Fund'
+			});
+
+			// Reading Tracker (migration 0030): the book, its series and both
+			// joins (book_authors/book_genres) travelled, resolving through the
+			// same ids restore-data.mjs preserves verbatim rather than landing
+			// before the rows they point at.
+			const book = await restored<
+				{
+					title: string;
+					series_name: string;
+					author_name: string;
+					genre_name: string;
+				}[]
+			>`
+				select bk.title, bs.name as series_name, a.name as author_name, g.name as genre_name
+				from books bk
+				join book_series bs on bs.id = bk.series_id
+				join book_authors ba on ba.book_id = bk.id
+				join authors a on a.id = ba.author_id
+				join book_genres bg on bg.book_id = bk.id
+				join genres g on g.id = bg.genre_id
+				where bk.title = 'The Sample Saga'
+			`;
+			expect(book[0]).toMatchObject({
+				title: 'The Sample Saga',
+				series_name: 'The Fictional Chronicles',
+				author_name: 'Fictional Author',
+				genre_name: 'Speculative Fiction'
 			});
 
 			const otherHouseholds = await restored<{ id: string }[]>`
