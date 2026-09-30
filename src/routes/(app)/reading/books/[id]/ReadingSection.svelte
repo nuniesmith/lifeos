@@ -227,7 +227,12 @@
 					{#if finishError}<p class="notice error" role="alert">{finishError}</p>{/if}
 					<div class="row">
 						<Input label="Finished on" name="finishedOn" type="date" value={today} />
-						<Select label="Rating" name="rating" options={RATING_OPTIONS} placeholder="Not rated" />
+						<Select
+							label="Rating for this read"
+							name="rating"
+							options={RATING_OPTIONS}
+							placeholder="Not rated"
+						/>
 					</div>
 					<Textarea label="Review" name="review" rows={3} hint="Markdown works." />
 					<Button type="submit" variant="primary">Finish reading</Button>

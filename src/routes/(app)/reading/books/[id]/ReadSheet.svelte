@@ -101,7 +101,7 @@
 					bind:value={format}
 				/>
 				<Select
-					label="Rating"
+					label="Rating for this read"
 					name="rating"
 					options={RATING_OPTIONS}
 					placeholder="Not rated"
