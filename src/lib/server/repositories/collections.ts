@@ -1210,6 +1210,9 @@ export interface Bill extends RecordBase {
 	 *  src/lib/server/markdown.ts — never trusted as-is. */
 	url: string | null;
 	notes: string | null;
+	/** The day of the month the bill is really due (migration 0034): what
+	 *  `nextDueOn` returns to after a short month clamped it. */
+	dueDay: number | null;
 	/** The amount normalised to a month, so a year's worth can be compared. */
 	monthlyEquivalent: number | null;
 }
@@ -1229,6 +1232,7 @@ interface BillRow extends BaseRow {
 	trial_price: unknown;
 	url: string | null;
 	notes: string | null;
+	due_day: unknown;
 }
 
 const BILLS = 'bills';
@@ -1237,7 +1241,7 @@ const billColumns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	name, type, amount, currency, frequency, next_due_on::text as next_due_on,
 	category, account, autopay, status,
-	free_trial_ends_on::text as free_trial_ends_on, trial_price, url, notes`;
+	free_trial_ends_on::text as free_trial_ends_on, trial_price, url, notes, due_day`;
 
 /** How many of each period fit in a month, for the normalised figure. */
 const PER_MONTH: Record<BillFrequency, number> = {
@@ -1270,6 +1274,7 @@ function mapBill(row: BillRow): Bill {
 		trialPrice: toNumberOrNull(row.trial_price),
 		url: toTextOrNull(row.url),
 		notes: toTextOrNull(row.notes),
+		dueDay: toIntOrNull(row.due_day),
 		monthlyEquivalent:
 			amount !== null && frequency !== null
 				? Math.round(amount * PER_MONTH[frequency] * 100) / 100
@@ -1343,6 +1348,7 @@ export function createBill(
 ): Promise<WriteResult<Bill>> {
 	return guarded<Bill>(async () => {
 		const name = requiredText(input.name, 'name', 200);
+		const nextDueOn = optionalDay(input.nextDueOn, 'next due date');
 		const { ownerUserId, visibility } = resolveOwnership(viewer, input, {
 			ownerUserId: null,
 			visibility: 'household'
@@ -1351,7 +1357,7 @@ export function createBill(
 		const rows = await sql<BillRow[]>`
 			insert into ${sql(BILLS)} (
 				household_id, owner_user_id, visibility, name, type, amount, currency,
-				frequency, next_due_on, category, account, autopay, status,
+				frequency, next_due_on, due_day, category, account, autopay, status,
 				free_trial_ends_on, trial_price, url, notes, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility}, ${name},
@@ -1359,7 +1365,7 @@ export function createBill(
 				${nonNegativeAmount(input.amount, 'amount')}::numeric,
 				${currencyOf(input.currency, 'CAD')},
 				${input.frequency ? oneOf(input.frequency, BILL_FREQUENCIES, 'frequency', 'monthly') : null},
-				${optionalDay(input.nextDueOn, 'next due date')}::date,
+				${nextDueOn}::date, ${dayOfMonth(nextDueOn)}::smallint,
 				${optionalText(input.category, 'category')},
 				${optionalText(input.account, 'account')},
 				${checkboxBool(input.autopay)}::boolean,
@@ -1432,6 +1438,11 @@ export function updateBill(
 			ownerUserId: current.ownerUserId,
 			visibility: current.visibility
 		});
+		// Re-anchored only when the date really changes. The edit form sends
+		// every field on every save, so a bill advanced to a clamped Feb 28
+		// would otherwise lose its 31 the first time someone fixed its amount.
+		const dueDay =
+			next.nextDueOn === current.nextDueOn ? current.dueDay : dayOfMonth(next.nextDueOn);
 
 		return writeScoped<BillRow, Bill>({
 			sql,
@@ -1443,7 +1454,8 @@ export function updateBill(
 			assignments: sql`
 				name = ${next.name}, type = ${next.type}, amount = ${next.amount}::numeric,
 				currency = ${next.currency}, frequency = ${next.frequency},
-				next_due_on = ${next.nextDueOn}::date, category = ${next.category},
+				next_due_on = ${next.nextDueOn}::date, due_day = ${dueDay}::smallint,
+				category = ${next.category},
 				account = ${next.account}, autopay = ${next.autopay}::boolean, status = ${next.status},
 				free_trial_ends_on = ${next.freeTrialEndsOn}::date,
 				trial_price = ${next.trialPrice}::numeric, url = ${next.url}, notes = ${next.notes},
@@ -1493,13 +1505,18 @@ export function setBillArchived(
  * for a recurring important date, reimplemented here for a specific number of
  * months at a time rather than that function's year-or-month recurrence walk.
  */
-function addMonthsClamped(day: string, months: number): string {
+function addMonthsClamped(day: string, months: number, anchorDay: number | null = null): string {
 	const [year, month, date] = day.split('-').map(Number);
 	const total = year! * 12 + (month! - 1) + months;
 	const y = Math.floor(total / 12);
 	const m = (total % 12) + 1;
 	const pad = (n: number) => String(n).padStart(2, '0');
-	return `${y}-${pad(m)}-${pad(Math.min(date!, daysInMonth(y, m)))}`;
+	return `${y}-${pad(m)}-${pad(Math.min(anchorDay ?? date!, daysInMonth(y, m)))}`;
+}
+
+/** The day of the month of a 'YYYY-MM-DD' day, for `bills.due_day`. */
+function dayOfMonth(day: string | null): number | null {
+	return day === null ? null : Number(day.slice(8, 10));
 }
 
 /**
@@ -1513,10 +1530,16 @@ function addMonthsClamped(day: string, months: number): string {
  * was: there is no period to add a multiple of, and guessing one would
  * silently invent a schedule nobody set. Exported for its own unit tests, the
  * same reason `placeInZone` in health-measurements.ts is.
+ *
+ * `dueDay` is the day of the month the bill is really due (`bills.due_day`).
+ * Month-based periods clamp from it rather than from `current`, so a bill due
+ * on the 31st goes Jan 31, Feb 28, Mar 31 instead of staying on the 28th.
+ * Without it, `current`'s own day is the anchor.
  */
 export function advanceDueDate(
 	current: string | null,
-	frequency: BillFrequency | null
+	frequency: BillFrequency | null,
+	dueDay: number | null = null
 ): string | null {
 	if (current === null || frequency === null) return current;
 	switch (frequency) {
@@ -1525,11 +1548,11 @@ export function advanceDueDate(
 		case 'biweekly':
 			return addDays(current, 14);
 		case 'monthly':
-			return addMonthsClamped(current, 1);
+			return addMonthsClamped(current, 1, dueDay);
 		case 'quarterly':
-			return addMonthsClamped(current, 3);
+			return addMonthsClamped(current, 3, dueDay);
 		case 'annual':
-			return addMonthsClamped(current, 12);
+			return addMonthsClamped(current, 12, dueDay);
 		case 'one_off':
 			return null;
 	}
@@ -1637,7 +1660,7 @@ export function recordBillPayment(
 				throw new InvalidInput('enter an amount paid greater than 0');
 			}
 			const note = optionalText(input.note, 'note', 500);
-			const nextDueOn = advanceDueDate(bill.nextDueOn, bill.frequency);
+			const nextDueOn = advanceDueDate(bill.nextDueOn, bill.frequency, bill.dueDay);
 
 			// clock_timestamp(), not the column's now() default: now() is when the
 			// transaction began, but undo needs the order payments were actually
