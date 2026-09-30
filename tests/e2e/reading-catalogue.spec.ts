@@ -6,9 +6,11 @@ import { hashPassword } from '../../src/lib/server/auth/password';
  * The Reading Tracker's book catalogue (Reading Tracker R1): adding a book
  * from the home page's quick form and from its own full page, editing every
  * kind of field (including a `<Select>`, which must show what was just saved
- * rather than reverting — hard rule 5), moving between the home page's three
- * lists as status changes, filtering the catalogue from a genre link, and
- * renaming/archiving a genre inline.
+ * rather than reverting — hard rule 5), moving between the home page's TBR
+ * and Currently Reading lists as a read starts (Reading Tracker R2 moved
+ * "Currently reading" from the book's own `status` to the viewer's own
+ * `book_reads` — see reading-log.spec.ts for the read log itself), filtering
+ * the catalogue from a genre link, and renaming/archiving a genre inline.
  *
  * Seeds an account of its own for the reason library-capture.spec.ts does:
  * borrowing another file's credentials would make this one depend on the
@@ -163,7 +165,7 @@ test.describe('reading catalogue', () => {
 		await expect(page.getByLabel('Status')).toHaveValue('paused');
 	});
 
-	test('moves a book between the home page’s lists as its status changes', async ({ page }) => {
+	test('moves a book between the home page’s lists as a read starts', async ({ page }) => {
 		await signIn(page);
 		await page.goto('/reading');
 
@@ -175,9 +177,13 @@ test.describe('reading catalogue', () => {
 		await expect(upNext.getByRole('link', { name: 'The Status Sample' })).toBeVisible();
 
 		await upNext.getByRole('link', { name: 'The Status Sample' }).click();
-		await page.getByLabel('Status').selectOption('reading');
-		await page.getByRole('button', { name: 'Save', exact: true }).click();
-		await expect(page.getByText('Saved.')).toBeVisible();
+		// Reading Tracker R2: "Currently reading" on the home page comes from
+		// the viewer's own book_reads, not the book's own `status` field
+		// directly — so what moves the book between the two home-page lists
+		// is starting a read (this pack's own Reading section), not the
+		// catalogue edit form's Status <Select>.
+		await page.getByRole('button', { name: 'Start reading', exact: true }).click();
+		await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
 
 		await page.goto('/reading');
 		await expect(
