@@ -345,6 +345,29 @@ describe('reads are kept apart by reader', () => {
 		expect(history.find((r) => r.id === partnerRead.id)?.readerName).toBe('Partner');
 	});
 
+	it("never lets a late pause on one reader's read overwrite a conclusion the other reader's read already reached", async () => {
+		// Both read the same copy; the partner finishes first, which is the
+		// scenario setBookStatusIfOpen's own comment is about: the operator's
+		// read is still open and unrelated to that conclusion, so acting on
+		// it later must not silently drag the book's shared status backwards.
+		const book = await addBook(owner, 'Both Reading The Same Book');
+		const ownerRead = ok(await startRead(sql, owner, book.id, {}), 'operator starts').record;
+		const partnerRead = ok(await startRead(sql, partner, book.id, {}), 'partner starts').record;
+		ok(
+			await finishRead(sql, partner, partnerRead.id, {}, partnerRead.updatedAt),
+			'partner finishes'
+		);
+		expect((await getBook(sql, owner, book.id))?.status).toBe('read');
+
+		ok(await pauseRead(sql, owner, ownerRead.id, ownerRead.updatedAt), 'operator pauses, later');
+
+		// The operator's own read did pause -- that part of the write always
+		// happens. Only the book's shared status is guarded.
+		const ownerActive = await activeReads(sql, owner);
+		expect(ownerActive).toMatchObject([{ id: ownerRead.id, status: 'paused' }]);
+		expect((await getBook(sql, owner, book.id))?.status).toBe('read');
+	});
+
 	it('keeps series progress and counts per viewer', async () => {
 		const book1 = await addBook(owner, 'Trilogy Book One', {
 			seriesName: 'Fictional Trilogy',
