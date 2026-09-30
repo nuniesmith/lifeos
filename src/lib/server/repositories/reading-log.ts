@@ -9,6 +9,7 @@ import {
 	guarded,
 	householdToday,
 	isUuid,
+	liveScope,
 	readableScope,
 	toBool,
 	toDayOrNull,
@@ -29,6 +30,7 @@ import {
 	listBooks,
 	optionalQuarterRating,
 	type BookFormat,
+	type BookStatus,
 	type BookSummary
 } from './reading';
 
@@ -658,6 +660,74 @@ export async function activeReads(sql: Queryable, viewer: Viewer): Promise<Activ
 		audiobookMinutes: toIntOrNull(row.audiobook_minutes),
 		startedOn: toDayOrNull(row.started_on),
 		updatedAt: toDate(row.updated_at)
+	}));
+}
+
+/** The shape `BookList` ($lib/components) already renders, so the Reading
+ *  Tracker home page's "Recently read" can reuse it exactly the way it
+ *  already reuses `BookList` for "Currently reading" and "Up next". */
+export interface RecentlyReadBook {
+	id: string;
+	title: string;
+	authorNames: string | null;
+	seriesName: string | null;
+	seriesPosition: number | null;
+	status: BookStatus;
+	favourite: boolean;
+}
+
+interface RecentlyReadRow {
+	id: string;
+	title: string;
+	status: string;
+	favourite: unknown;
+	series_name: string | null;
+	series_position: unknown;
+	author_names: string | null;
+	finished_on: string | null;
+}
+
+/**
+ * Books the VIEWER has personally finished, most recently finished first —
+ * Reading Tracker R2's replacement for R1's "every book the household marked
+ * read" (this pack's header). A rereads' book appears once, at its most
+ * recent finish: the inner query keeps one row per book (`distinct on`,
+ * itself ordered newest-finish-first so that is the row it keeps), and the
+ * outer query re-sorts that already-deduplicated set and applies the limit.
+ */
+export async function recentlyRead(
+	sql: Queryable,
+	viewer: Viewer,
+	limit = 10
+): Promise<RecentlyReadBook[]> {
+	const rows = await sql<RecentlyReadRow[]>`
+		select * from (
+			select distinct on (b.id)
+				b.id, b.title, b.status, b.favourite, b.series_position,
+				(select bs.name from book_series bs where bs.id = b.series_id) as series_name,
+				(
+					select string_agg(a.name, ', ' order by coalesce(ba.position, 32767), lower(a.name))
+					from book_authors ba join authors a on a.id = ba.author_id
+					where ba.book_id = b.id
+				) as author_names,
+				r.finished_on::text as finished_on, r.created_at as read_created_at
+			from book_reads r
+			join books b on b.id = r.book_id
+			where r.reader_user_id = ${viewer.userId}::uuid and r.status = 'finished'
+			  and ${readableScope(sql, viewer, 'b')} and ${liveScope(sql, 'b')}
+			order by b.id, r.finished_on desc nulls last, r.created_at desc
+		) recent
+		order by recent.finished_on desc nulls last, recent.read_created_at desc
+		limit ${limit}
+	`;
+	return rows.map((row) => ({
+		id: row.id,
+		title: toText(row.title),
+		authorNames: toTextOrNull(row.author_names),
+		seriesName: toTextOrNull(row.series_name),
+		seriesPosition: toNumberOrNull(row.series_position),
+		status: row.status as BookStatus,
+		favourite: toBool(row.favourite)
 	}));
 }
 

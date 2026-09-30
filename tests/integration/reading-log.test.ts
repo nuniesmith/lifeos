@@ -18,6 +18,7 @@ import {
 	pauseRead,
 	pickTbr,
 	readCount,
+	recentlyRead,
 	resumeRead,
 	seriesProgress,
 	startRead,
@@ -267,6 +268,56 @@ describe('dnf', () => {
 		expect(dnfd.finishedOn).not.toBeNull();
 
 		expect((await getBook(sql, owner, book.id))?.status).toBe('dnf');
+	});
+});
+
+describe('recently read', () => {
+	it('shows a rereads book once, at its most recent finish, newest first', async () => {
+		const older = await addBook(owner, 'Older Finish');
+		const olderRead = ok(
+			await startRead(sql, owner, older.id, { startedOn: '2026-08-01' }),
+			'start older'
+		).record;
+		ok(
+			await finishRead(sql, owner, olderRead.id, { finishedOn: '2026-08-05' }, olderRead.updatedAt),
+			'finish older'
+		);
+
+		const reread = await addBook(owner, 'Reread Twice');
+		const firstRead = ok(
+			await startRead(sql, owner, reread.id, { startedOn: '2026-08-10' }),
+			'start reread first time'
+		).record;
+		ok(
+			await finishRead(sql, owner, firstRead.id, { finishedOn: '2026-08-12' }, firstRead.updatedAt),
+			'finish reread first time'
+		);
+		const secondRead = ok(
+			await startRead(sql, owner, reread.id, { startedOn: '2026-08-20' }),
+			'start reread second time'
+		).record;
+		ok(
+			await finishRead(
+				sql,
+				owner,
+				secondRead.id,
+				{ finishedOn: '2026-08-25' },
+				secondRead.updatedAt
+			),
+			'finish reread second time'
+		);
+
+		const recent = await recentlyRead(sql, owner);
+		expect(recent.map((b) => b.id)).toEqual([reread.id, older.id]);
+	});
+
+	it("does not show another reader's finish", async () => {
+		const book = await addBook(owner, 'Partner Only Finish');
+		const read = ok(await startRead(sql, partner, book.id, {}), 'partner starts').record;
+		ok(await finishRead(sql, partner, read.id, {}, read.updatedAt), 'partner finishes');
+
+		expect(await recentlyRead(sql, owner)).toEqual([]);
+		expect((await recentlyRead(sql, partner)).map((b) => b.id)).toEqual([book.id]);
 	});
 });
 
