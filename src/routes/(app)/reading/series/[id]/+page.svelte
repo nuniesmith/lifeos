@@ -1,10 +1,22 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { Badge, BookList, Button, Card, Input, PageHeader, Textarea } from '$lib/components';
+	import {
+		Badge,
+		Button,
+		Card,
+		EmptyState,
+		Icon,
+		Input,
+		List,
+		ListRow,
+		PageHeader,
+		Textarea
+	} from '$lib/components';
 
 	let { data, form } = $props();
 
 	const archived = $derived(data.series.archivedAt !== null);
+	const finishedCount = $derived(data.books.filter((b) => b.finished).length);
 
 	const errorFor = (action: string): string | undefined =>
 		form?.action === action ? form.error : undefined;
@@ -20,11 +32,38 @@
 			{data.series.plannedCount !== null ? `of ${data.series.plannedCount}` : ''}
 			book{data.books.length === 1 ? '' : 's'}
 		</span>
+		<span>{finishedCount} of {data.books.length} read</span>
 	{/snippet}
 </PageHeader>
 
 <div class="stack">
-	<BookList books={data.books} emptyTitle="No books in this series yet" />
+	<Card flush>
+		{#if data.books.length === 0}
+			<EmptyState title="No books in this series yet" icon="journal" />
+		{:else}
+			<List label="Series books, in reading order">
+				{#each data.books as book (book.id)}
+					<ListRow
+						title={book.title}
+						href="/reading/books/{book.id}"
+						meta={book.authorNames ?? undefined}
+						muted={book.finished}
+					>
+						{#snippet lead()}
+							{#if book.finished}
+								<span class="check" title="You’ve finished this one">
+									<Icon name="check" size={18} />
+								</span>
+							{/if}
+						{/snippet}
+						{#snippet trail()}
+							{#if book.nextUp}<Badge tone="accent">Next up</Badge>{/if}
+						{/snippet}
+					</ListRow>
+				{/each}
+			</List>
+		{/if}
+	</Card>
 
 	<Card title="Edit">
 		<form
@@ -112,5 +151,9 @@
 		color: var(--c-ok);
 		border: 1px solid color-mix(in srgb, var(--c-ok) 25%, transparent);
 		background: color-mix(in srgb, var(--c-ok) 8%, transparent);
+	}
+	.check {
+		display: flex;
+		color: var(--c-ok);
 	}
 </style>

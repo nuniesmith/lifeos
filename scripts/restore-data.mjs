@@ -114,6 +114,10 @@ const TABLES = [
 	'authors',
 	'genres',
 	'books',
+	// migration 0033 (Reading Tracker R2): book_reads references books, so it
+	// must land after it; reader_user_id is remapped below the same way
+	// habit_logs.user_id and routine_step_completions.user_id already are.
+	'book_reads',
 	'attachments',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
@@ -206,6 +210,7 @@ const ORDER = [
 	'authors',
 	'genres',
 	'books',
+	'book_reads',
 	'attachments',
 	'lab_markers',
 	'medical_visits',
@@ -284,6 +289,12 @@ function mappedValue(table, column, value, targetOwner) {
 	if (['owner_user_id', 'created_by', 'updated_by', 'started_by', 'logged_by'].includes(column))
 		return targetOwner;
 	if (['habit_logs', 'routine_step_completions'].includes(table) && column === 'user_id') {
+		return targetOwner;
+	}
+	// migration 0033: book_reads.reader_user_id is NOT NULL, like
+	// food_log_entries.owner_user_id above — the read has no meaning under
+	// anyone but the account it lands on.
+	if (table === 'book_reads' && column === 'reader_user_id') {
 		return targetOwner;
 	}
 	return value;

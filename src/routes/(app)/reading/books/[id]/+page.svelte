@@ -1,12 +1,46 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
-	import { Badge, Button, Card, EmptyState, PageHeader, appPath } from '$lib/components';
+	import {
+		Badge,
+		Button,
+		Card,
+		EmptyState,
+		List,
+		ListRow,
+		PageHeader,
+		appPath
+	} from '$lib/components';
 	import BookFields from '../BookFields.svelte';
+	import { FORMAT_LABELS } from '../form';
+	import ReadingSection from './ReadingSection.svelte';
+	import ReadSheet, { type EditableRead } from './ReadSheet.svelte';
 
 	let { data, form } = $props();
 
 	const archived = $derived(data.book.archivedAt !== null);
+
+	let readSheetOpen = $state(false);
+	let editingRead = $state<EditableRead | null>(null);
+	function openRead(read: EditableRead) {
+		editingRead = read;
+		readSheetOpen = true;
+	}
+
+	/** "started – finished", the format, and a status word for anything not
+	 *  simply finished — the one-line summary next to each reader's name in
+	 *  the history below. */
+	function readMeta(read: (typeof data.reads)[number]): string {
+		const parts: string[] = [];
+		if (read.startedOn && read.finishedOn) parts.push(`${read.startedOn} – ${read.finishedOn}`);
+		else if (read.finishedOn) parts.push(`Finished ${read.finishedOn}`);
+		else if (read.startedOn) parts.push(`Started ${read.startedOn}`);
+		if (read.format) parts.push(FORMAT_LABELS[read.format]);
+		if (read.status === 'dnf') parts.push('DNF');
+		else if (read.status === 'paused') parts.push('Paused');
+		else if (read.status === 'reading') parts.push('Reading');
+		return parts.join(' · ');
+	}
 
 	const errorFor = (action: string): string | undefined =>
 		form?.action === action ? form.error : undefined;
@@ -79,6 +113,37 @@
 			</p>
 		{/if}
 	</Card>
+
+	<ReadingSection
+		pages={data.book.pages}
+		audiobookMinutes={data.book.audiobookMinutes}
+		activeRead={data.activeRead}
+		readCount={data.readCount}
+		today={data.today}
+	/>
+
+	{#if data.reads.length > 0}
+		<Card title="Read history" flush>
+			<List label="Read history">
+				{#each data.reads as read (read.id)}
+					<ListRow title={read.readerName} meta={readMeta(read)}>
+						{#snippet trail()}
+							{#if read.rating !== null}<Badge tone="accent">{read.rating} ★</Badge>{/if}
+							{#if read.readerUserId === data.viewerId}
+								<Button size="sm" variant="ghost" onclick={() => openRead(read)}>Edit</Button>
+							{/if}
+						{/snippet}
+						{#if read.reviewHtml}
+							<!-- Safe for the same reason the description/notes below are:
+							     renderMarkdown's own sanitized output. -->
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							<div class="review">{@html read.reviewHtml}</div>
+						{/if}
+					</ListRow>
+				{/each}
+			</List>
+		</Card>
+	{/if}
 
 	<Card title="Description">
 		{#if data.descriptionHtml}
@@ -165,6 +230,8 @@
 	{/if}
 </div>
 
+<ReadSheet bind:open={readSheetOpen} read={editingRead} />
+
 <style>
 	.stack {
 		display: flex;
@@ -187,6 +254,18 @@
 	}
 	.source a {
 		color: var(--c-accent);
+	}
+	.review {
+		margin-top: var(--sp-1);
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
+		overflow-wrap: anywhere;
+	}
+	.review :global(p) {
+		margin: 0 0 var(--sp-2);
+	}
+	.review :global(p:last-child) {
+		margin-bottom: 0;
 	}
 	.edit {
 		display: grid;

@@ -102,6 +102,12 @@ const TABLES = [
 	'authors',
 	'genres',
 	'books',
+	// migration 0033 (Reading Tracker R2): book_reads has no household_id of
+	// its own — scoped through books the same way bill_payments is scoped
+	// through bills above — so it is listed here for real (a household's own
+	// reading history is still its data) even though data-mobility.test.ts's
+	// household_id scan would not have caught its absence.
+	'book_reads',
 	// Labs and visits (migration 0020). lab_markers and medical_visits carry no
 	// dependency on each other; lab_results references both, so it comes after.
 	'lab_markers',
@@ -237,6 +243,8 @@ async function rowsFor(db, table, id) {
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'bill_payments':
 			return db`select p.* from bill_payments p join bills b on b.id = p.bill_id where b.household_id = ${id}::uuid order by p.bill_id, p.paid_on, p.created_at`;
+		case 'book_reads':
+			return db`select r.* from book_reads r join books b on b.id = r.book_id where b.household_id = ${id}::uuid order by r.book_id, r.created_at`;
 		case 'book_authors':
 			return db`select ba.* from book_authors ba join books b on b.id = ba.book_id where b.household_id = ${id}::uuid order by ba.book_id, ba.author_id`;
 		case 'book_genres':

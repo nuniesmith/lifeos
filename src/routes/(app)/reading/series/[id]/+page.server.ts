@@ -3,6 +3,7 @@ import { sql } from '$lib/server/db';
 import {
 	getBookSeries,
 	listBooks,
+	seriesProgress,
 	setBookSeriesArchived,
 	updateBookSeries
 } from '$lib/server/repositories';
@@ -11,7 +12,14 @@ import type { Actions, PageServerLoad } from './$types';
 
 /**
  * One series: its books in reading order, a rename, notes, a planned count,
- * and archive (Reading Tracker R1).
+ * and archive (Reading Tracker R1) — plus, per book, whether the VIEWER has
+ * finished it and which one is "next up" (Reading Tracker R2's series hub).
+ *
+ * `listBooks` and `seriesProgress` run the same filter (this series, live,
+ * readable) in the same `series_position` order, so the two arrays line up —
+ * but the merge below still joins by id rather than trusting that, the same
+ * caution `readCount`/`activeReads` already take over trusting a second
+ * query's row order to match a first one's.
  */
 
 export const load: PageServerLoad = async ({ locals, params }) => {
@@ -20,12 +28,23 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const series = await getBookSeries(sql, viewer, params.id);
 	if (!series) error(404, 'Not found');
 
-	const books = await listBooks(sql, viewer, {
-		seriesId: series.id,
-		order: 'series_position',
-		limit: 300
-	});
-	return { series, books };
+	const [books, progress] = await Promise.all([
+		listBooks(sql, viewer, {
+			seriesId: series.id,
+			order: 'series_position',
+			limit: 300
+		}),
+		seriesProgress(sql, viewer, series.id)
+	]);
+
+	const finishedIds = new Set(progress.books.filter((b) => b.finished).map((b) => b.id));
+	const booksWithProgress = books.map((book) => ({
+		...book,
+		finished: finishedIds.has(book.id),
+		nextUp: book.id === progress.nextUpId
+	}));
+
+	return { series, books: booksWithProgress };
 };
 
 export const actions: Actions = {

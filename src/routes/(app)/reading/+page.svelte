@@ -1,8 +1,40 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import { BookList, Button, Card, Input, LibraryList, PageHeader } from '$lib/components';
+	import {
+		Badge,
+		BookList,
+		Button,
+		Card,
+		EmptyState,
+		Input,
+		LibraryList,
+		List,
+		ListRow,
+		PageHeader
+	} from '$lib/components';
 
 	let { data, form } = $props();
+
+	type ActiveRead = (typeof data.currentlyReading)[number];
+
+	/** "123 / 400 pages", or "123 minutes" when the book's own total is not
+	 *  known — an audiobook counts minutes, everything else pages. */
+	function progressLabel(read: ActiveRead): string | null {
+		const minutes = read.format === 'audiobook';
+		const total = minutes ? read.audiobookMinutes : read.pages;
+		const value = minutes ? read.progressMinutes : read.progressPages;
+		if (value === null) return null;
+		const unit = minutes ? 'minutes' : 'pages';
+		return total ? `${value} / ${total} ${unit}` : `${value} ${unit}`;
+	}
+
+	function progressPercent(read: ActiveRead): number | null {
+		const minutes = read.format === 'audiobook';
+		const total = minutes ? read.audiobookMinutes : read.pages;
+		const value = minutes ? read.progressMinutes : read.progressPages;
+		if (!total || value === null) return null;
+		return Math.max(0, Math.min(100, Math.round((value / total) * 100)));
+	}
 
 	/*
 	 * Bumped after a successful "add a book" save to draw that form afresh —
@@ -39,11 +71,49 @@
 
 	<section aria-labelledby="reading-heading">
 		<h2 id="reading-heading" class="section-title">Currently reading</h2>
-		<BookList books={data.currentlyReading} emptyTitle="Nothing being read right now" />
+		<Card flush>
+			{#if data.currentlyReading.length === 0}
+				<EmptyState title="Nothing being read right now" icon="journal" />
+			{:else}
+				<List label="Currently reading">
+					{#each data.currentlyReading as read (read.id)}
+						<ListRow
+							title={read.bookTitle}
+							href="/reading/books/{read.bookId}"
+							meta={read.authorNames ?? undefined}
+						>
+							{#snippet trail()}
+								{#if read.status === 'paused'}<Badge tone="neutral">Paused</Badge>{/if}
+							{/snippet}
+							{#if progressLabel(read)}
+								<div class="progress">
+									{#if progressPercent(read) !== null}
+										<div
+											class="track"
+											role="progressbar"
+											aria-valuenow={progressPercent(read)}
+											aria-valuemin={0}
+											aria-valuemax={100}
+											aria-label="{read.bookTitle}: {progressLabel(read)}"
+										>
+											<span class="fill" style:width="{progressPercent(read)}%"></span>
+										</div>
+									{/if}
+									<span class="progress-text">{progressLabel(read)}</span>
+								</div>
+							{/if}
+						</ListRow>
+					{/each}
+				</List>
+			{/if}
+		</Card>
 	</section>
 
 	<section aria-labelledby="next-heading">
-		<h2 id="next-heading" class="section-title">Up next</h2>
+		<div class="section-head">
+			<h2 id="next-heading" class="section-title">Up next</h2>
+			<Button href="/reading/tbr" size="sm" variant="ghost">TBR pile</Button>
+		</div>
 		<BookList
 			books={data.upNext}
 			emptyTitle="Nothing on the TBR yet"
@@ -166,5 +236,27 @@
 		color: var(--c-crit);
 		border: 1px solid color-mix(in srgb, var(--c-crit) 25%, transparent);
 		background: color-mix(in srgb, var(--c-crit) 8%, transparent);
+	}
+	.progress {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-1);
+		min-width: 0;
+	}
+	.track {
+		height: 6px;
+		border-radius: var(--radius-pill);
+		background: var(--c-surface-alt);
+		border: 1px solid var(--c-border);
+		overflow: hidden;
+	}
+	.fill {
+		display: block;
+		height: 100%;
+		background: var(--c-accent);
+	}
+	.progress-text {
+		color: var(--c-text-muted);
+		font-size: var(--fs-xs);
 	}
 </style>

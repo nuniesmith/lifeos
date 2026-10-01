@@ -294,7 +294,20 @@ export interface BookFilters extends PageOptions {
 	/** Matches against the title only. */
 	search?: string;
 	includeArchived?: boolean;
-	order?: 'title' | 'tbr_added' | 'updated' | 'series_position';
+	// 'tbr_added' is newest-first (the home page's "Up next"); 'tbr_added_asc'
+	// is its mirror, oldest-first, for the TBR pile itself — a queue you work
+	// through front-to-back, not a feed of what was most recently added to it.
+	order?: 'title' | 'tbr_added' | 'tbr_added_asc' | 'updated' | 'series_position';
+	// The three below exist for reading-log.ts's `pickTbr`, which is
+	// otherwise just this query with `status: 'tbr'` and a random pick in JS
+	// over the result — see `pickMediaToWatch` in collections.ts for the same
+	// shape. Adding filters here rather than duplicating the column list and
+	// joins in a second query keeps this the one place the Reading Tracker
+	// reads a book row from.
+	format?: BookFormat;
+	/** Only books whose own page count is known and at or under this. */
+	maxPages?: number;
+	excludeIds?: readonly string[];
 }
 
 /**
@@ -315,15 +328,18 @@ export async function listBooks(
 				? filters.status
 				: [filters.status];
 	const search = filters.search?.trim();
+	const excludeIds = filters.excludeIds?.filter(isUuid);
 
 	const order =
 		filters.order === 'tbr_added'
 			? sql`b.tbr_added_on desc nulls last, lower(b.title) asc`
-			: filters.order === 'updated'
-				? sql`b.updated_at desc`
-				: filters.order === 'series_position'
-					? sql`b.series_position asc nulls last, lower(b.title) asc`
-					: sql`lower(b.title) asc, b.id asc`;
+			: filters.order === 'tbr_added_asc'
+				? sql`b.tbr_added_on asc nulls last, lower(b.title) asc`
+				: filters.order === 'updated'
+					? sql`b.updated_at desc`
+					: filters.order === 'series_position'
+						? sql`b.series_position asc nulls last, lower(b.title) asc`
+						: sql`lower(b.title) asc, b.id asc`;
 
 	const rows = await sql<BookSummaryRow[]>`
 		select ${bookColumns(sql)},
@@ -339,6 +355,9 @@ export async function listBooks(
 		  ${statuses ? sql`and b.status in ${sql(statuses)}` : sql``}
 		  ${filters.owned !== undefined ? sql`and b.owned = ${filters.owned}` : sql``}
 		  ${filters.favourite !== undefined ? sql`and b.favourite = ${filters.favourite}` : sql``}
+		  ${filters.format !== undefined ? sql`and b.format = ${filters.format}` : sql``}
+		  ${filters.maxPages !== undefined ? sql`and b.pages is not null and b.pages <= ${filters.maxPages}` : sql``}
+		  ${excludeIds && excludeIds.length > 0 ? sql`and b.id not in ${sql(excludeIds)}` : sql``}
 		  ${filters.seriesId && isUuid(filters.seriesId) ? sql`and b.series_id = ${filters.seriesId}::uuid` : sql``}
 		  ${search ? sql`and b.title ilike ${'%' + search + '%'}` : sql``}
 		  ${
@@ -1076,6 +1095,14 @@ export interface BookSeries {
 
 export interface BookSeriesWithCount extends BookSeries {
 	bookCount: number;
+	/**
+	 * How many of this series' books the viewer has finished at least once —
+	 * Reading Tracker R2's `book_reads`, not a column on `book_series` itself.
+	 * Per-viewer like every other read-log figure (reading-log.ts's header):
+	 * Kayla finishing book 2 does not make it "read" on the operator's own
+	 * count of this series.
+	 */
+	finishedCount: number;
 }
 
 interface BookSeriesRow {
@@ -1119,13 +1146,23 @@ export async function listBookSeries(
 ): Promise<BookSeriesWithCount[]> {
 	const { limit, offset } = pageOf(filters);
 	const search = filters.search?.trim();
-	const rows = await sql<(BookSeriesRow & { book_count: unknown })[]>`
+	const rows = await sql<(BookSeriesRow & { book_count: unknown; finished_count: unknown })[]>`
 		select ${bookSeriesColumns(sql)},
 			(
 				select count(*)::int from books b
 				where b.series_id = book_series.id and b.archived_at is null
 				  and ${readableScope(sql, viewer, 'b')}
-			) as book_count
+			) as book_count,
+			(
+				select count(*)::int from books b
+				where b.series_id = book_series.id and b.archived_at is null
+				  and ${readableScope(sql, viewer, 'b')}
+				  and exists (
+				      select 1 from book_reads r
+				      where r.book_id = b.id and r.reader_user_id = ${viewer.userId}::uuid
+				        and r.status = 'finished'
+				  )
+			) as finished_count
 		from book_series
 		where ${householdScope(sql, viewer, BOOK_SERIES)}
 		  and ${liveScope(sql, BOOK_SERIES, filters.includeArchived)}
@@ -1133,7 +1170,11 @@ export async function listBookSeries(
 		order by lower(name) asc
 		limit ${limit} offset ${offset}
 	`;
-	return rows.map((row) => ({ ...mapBookSeries(row), bookCount: toInt(row.book_count) }));
+	return rows.map((row) => ({
+		...mapBookSeries(row),
+		bookCount: toInt(row.book_count),
+		finishedCount: toInt(row.finished_count)
+	}));
 }
 
 export async function getBookSeries(

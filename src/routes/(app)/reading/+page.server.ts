@@ -1,8 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
 import {
+	activeReads,
 	createBook,
 	listBooks,
+	recentlyRead as recentlyReadBooks,
 	touchLibraryItem,
 	updateLibraryItem
 } from '$lib/server/repositories';
@@ -11,7 +13,7 @@ import { loadShelf } from '../library/shelf';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * Reading Tracker home (Reading Tracker R1).
+ * Reading Tracker home (Reading Tracker R1, updated for R2).
  *
  * Two catalogues live on this one page: the book catalogue this pack adds
  * (currently reading, up next, recently read — all `books`), and the
@@ -22,15 +24,21 @@ import type { Actions, PageServerLoad } from './$types';
  * merged, because merging them would mean deciding which table wins when
  * both eventually describe the same physical book, and that decision belongs
  * to R2's reading log, not to this page.
+ *
+ * R2: "Currently reading" and "Recently read" now come from the viewer's own
+ * `book_reads` (reading-log.ts's `activeReads`/`recentlyRead`) rather than
+ * R1's household-wide `books.status` — two people sharing a book build two
+ * separate reading histories of it (that pack's own header). "Up next" stays
+ * on `listBooks`: the TBR pile has no per-reader dimension yet to split it by.
  */
 
 export const load: PageServerLoad = async ({ locals }) => {
 	const viewer = await requireViewer(locals.user);
 
-	const [currentlyReading, upNext, recentlyRead, current, finished] = await Promise.all([
-		listBooks(sql, viewer, { status: 'reading', order: 'updated', limit: 20 }),
+	const [currentlyReading, upNext, recentBooks, current, finished] = await Promise.all([
+		activeReads(sql, viewer),
 		listBooks(sql, viewer, { status: 'tbr', order: 'tbr_added', limit: 10 }),
-		listBooks(sql, viewer, { status: 'read', order: 'updated', limit: 10 }),
+		recentlyReadBooks(sql, viewer, 10),
 		loadShelf(viewer, { status: 'reading_list', order: 'author' }),
 		loadShelf(viewer, { status: 'archived_read', order: 'recent', limit: 20 })
 	]);
@@ -38,7 +46,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	return {
 		currentlyReading,
 		upNext,
-		recentlyRead,
+		recentlyRead: recentBooks,
 		items: current.items,
 		finished: finished.items,
 		summary: current.summary
