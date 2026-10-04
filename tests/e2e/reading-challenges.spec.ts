@@ -187,11 +187,16 @@ test.describe('reading challenges', () => {
 		await row.getByLabel('Fill with', { exact: true }).selectOption({ label: 'R3 E2E Fill Book' });
 		await row.getByRole('button', { name: 'Fill', exact: true }).click();
 
-		await expect(row.getByText('R3 E2E Fill Book', { exact: true })).toBeVisible();
+		// The filled book is a plain span. Scoped to it, because once the prompt
+		// is cleared the row shows the "Fill with" picker again, and its
+		// <option> carries the same title: a bare getByText found that option
+		// and failed the "cleared" check on this spec's first CI run.
+		const filled = row.locator('span.filled-book');
+		await expect(filled).toHaveText('R3 E2E Fill Book');
 		await expect(row.getByRole('button', { name: 'Clear', exact: true })).toBeVisible();
 
 		await row.getByRole('button', { name: 'Clear', exact: true }).click();
-		await expect(row.getByText('R3 E2E Fill Book', { exact: true })).toHaveCount(0);
+		await expect(filled).toHaveCount(0);
 		await expect(row.getByRole('button', { name: 'Fill', exact: true })).toBeVisible();
 	});
 
