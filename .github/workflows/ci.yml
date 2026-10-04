@@ -269,11 +269,19 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUBLISH == 'true' }}
-          # Always resolve the base images afresh; on a refresh, also rebuild the
-          # runtime stage without its cached layers, so its `apt-get upgrade`
-          # runs today rather than whenever the base image last changed.
+          # Always resolve the base images afresh, and always rebuild the runtime
+          # stage without its cached layers, so its `apt-get upgrade` runs today
+          # rather than whenever the base image last changed.
+          #
+          # This used to be on a refresh only. On 2026-10-04 Debian shipped a
+          # fix for a HIGH libpcre2 CVE, the scan below flagged it as fixed, and
+          # every normal build reused a cached upgrade layer from before the fix.
+          # The scan failed, the image was never published, and main stopped
+          # deploying until a refresh was run by hand. Rebuilding just this
+          # stage measured 163s against 350s for a normal cached build (the
+          # deps and build stages keep their cache), so it costs little.
           pull: true
-          no-cache-filters: ${{ env.REFRESH == 'true' && 'runtime' || '' }}
+          no-cache-filters: runtime
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.REFRESH == 'true' && format('refresh-{0}', github.run_id) || github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
