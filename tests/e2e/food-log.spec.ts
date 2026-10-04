@@ -145,12 +145,18 @@ test.describe('the food log', () => {
 		await page.getByRole('spinbutton', { name: 'Servings' }).fill('1');
 		await page.getByLabel('Meal').selectOption('breakfast');
 		await page.getByRole('button', { name: 'Add to log' }).click();
+		// Wait for the save to land before touching the form again. The form is
+		// redrawn when it returns ({#key addFormKey}), and a choice made before
+		// the redraw goes with the old form: the recipe's Servings field never
+		// appeared, and this test timed out on CI whenever the save was slow.
+		await expect(meal(page, 'Breakfast')).toContainText('Fictional Oat Bowl');
 
 		// A recipe, for lunch.
 		await page.getByLabel('Food or recipe').selectOption(`recipe:${recipeId}`);
 		await page.getByRole('spinbutton', { name: 'Servings' }).fill('1');
 		await page.getByLabel('Meal').selectOption('lunch');
 		await page.getByRole('button', { name: 'Add to log' }).click();
+		await expect(meal(page, 'Lunch')).toContainText('Fictional Lentil Soup');
 
 		// A one-off, for a snack — its own typed name and nutrients.
 		await page
