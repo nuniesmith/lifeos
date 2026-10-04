@@ -129,17 +129,15 @@ async function addRead(
 	return rows[0]!.id;
 }
 
-async function addChallenge(
-	viewer: Viewer,
-	title: string,
-	extra: Record<string, unknown> = {}
-) {
+async function addChallenge(viewer: Viewer, title: string, extra: Record<string, unknown> = {}) {
 	return ok(
-		await createReadingChallenge(
-			sql,
-			viewer,
-			{ title, year: 2026, kind: 'count', targetCount: 10, ...extra }
-		),
+		await createReadingChallenge(sql, viewer, {
+			title,
+			year: 2026,
+			kind: 'count',
+			targetCount: 10,
+			...extra
+		}),
 		`add "${title}"`
 	).record;
 }
@@ -239,7 +237,13 @@ describe('updating a challenge', () => {
 	it('conflicts a stale edit (optimistic concurrency)', async () => {
 		const challenge = await addChallenge(owner, 'R3 Stale Edit');
 		ok(
-			await updateReadingChallenge(sql, owner, challenge.id, { targetCount: 20 }, challenge.updatedAt),
+			await updateReadingChallenge(
+				sql,
+				owner,
+				challenge.id,
+				{ targetCount: 20 },
+				challenge.updatedAt
+			),
 			'first edit, with the original version'
 		);
 
@@ -306,7 +310,10 @@ describe('count challenge progress', () => {
 		await addRead(owner, book2026.id, { finishedOn: '2026-01-01' });
 		await addRead(owner, bookNextYear.id, { finishedOn: '2027-01-01' });
 
-		const challenge = await addChallenge(owner, 'R3 Year Boundary', { year: 2026, targetCount: 10 });
+		const challenge = await addChallenge(owner, 'R3 Year Boundary', {
+			year: 2026,
+			targetCount: 10
+		});
 		const books = await countChallengeBooks(sql, owner, challenge);
 		expect(books.map((b) => b.title)).toEqual(['R3 Finished In 2026']);
 	});
@@ -328,7 +335,10 @@ describe('count challenge progress', () => {
 			format: 'print',
 			genreNames: 'R3 Cozy Mystery'
 		});
-		const wrongGenre = await addBook(owner, 'R3 Wrong Genre', { category: 'fiction', format: 'ebook' });
+		const wrongGenre = await addBook(owner, 'R3 Wrong Genre', {
+			category: 'fiction',
+			format: 'ebook'
+		});
 		for (const book of [match, wrongCategory, wrongFormat, wrongGenre]) {
 			await addRead(owner, book.id, { finishedOn: '2026-03-01' });
 		}
@@ -362,7 +372,10 @@ describe('count challenge progress', () => {
 	it('shows in the list with done/total for count and filled/total for prompts', async () => {
 		const book = await addBook(owner, 'R3 Listed Progress Book');
 		await addRead(owner, book.id, { finishedOn: '2026-05-01' });
-		const countChallenge = await addChallenge(owner, 'R3 Listed Count', { year: 2026, targetCount: 4 });
+		const countChallenge = await addChallenge(owner, 'R3 Listed Count', {
+			year: 2026,
+			targetCount: 4
+		});
 		const promptsChallenge = await addChallenge(owner, 'R3 Listed Prompts', {
 			year: 2026,
 			kind: 'prompts'
@@ -372,7 +385,9 @@ describe('count challenge progress', () => {
 			'add item'
 		).record;
 		ok(await fillChallengeItem(sql, owner, item.id, book.id), 'fill item');
-		await addChallengeItem(sql, owner, promptsChallenge.id, { prompt: 'R3 Another unfilled prompt' });
+		await addChallengeItem(sql, owner, promptsChallenge.id, {
+			prompt: 'R3 Another unfilled prompt'
+		});
 
 		const list = await listReadingChallenges(sql, owner);
 		const count = list.find((c) => c.id === countChallenge.id);
@@ -384,7 +399,10 @@ describe('count challenge progress', () => {
 
 describe('prompts and their items', () => {
 	it('adds items appended in order', async () => {
-		const challenge = await addChallenge(owner, 'R3 Item Order', { kind: 'prompts', targetCount: undefined });
+		const challenge = await addChallenge(owner, 'R3 Item Order', {
+			kind: 'prompts',
+			targetCount: undefined
+		});
 		const first = ok(
 			await addChallengeItem(sql, owner, challenge.id, { prompt: 'R3 First prompt' }),
 			'add first'
@@ -444,7 +462,10 @@ describe('prompts and their items', () => {
 		expect(live.map((i) => i.prompt)).toEqual(['R3 A', 'R3 C']);
 		expect(live.map((i) => i.position)).toEqual([1, 2]);
 
-		const restored = ok(await setChallengeItemArchived(sql, owner, b.id, false), 'restore b').record;
+		const restored = ok(
+			await setChallengeItemArchived(sql, owner, b.id, false),
+			'restore b'
+		).record;
 		// Appended at the end, not back into its old slot (migration 0035's own
 		// header: the slot may already belong to a different item).
 		expect(restored.position).toBe(3);
@@ -459,7 +480,9 @@ describe('prompts and their items', () => {
 	it('fills a prompt with a readable book, setting completed_on to today', async () => {
 		const challenge = await addChallenge(owner, 'R3 Fill Me', { kind: 'prompts' });
 		const item = ok(
-			await addChallengeItem(sql, owner, challenge.id, { prompt: 'R3 A book you picked up on a whim' }),
+			await addChallengeItem(sql, owner, challenge.id, {
+				prompt: 'R3 A book you picked up on a whim'
+			}),
 			'add'
 		).record;
 		const book = await addBook(owner, 'R3 Whim Book');
@@ -507,14 +530,18 @@ describe('prompts and their items', () => {
 	it('lists readable books for the fill picker, most recently finished first', async () => {
 		const older = await addBook(owner, 'R3 Finished Long Ago');
 		const newer = await addBook(owner, 'R3 Finished Recently');
-		const neverFinished = await addBook(owner, 'R3 Never Finished');
+		await addBook(owner, 'R3 Never Finished');
 		await addRead(owner, older.id, { finishedOn: '2020-01-01' });
 		await addRead(owner, newer.id, { finishedOn: '2026-08-01' });
 
 		const options = await booksForChallengeFill(sql, owner);
 		const titles = options.map((o) => o.title);
-		expect(titles.indexOf('R3 Finished Recently')).toBeLessThan(titles.indexOf('R3 Finished Long Ago'));
-		expect(titles.indexOf('R3 Finished Long Ago')).toBeLessThan(titles.indexOf('R3 Never Finished'));
+		expect(titles.indexOf('R3 Finished Recently')).toBeLessThan(
+			titles.indexOf('R3 Finished Long Ago')
+		);
+		expect(titles.indexOf('R3 Finished Long Ago')).toBeLessThan(
+			titles.indexOf('R3 Never Finished')
+		);
 	});
 });
 
@@ -528,7 +555,11 @@ describe('reading insights', () => {
 
 		await addRead(owner, printKnown.id, { format: 'print', rating: 4, finishedOn: '2026-02-10' });
 		await addRead(owner, printUnknown.id, { format: 'ebook', finishedOn: '2026-02-11' });
-		await addRead(owner, audioKnown.id, { format: 'audiobook', rating: 5, finishedOn: '2026-02-12' });
+		await addRead(owner, audioKnown.id, {
+			format: 'audiobook',
+			rating: 5,
+			finishedOn: '2026-02-12'
+		});
 		await addRead(owner, audioUnknown.id, { format: 'audiobook', finishedOn: '2026-02-13' });
 		await addRead(owner, dnfBook.id, { status: 'dnf', finishedOn: '2026-02-14' });
 

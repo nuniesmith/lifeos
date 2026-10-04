@@ -165,7 +165,10 @@ function validatedGenreId(value: unknown): string | null {
  * constraint violation surfacing as a 500 is exactly what validating first
  * avoids everywhere else in this layer.
  */
-function challengeFieldsFrom(patch: ReadingChallengeInput, current: ChallengeFields): ChallengeFields {
+function challengeFieldsFrom(
+	patch: ReadingChallengeInput,
+	current: ChallengeFields
+): ChallengeFields {
 	const kind = patched(patch, 'kind', current.kind, (v) => oneOf(v, 'kind', CHALLENGE_KINDS));
 	const targetCount = patched(patch, 'targetCount', current.targetCount, (v) =>
 		optionalInt(v, 'target', { min: 1 })
@@ -742,7 +745,8 @@ export function fillChallengeItem(
 	itemId: string,
 	bookId: string
 ): Promise<WriteResult<ReadingChallengeItem>> {
-	if (!isUuid(itemId) || !isUuid(bookId)) return Promise.resolve({ ok: false, reason: 'not_found' });
+	if (!isUuid(itemId) || !isUuid(bookId))
+		return Promise.resolve({ ok: false, reason: 'not_found' });
 
 	return guarded<ReadingChallengeItem>(async () => {
 		const today = await householdToday(sql, viewer.householdId);
@@ -896,19 +900,27 @@ export async function readingInsights(
 	viewer: Viewer,
 	year: number
 ): Promise<ReadingInsights> {
-	const [totalsRows, monthRows, formatRows, categoryRows, genreRows, authorRows, longestRows, shortestRows] =
-		await Promise.all([
-			sql<
-				{
-					finished_count: unknown;
-					dnf_count: unknown;
-					pages_read: unknown;
-					pages_unknown: unknown;
-					audiobook_minutes: unknown;
-					audiobook_unknown: unknown;
-					average_rating: unknown;
-				}[]
-			>`
+	const [
+		totalsRows,
+		monthRows,
+		formatRows,
+		categoryRows,
+		genreRows,
+		authorRows,
+		longestRows,
+		shortestRows
+	] = await Promise.all([
+		sql<
+			{
+				finished_count: unknown;
+				dnf_count: unknown;
+				pages_read: unknown;
+				pages_unknown: unknown;
+				audiobook_minutes: unknown;
+				audiobook_unknown: unknown;
+				average_rating: unknown;
+			}[]
+		>`
 				select
 					count(*) filter (where r.status = 'finished')::int as finished_count,
 					count(*) filter (where r.status = 'dnf')::int as dnf_count,
@@ -929,27 +941,27 @@ export async function readingInsights(
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)}
 			`,
-			sql<{ month: unknown; count: unknown }[]>`
+		sql<{ month: unknown; count: unknown }[]>`
 				select extract(month from r.finished_on)::int as month, count(*)::int as count
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished'
 				group by month
 			`,
-			sql<{ format: string | null; count: unknown }[]>`
+		sql<{ format: string | null; count: unknown }[]>`
 				select r.format, count(*)::int as count
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished'
 				group by r.format
 				order by count desc, r.format asc nulls last
 			`,
-			sql<{ category: string | null; count: unknown }[]>`
+		sql<{ category: string | null; count: unknown }[]>`
 				select b.category, count(*)::int as count
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished'
 				group by b.category
 				order by count desc, b.category asc nulls last
 			`,
-			sql<{ id: string; name: string; count: unknown }[]>`
+		sql<{ id: string; name: string; count: unknown }[]>`
 				select g.id, g.name, count(*)::int as count
 				from book_reads r
 				join books b on b.id = r.book_id
@@ -960,7 +972,7 @@ export async function readingInsights(
 				order by count desc, lower(g.name) asc
 				limit 5
 			`,
-			sql<{ id: string; name: string; count: unknown }[]>`
+		sql<{ id: string; name: string; count: unknown }[]>`
 				select a.id, a.name, count(*)::int as count
 				from book_reads r
 				join books b on b.id = r.book_id
@@ -971,21 +983,21 @@ export async function readingInsights(
 				order by count desc, lower(a.name) asc
 				limit 5
 			`,
-			sql<{ id: string; title: string; pages: unknown }[]>`
+		sql<{ id: string; title: string; pages: unknown }[]>`
 				select b.id, b.title, b.pages
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished' and b.pages is not null
 				order by b.pages desc, lower(b.title) asc
 				limit 1
 			`,
-			sql<{ id: string; title: string; pages: unknown }[]>`
+		sql<{ id: string; title: string; pages: unknown }[]>`
 				select b.id, b.title, b.pages
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished' and b.pages is not null
 				order by b.pages asc, lower(b.title) asc
 				limit 1
 			`
-		]);
+	]);
 
 	const totals = totalsRows[0];
 	const finishedPerMonth = Array.from({ length: 12 }, (_, index) => {
@@ -1014,7 +1026,11 @@ export async function readingInsights(
 			category: (row.category as BookCategory | null) ?? null,
 			count: toInt(row.count)
 		})),
-		topGenres: genreRows.map((row) => ({ id: row.id, name: toText(row.name), count: toInt(row.count) })),
+		topGenres: genreRows.map((row) => ({
+			id: row.id,
+			name: toText(row.name),
+			count: toInt(row.count)
+		})),
 		topAuthors: authorRows.map((row) => ({
 			id: row.id,
 			name: toText(row.name),

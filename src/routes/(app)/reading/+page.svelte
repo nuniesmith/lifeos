@@ -67,6 +67,8 @@
 		<Button href="/reading/authors" size="sm" variant="ghost">Authors</Button>
 		<Button href="/reading/series" size="sm" variant="ghost">Series</Button>
 		<Button href="/reading/genres" size="sm" variant="ghost">Genres</Button>
+		<Button href="/reading/challenges" size="sm" variant="ghost">Challenges</Button>
+		<Button href="/reading/insights" size="sm" variant="ghost">Insights</Button>
 	</nav>
 
 	<section aria-labelledby="reading-heading">

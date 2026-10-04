@@ -713,9 +713,7 @@ describe('portable data mobility', () => {
 				owner_user_id: targetUser
 			});
 
-			const item = await restored<
-				{ prompt: string; completed_on: string; book_title: string }[]
-			>`
+			const item = await restored<{ prompt: string; completed_on: string; book_title: string }[]>`
 				select i.prompt, i.completed_on::text as completed_on, bk.title as book_title
 				from reading_challenge_items i
 				join reading_challenges c on c.id = i.challenge_id
