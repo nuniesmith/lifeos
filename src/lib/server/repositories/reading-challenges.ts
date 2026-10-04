@@ -248,7 +248,7 @@ export async function listReadingChallenges(
 				  and extract(year from r.finished_on)::int = c.year
 				  and ${readableScope(sql, viewer, 'b')}
 				  and (c.category is null or b.category = c.category)
-				  and (c.format is null or b.format = c.format)
+				  and (c.format is null or coalesce(r.format, b.format) = c.format)
 				  and (
 				      c.genre_id is null or exists (
 				          select 1 from book_genres bg
@@ -420,7 +420,7 @@ export async function countChallengeBooks(
 		  and extract(year from r.finished_on)::int = ${challenge.year}
 		  and ${readableScope(sql, viewer, 'b')}
 		  ${challenge.category ? sql`and b.category = ${challenge.category}` : sql``}
-		  ${challenge.format ? sql`and b.format = ${challenge.format}` : sql``}
+		  ${challenge.format ? sql`and coalesce(r.format, b.format) = ${challenge.format}` : sql``}
 		  ${
 				challenge.genreId
 					? sql`and exists (
@@ -924,18 +924,25 @@ export async function readingInsights(
 				select
 					count(*) filter (where r.status = 'finished')::int as finished_count,
 					count(*) filter (where r.status = 'dnf')::int as dnf_count,
+					-- How a read is measured: by its own format, else the book's,
+					-- else as print. A read with no format anywhere used to fall
+					-- into neither total NOR either unknown tally, so it simply
+					-- vanished from the year's stats.
 					coalesce(sum(b.pages) filter (
-						where r.status = 'finished' and r.format in ('print', 'ebook') and b.pages is not null
+						where r.status = 'finished' and coalesce(r.format, b.format, 'print') <> 'audiobook'
+						  and b.pages is not null
 					), 0)::int as pages_read,
 					count(*) filter (
-						where r.status = 'finished' and r.format in ('print', 'ebook') and b.pages is null
+						where r.status = 'finished' and coalesce(r.format, b.format, 'print') <> 'audiobook'
+						  and b.pages is null
 					)::int as pages_unknown,
 					coalesce(sum(b.audiobook_minutes) filter (
-						where r.status = 'finished' and r.format = 'audiobook'
+						where r.status = 'finished' and coalesce(r.format, b.format) = 'audiobook'
 						  and b.audiobook_minutes is not null
 					), 0)::numeric as audiobook_minutes,
 					count(*) filter (
-						where r.status = 'finished' and r.format = 'audiobook' and b.audiobook_minutes is null
+						where r.status = 'finished' and coalesce(r.format, b.format) = 'audiobook'
+						  and b.audiobook_minutes is null
 					)::int as audiobook_unknown,
 					avg(r.rating) filter (where r.status = 'finished' and r.rating is not null) as average_rating
 				from book_reads r join books b on b.id = r.book_id
@@ -948,11 +955,11 @@ export async function readingInsights(
 				group by month
 			`,
 		sql<{ format: string | null; count: unknown }[]>`
-				select r.format, count(*)::int as count
+				select coalesce(r.format, b.format) as format, count(*)::int as count
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished'
-				group by r.format
-				order by count desc, r.format asc nulls last
+				group by 1
+				order by count desc, 1 asc nulls last
 			`,
 		sql<{ category: string | null; count: unknown }[]>`
 				select b.category, count(*)::int as count

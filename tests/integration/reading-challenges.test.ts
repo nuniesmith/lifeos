@@ -354,6 +354,27 @@ describe('count challenge progress', () => {
 		expect(books.map((b) => b.title)).toEqual(['R3 Matching Book']);
 	});
 
+	it('counts a read by how it was read, not by the book’s catalogue format', async () => {
+		// A print-catalogued book listened to as an audiobook counts toward an
+		// audiobook challenge, and an audiobook read in print does not.
+		const listened = await addBook(owner, 'R3 Listened To', { format: 'print' });
+		const readInPrint = await addBook(owner, 'R3 Read In Print', { format: 'audiobook' });
+		const unrecorded = await addBook(owner, 'R3 Format From The Book', { format: 'audiobook' });
+		await addRead(owner, listened.id, { finishedOn: '2026-05-01', format: 'audiobook' });
+		await addRead(owner, readInPrint.id, { finishedOn: '2026-05-02', format: 'print' });
+		await addRead(owner, unrecorded.id, { finishedOn: '2026-05-03' }); // no read format
+
+		const challenge = await addChallenge(owner, 'R3 Audiobook Year', {
+			year: 2026,
+			targetCount: 12,
+			format: 'audiobook'
+		});
+		const books = await countChallengeBooks(sql, owner, challenge);
+		expect(books.map((b) => b.title).sort()).toEqual(['R3 Format From The Book', 'R3 Listened To']);
+		const found = (await listReadingChallenges(sql, owner)).find((c) => c.id === challenge.id);
+		expect(found?.progress).toEqual({ done: 2, total: 12 });
+	});
+
 	it('never counts another member’s reads, even of the same book', async () => {
 		const book = await addBook(owner, 'R3 Shared Book');
 		await addRead(owner, book.id, { finishedOn: '2026-04-01' });
@@ -571,6 +592,24 @@ describe('reading insights', () => {
 		expect(insights.audiobookHours).toBe(10);
 		expect(insights.audiobookUnknownCount).toBe(1);
 		expect(insights.averageRating).toBe(4.5);
+	});
+
+	it('never drops a read whose format was not recorded', async () => {
+		// No format on the read: measured by the book's format if it has one,
+		// else as print. Before, such a read landed in neither total and
+		// neither unknown tally, and vanished from the year.
+		const noFormatAnywhere = await addBook(owner, 'R3 No Format Anywhere');
+		const audioByBook = await addBook(owner, 'R3 Audio By The Book', {
+			format: 'audiobook',
+			audiobookMinutes: 120
+		});
+		await addRead(owner, noFormatAnywhere.id, { finishedOn: '2026-03-10' });
+		await addRead(owner, audioByBook.id, { finishedOn: '2026-03-11' });
+
+		const insights = await readingInsights(sql, owner, 2026);
+		expect(insights.finishedCount).toBe(2);
+		expect(insights.pagesUnknownCount).toBe(1);
+		expect(insights.audiobookHours).toBe(2);
 	});
 
 	it('is all zero for a year with no reads', async () => {
