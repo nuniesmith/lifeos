@@ -179,10 +179,11 @@ test.describe('the reading log', () => {
 		await expect(page.getByText(/^Read \d+ times?\.$/)).toHaveCount(0);
 
 		await expect(page.getByRole('heading', { name: 'Read history', exact: true })).toBeVisible();
-		// A substring match, not exact: the history row's meta line joins
-		// dates and format with this word ("Started … · DNF"), so the row's
-		// own text node is never *only* "DNF".
-		await expect(page.getByText(/DNF/)).toBeVisible();
+		// The history row's meta line ends with it ("2026-09-30 – 2026-09-30 ·
+		// DNF"). Anchored on the "· " before it, because a bare /DNF/ also
+		// matches the edit sheet's Status <option>, which failed strict mode
+		// the first time this spec ran.
+		await expect(page.getByText(/· DNF$/)).toBeVisible();
 
 		await page.goto('/reading');
 		await expect(page.getByRole('region', { name: 'Currently reading' })).toContainText(
@@ -196,6 +197,16 @@ test.describe('the reading log', () => {
 
 		await page.goto('/reading/tbr');
 		await expect(page.getByRole('link', { name: 'The Only TBR Sample' })).toBeVisible();
+
+		// Every e2e user shares one household, so other specs' household-visible
+		// books can sit on the same pile. That made "the one book on the pile"
+		// depend on run order: it passed once, then suggested another spec's
+		// book. Narrow the pile to this test's own genre first, which exercises
+		// the filter too. The page draws its suggestion with the same filters.
+		const filters = page.locator('form.filters');
+		await filters.getByLabel('Genre', { exact: true }).selectOption({ label: 'Cozy Mystery' });
+		await filters.getByRole('button', { name: 'Filter', exact: true }).click();
+		await expect(page).toHaveURL(/[?&]genre=/);
 
 		// The suggestion's own name is a plain paragraph, not a link (unlike
 		// the list row above it), and scoping to the paragraph's own class
