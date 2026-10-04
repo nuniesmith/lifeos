@@ -25,6 +25,7 @@ import {
 	createMedicalVisit,
 	createMedication,
 	createPerson,
+	createReadingChallenge,
 	createRecipe,
 	createWishlistItem,
 	createLibraryItem,
@@ -194,6 +195,15 @@ describe('every search result links somewhere real', () => {
 			'routine'
 		).record;
 		ok(await createFood(sql, owner, { name: `${word} bar` }), 'food');
+		const challenge = ok(
+			await createReadingChallenge(sql, owner, {
+				title: `${word} challenge`,
+				year: 2026,
+				kind: 'count',
+				targetCount: 10
+			}),
+			'reading challenge'
+		).record;
 
 		const hits = await search(sql, owner, word);
 		const routes = routeMatchers();
@@ -224,6 +234,7 @@ describe('every search result links somewhere real', () => {
 		expect(pathOf('author')).toBe(`/reading/authors/${author.id}`);
 		expect(pathOf('book_series')).toBe(`/reading/series/${series.id}`);
 		expect(pathOf('routine')).toBe(`/routines/${routine.id}`);
+		expect(pathOf('reading_challenge')).toBe(`/reading/challenges/${challenge.id}`);
 	});
 
 	it('finds a book by its author’s name, and a routine by one of its steps', async () => {
@@ -405,11 +416,21 @@ describe('search', () => {
 			expect(titles(await search(sql, partner, 'hangover'))).toEqual(['Hangover cure']);
 		});
 
-		it('never returns another member’s private book, food, routine or money', async () => {
+		it('never returns another member’s private book, food, routine, challenge or money', async () => {
 			const own = { visibility: 'private', ownerUserId: partner.userId } as const;
 			ok(await createBook(sql, partner, { title: 'Secret novel', ...own }), 'book');
 			ok(await createFood(sql, partner, { name: 'Secret snack', ...own }), 'food');
 			ok(await createRoutine(sql, partner, { name: 'Secret routine', ...own }), 'routine');
+			ok(
+				await createReadingChallenge(sql, partner, {
+					title: 'Secret challenge',
+					year: 2026,
+					kind: 'count',
+					targetCount: 5,
+					...own
+				}),
+				'reading challenge'
+			);
 			ok(
 				await createIncomeEntry(sql, partner, {
 					title: 'Secret bonus',
@@ -430,7 +451,7 @@ describe('search', () => {
 			);
 
 			expect(await search(sql, owner, 'secret')).toEqual([]);
-			expect(await search(sql, partner, 'secret')).toHaveLength(5);
+			expect(await search(sql, partner, 'secret')).toHaveLength(6);
 		});
 
 		it('never returns another member’s private medication, marker or visit', async () => {

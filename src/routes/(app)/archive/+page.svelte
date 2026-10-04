@@ -49,7 +49,8 @@
 		book: 'Book',
 		author: 'Author',
 		book_series: 'Series',
-		genre: 'Genre'
+		genre: 'Genre',
+		reading_challenge: 'Challenge'
 	};
 
 	/**

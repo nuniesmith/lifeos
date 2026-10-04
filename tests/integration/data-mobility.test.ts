@@ -274,6 +274,27 @@ beforeAll(async () => {
 				'ebook', 4.5, 'A satisfying read.', ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
 		`;
+		// migration 0035 (Reading Tracker R3): a challenge with a filled prompt,
+		// scoped through it exactly the way book_reads above is scoped through
+		// books -- no household_id of its own, and an owner_user_id that has to
+		// be remapped the same way book_reads.reader_user_id already is.
+		const readingChallenges = await source<{ id: string }[]>`
+			insert into reading_challenges (
+				household_id, owner_user_id, title, year, kind, target_count, created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, 'The Fictional Reading Challenge', 2026,
+				'prompts', null, ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into reading_challenge_items (
+				challenge_id, position, prompt, book_id, completed_on, created_by, updated_by
+			) values (
+				${readingChallenges[0]!.id}::uuid, 1, 'A book with a fictional saga',
+				${readingBooks[0]!.id}::uuid, '2026-08-30', ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+		`;
 	} finally {
 		await source.end({ timeout: 5 });
 	}
@@ -423,6 +444,8 @@ describe('everything household-scoped is portable', () => {
 		before('book_genres', 'books');
 		before('book_genres', 'genres');
 		before('book_reads', 'books');
+		before('reading_challenge_items', 'reading_challenges');
+		before('reading_challenge_items', 'books');
 		before('routine_steps', 'routines');
 		before('routine_steps', 'habits');
 		before('routine_step_completions', 'routine_steps');
@@ -672,6 +695,36 @@ describe('portable data mobility', () => {
 				book_title: 'The Sample Saga'
 			});
 			expect(Number(read[0]?.rating)).toBe(4.5);
+
+			// migration 0035 (Reading Tracker R3): the challenge and its filled
+			// prompt travelled, the prompt resolving through both challenge_id and
+			// book_id (ids preserved verbatim, like book_reads.book_id above), and
+			// the challenge's owner_user_id remapped to the target account the
+			// same way every other owner column already is.
+			const challenge = await restored<
+				{ title: string; year: number; kind: string; owner_user_id: string }[]
+			>`
+				select title, year, kind, owner_user_id::text as owner_user_id from reading_challenges
+			`;
+			expect(challenge[0]).toMatchObject({
+				title: 'The Fictional Reading Challenge',
+				year: 2026,
+				kind: 'prompts',
+				owner_user_id: targetUser
+			});
+
+			const item = await restored<{ prompt: string; completed_on: string; book_title: string }[]>`
+				select i.prompt, i.completed_on::text as completed_on, bk.title as book_title
+				from reading_challenge_items i
+				join reading_challenges c on c.id = i.challenge_id
+				join books bk on bk.id = i.book_id
+				where c.title = 'The Fictional Reading Challenge'
+			`;
+			expect(item[0]).toMatchObject({
+				prompt: 'A book with a fictional saga',
+				completed_on: '2026-08-30',
+				book_title: 'The Sample Saga'
+			});
 
 			const otherHouseholds = await restored<{ id: string }[]>`
 				insert into households (name) values ('Other target') returning id

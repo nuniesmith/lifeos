@@ -67,7 +67,8 @@ export const ARCHIVE_KINDS = [
 	'genre',
 	'income_entry',
 	'routine',
-	'savings_contribution'
+	'savings_contribution',
+	'reading_challenge'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
@@ -366,6 +367,14 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		scope: 'household',
 		title: column('name'),
 		path: listPage('/reading/genres')
+	},
+	// Reading Tracker R3 (migration 0035). A challenge is a full owned record
+	// like a book, so it scopes by visibility the same way.
+	reading_challenge: {
+		table: 'reading_challenges',
+		scope: 'visibility',
+		title: column('title'),
+		path: detailPage('/reading/challenges/')
 	}
 };
 
@@ -386,7 +395,12 @@ export const NOT_IN_THE_ARCHIVE: Readonly<Record<string, string>> = {
 		'at the repository layer the same way every other set*Archived is, but a standalone archive ' +
 		'entry for one step -- with its own link to a page that would show a single step in isolation ' +
 		'-- is not a page this application has; the routine around it is what the global Archive ' +
-		'restores, and re-typing a short step is cheaper than a second recovery mechanism for it alone'
+		'restores, and re-typing a short step is cheaper than a second recovery mechanism for it alone',
+	reading_challenge_items:
+		'the same reasoning as routine_steps: no household_id, owner or visibility of its own, reached ' +
+		'only through the challenge that holds it, and `setChallengeItemArchived` is reversible at the ' +
+		'repository layer already -- the challenge around it is what the global Archive restores, and ' +
+		're-typing a short prompt is cheaper than a second recovery mechanism for it alone'
 };
 
 /** The table behind each kind, for the test that holds the list above true. */
