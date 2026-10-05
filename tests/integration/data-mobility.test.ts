@@ -243,12 +243,18 @@ beforeAll(async () => {
 			values (${sourceHousehold}::uuid, 'Speculative Fiction', ${sourceUser}::uuid, ${sourceUser}::uuid)
 			returning id
 		`;
+		// migration 0037: storygraph_id is a plain column on an existing table,
+		// not a new one -- the risk it adds to this script is `select *`
+		// quietly falling behind the schema, not a missing join. Giving this
+		// fixture row a value is what lets the assertion below prove the
+		// column actually travels, rather than merely never being tested.
 		const readingBooks = await source<{ id: string }[]>`
 			insert into books (
-				household_id, title, series_id, series_position, status, created_by, updated_by
+				household_id, title, series_id, series_position, status, storygraph_id,
+				created_by, updated_by
 			) values (
 				${sourceHousehold}::uuid, 'The Sample Saga', ${readingSeries[0]!.id}::uuid, 1, 'reading',
-				${sourceUser}::uuid, ${sourceUser}::uuid
+				'9780000000001', ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
 			returning id
 		`;
@@ -645,9 +651,11 @@ describe('portable data mobility', () => {
 					series_name: string;
 					author_name: string;
 					genre_name: string;
+					storygraph_id: string | null;
 				}[]
 			>`
-				select bk.title, bs.name as series_name, a.name as author_name, g.name as genre_name
+				select bk.title, bs.name as series_name, a.name as author_name, g.name as genre_name,
+				       bk.storygraph_id
 				from books bk
 				join book_series bs on bs.id = bk.series_id
 				join book_authors ba on ba.book_id = bk.id
@@ -660,7 +668,11 @@ describe('portable data mobility', () => {
 				title: 'The Sample Saga',
 				series_name: 'The Fictional Chronicles',
 				author_name: 'Fictional Author',
-				genre_name: 'Speculative Fiction'
+				genre_name: 'Speculative Fiction',
+				// migration 0037: a plain column on an existing table, carried by
+				// this script's `select *` with no code change of its own needed
+				// -- this is what proves that, rather than merely asserting it.
+				storygraph_id: '9780000000001'
 			});
 
 			// migration 0033 (Reading Tracker R2): the read travelled, resolving
