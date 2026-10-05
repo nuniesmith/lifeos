@@ -233,9 +233,11 @@ test.describe('the food log', () => {
 				insert into food_log_entries (
 					household_id, owner_user_id, eaten_on, meal, name, visibility, kcal_override
 				)
-				select ${householdId}, u.id, current_date, 'dinner', 'Fictional partner’s dinner',
-				       'household', 400
-				from users u where u.username = ${PARTNER.username}
+				-- The household's today, not current_date (UTC): see household-day.ts.
+				select ${householdId}, u.id, (now() at time zone h.timezone)::date, 'dinner',
+				       'Fictional partner’s dinner', 'household', 400
+				from users u, households h
+				where u.username = ${PARTNER.username} and h.id = ${householdId}
 			`
 		);
 
