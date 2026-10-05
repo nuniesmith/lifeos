@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
 	listTasks: vi.fn(),
 	upcomingImportantDates: vi.fn(),
 	getWeather: vi.fn(),
-	healthOverview: vi.fn()
+	healthOverview: vi.fn(),
+	documentsNeedingAttention: vi.fn()
 }));
 
 vi.mock('$lib/server/db', () => ({ sql: mocks.sql }));
@@ -49,7 +50,8 @@ beforeEach(() => {
 		'listHabits',
 		'listProjects',
 		'listTasks',
-		'upcomingImportantDates'
+		'upcomingImportantDates',
+		'documentsNeedingAttention'
 	] as const) {
 		mocks[key].mockResolvedValue([]);
 	}
@@ -106,6 +108,51 @@ describe('home dashboard load', () => {
 	it('leaves today empty when only an earlier journal entry exists', async () => {
 		mocks.listDailyLogs.mockResolvedValue([{ id: 'past-log', onDate: '2026-09-04' }]);
 		expect(await load(event)).toMatchObject({ dailyLog: null });
+	});
+
+	it('phrases an expired document plainly and a due one with its day count', async () => {
+		mocks.documentsNeedingAttention.mockResolvedValue([
+			{
+				id: 'doc-1',
+				title: 'Fictional Passport',
+				holderName: 'Jordan',
+				expiresOn: '2026-09-01',
+				state: 'expired'
+			},
+			{
+				id: 'doc-2',
+				title: 'Fictional Car Insurance',
+				holderName: null,
+				expiresOn: '2026-09-15',
+				state: 'due'
+			},
+			{
+				id: 'doc-3',
+				title: 'Fictional Pet Licence',
+				holderName: 'Biscuit',
+				expiresOn: '2026-09-05',
+				state: 'due'
+			}
+		]);
+		const data = await load(event);
+		expect(mocks.documentsNeedingAttention).toHaveBeenCalledWith(mocks.sql, viewer);
+		expect(data).toMatchObject({
+			documentsNeedingAttention: [
+				{ id: 'doc-1', title: 'Fictional Passport', holderName: 'Jordan', dueLabel: 'expired' },
+				{
+					id: 'doc-2',
+					title: 'Fictional Car Insurance',
+					holderName: null,
+					dueLabel: 'expires in 10 days'
+				},
+				{
+					id: 'doc-3',
+					title: 'Fictional Pet Licence',
+					holderName: 'Biscuit',
+					dueLabel: 'expires today'
+				}
+			]
+		});
 	});
 
 	it('reports the calendar window and discloses truncated results', async () => {

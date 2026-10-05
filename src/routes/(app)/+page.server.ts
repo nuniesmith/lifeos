@@ -3,6 +3,7 @@ import {
 	agenda,
 	countTasks,
 	daysBetween,
+	documentsNeedingAttention,
 	habitSummaries,
 	healthOverview,
 	listDailyLogs,
@@ -13,7 +14,8 @@ import {
 	logHabit,
 	unlogHabit,
 	upcomingImportantDates,
-	updateTask
+	updateTask,
+	type AttentionState
 } from '$lib/server/repositories';
 import { householdToday } from '$lib/server/repositories/base';
 import { sql } from '$lib/server/db';
@@ -60,7 +62,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		calendarRows,
 		calendarDateRows,
 		weather,
-		health
+		health,
+		attentionDocuments
 	] = await Promise.all([
 		agenda(sql, viewer, { today, assignee: 'me' }),
 		listHabits(sql, viewer, { activeOnly: true }),
@@ -98,10 +101,27 @@ export const load: PageServerLoad = async ({ locals }) => {
 		// Feeds the compact "Today's health" panel below. Same helper the
 		// `/health` hub reads, so the two surfaces cannot disagree about what
 		// "due today" or "the latest reading" means.
-		healthOverview(sql, viewer, today)
+		healthOverview(sql, viewer, today),
+		// Life Admin HQ (migration 0036): expired or due documents, soonest
+		// first. Same helper /life-admin's own "Needs attention" section reads,
+		// so the two surfaces cannot disagree about what counts as due.
+		documentsNeedingAttention(sql, viewer)
 	]);
 
 	const summaryFor = new Map(summaries.map((s) => [s.habitId, s]));
+
+	/** "expired" / "expires in N days" -- the Today card's own, shorter
+	 *  phrasing. /life-admin's own list spells the expired case out further
+	 *  ("expired 3 days ago"); this card has room for one word. `state` is
+	 *  never actually 'ok' or 'none' here -- documentsNeedingAttention's own
+	 *  WHERE clause already limits it to expired-or-due -- but the type it
+	 *  returns is the general AttentionState, so this still answers for every
+	 *  case rather than assuming the two it expects. */
+	const documentDueLabel = (expiresOn: string, state: AttentionState): string => {
+		if (state !== 'due') return 'expired';
+		const days = daysBetween(today, expiresOn);
+		return days === 0 ? 'expires today' : `expires in ${days} day${days === 1 ? '' : 's'}`;
+	};
 
 	return {
 		today,
@@ -125,6 +145,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 		})),
 		weather,
 		health,
+		documentsNeedingAttention: attentionDocuments.map((item) => ({
+			id: item.id,
+			title: item.title,
+			holderName: item.holderName,
+			dueLabel: documentDueLabel(item.expiresOn, item.state)
+		})),
 		week: board.week,
 		overdue: board.overdue,
 		dueToday: board.dueToday,
