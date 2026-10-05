@@ -16,6 +16,7 @@ import {
 	createBook,
 	createBookSeries,
 	createDailyLog,
+	createDocument,
 	createEvent,
 	createFood,
 	createGenre,
@@ -51,6 +52,7 @@ import {
 	setBookArchived,
 	setBookSeriesArchived,
 	setDailyLogArchived,
+	setDocumentArchived,
 	setFoodArchived,
 	setGenreArchived,
 	setGoalArchived,
@@ -305,6 +307,13 @@ async function oneOfEach(
 				...own
 			}),
 			'reading_challenge'
+		),
+		// Life Admin HQ (migration 0036). Private by default, unlike most kinds
+		// above -- `...own` still overrides it the same way it overrides every
+		// other kind's own default visibility.
+		document: await made(
+			createDocument(sql, viewer, { title: 'Fictional Passport', kind: 'id', ...own }),
+			'document'
 		)
 	};
 }
@@ -345,7 +354,8 @@ const TITLES: Record<ArchiveKind, string> = {
 	author: 'Fictional Author',
 	book_series: 'The Sample Chronicles',
 	genre: 'Speculative Fiction',
-	reading_challenge: 'The Sample Reading Challenge'
+	reading_challenge: 'The Sample Reading Challenge',
+	document: 'Fictional Passport'
 };
 
 type Archiver = (
@@ -380,7 +390,8 @@ const ARCHIVERS: Partial<Record<ArchiveKind, Archiver>> = {
 	author: setAuthorArchived,
 	book_series: setBookSeriesArchived,
 	genre: setGenreArchived,
-	reading_challenge: setReadingChallengeArchived
+	reading_challenge: setReadingChallengeArchived,
+	document: setDocumentArchived
 };
 
 async function archiveEach(viewer: Viewer, ids: Record<ArchiveKind, string>) {
@@ -601,6 +612,7 @@ describe('every kind the archive holds', () => {
 		// it, the same way ingredients and prep tasks link to a list rather than
 		// a page named after the record.
 		expect(paths.genre).toBe('/reading/genres');
+		expect(paths.document).toBe(`/life-admin/${ids.document}`);
 	});
 
 	it('searches the titles as shown, including ones built from several columns', async () => {

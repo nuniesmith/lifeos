@@ -50,7 +50,8 @@
 		author: 'Author',
 		book_series: 'Series',
 		genre: 'Genre',
-		reading_challenge: 'Challenge'
+		reading_challenge: 'Challenge',
+		document: 'Document'
 	};
 
 	/**
