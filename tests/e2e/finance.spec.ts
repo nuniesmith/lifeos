@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import postgres, { type Sql } from 'postgres';
 import { hashPassword } from '../../src/lib/server/auth/password';
+import { householdToday } from './household-day';
 
 /**
  * The Financial Hub (PACK4-002): bills and subscriptions editable end to
@@ -218,7 +219,7 @@ test.describe('the Financial Hub', () => {
 			.fill('Fictional Paycheque');
 		await addIncomeForm.getByLabel('Source', { exact: true }).fill('Fictional Employer');
 		await addIncomeForm.getByLabel('Expected', { exact: true }).fill('2000');
-		const today = new Date().toISOString().slice(0, 10);
+		const today = await householdToday(DATABASE_URL);
 		await addIncomeForm.getByRole('textbox', { name: 'Date', exact: true }).fill(today);
 		await addIncomeForm.getByRole('button', { name: 'Add income' }).click();
 
@@ -272,7 +273,7 @@ test.describe('the Financial Hub', () => {
 			.getByRole('textbox', { name: 'Title', exact: true })
 			.fill('Fictional Transfer');
 		await addSavingsForm.getByRole('spinbutton', { name: 'Amount', exact: true }).fill('150');
-		const today = new Date().toISOString().slice(0, 10);
+		const today = await householdToday(DATABASE_URL);
 		await addSavingsForm.getByRole('textbox', { name: 'Date', exact: true }).fill(today);
 		await addSavingsForm.getByLabel('Goal', { exact: true }).selectOption(goalId);
 		await addSavingsForm.getByRole('button', { name: 'Add contribution' }).click();
