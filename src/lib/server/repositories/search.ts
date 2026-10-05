@@ -54,7 +54,8 @@ export const SEARCH_KINDS = [
 	'book_series',
 	'routine',
 	'food',
-	'reading_challenge'
+	'reading_challenge',
+	'document'
 ] as const;
 
 export type SearchKind = (typeof SEARCH_KINDS)[number];
@@ -490,6 +491,24 @@ export async function search(
 			join households h on h.id = t.household_id
 			where t.household_id = ${viewer.householdId}::uuid
 			  and t.owner_user_id = ${viewer.userId}::uuid
+		`);
+	}
+
+	// Life Admin HQ (migration 0036), scoped by visibility like `routine`
+	// above. Never the reference: a licence or passport number must not be
+	// findable by typing it into the same box that searches everything else
+	// -- see that migration's own header.
+	if (wanted('document')) {
+		branches.push(sql`
+			select 'document' as kind, t.id, t.title,
+			       to_tsvector('english', coalesce(t.title,'') || ' ' || coalesce(t.kind,'')
+			           || ' ' || coalesce(t.issuer,'') || ' ' || coalesce(t.location,'')
+			           || ' ' || coalesce(t.notes,'')) as doc,
+			       concat_ws(' ', t.issuer, t.location, t.notes) as body,
+			       (t.archived_at is not null) as archived,
+			       '/life-admin/' || t.id as path
+			from documents t
+			where ${readableScope(sql, viewer, 't')}
 		`);
 	}
 

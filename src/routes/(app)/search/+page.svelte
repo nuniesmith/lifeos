@@ -36,7 +36,8 @@
 		book_series: 'Series',
 		routine: 'Routine',
 		food: 'Food',
-		reading_challenge: 'Challenge'
+		reading_challenge: 'Challenge',
+		document: 'Document'
 	};
 
 	/**

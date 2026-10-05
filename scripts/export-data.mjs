@@ -76,6 +76,14 @@ const TABLES = [
 	'meal_plans',
 	'library_items',
 	'people',
+	// migration 0036 (Life Admin HQ): documents carries its own household_id,
+	// like bills above; document_renewals has none of its own -- scoped
+	// through documents the same way bill_payments is scoped through bills --
+	// so it is listed here for real (a household's own renewal history is
+	// still its data) even though data-mobility.test.ts's household_id scan
+	// would not have caught its absence.
+	'documents',
+	'document_renewals',
 	'media_items',
 	// migration 0025: media_viewings carries its own household_id (like
 	// lab_results, not like library_links) but still has to follow the
@@ -230,6 +238,7 @@ async function rowsFor(db, table, id) {
 		case 'meal_plans':
 		case 'library_items':
 		case 'people':
+		case 'documents':
 		case 'media_items':
 		case 'bills':
 		case 'income_entries':
@@ -251,6 +260,8 @@ async function rowsFor(db, table, id) {
 			return db`select * from ${db(table)} where household_id = ${id}::uuid order by id`;
 		case 'bill_payments':
 			return db`select p.* from bill_payments p join bills b on b.id = p.bill_id where b.household_id = ${id}::uuid order by p.bill_id, p.paid_on, p.created_at`;
+		case 'document_renewals':
+			return db`select r.* from document_renewals r join documents d on d.id = r.document_id where d.household_id = ${id}::uuid order by r.document_id, r.created_at`;
 		case 'book_reads':
 			return db`select r.* from book_reads r join books b on b.id = r.book_id where b.household_id = ${id}::uuid order by r.book_id, r.created_at`;
 		case 'book_authors':

@@ -371,6 +371,28 @@
 						{/if}
 					</div>
 				{/if}
+
+				{#if data.documentsNeedingAttention.length > 0}
+					<div class="health-panel">
+						<div class="habits-heading">
+							<a class="view-label" href={resolve(appPath('/life-admin'))}
+								><Icon name="clock" size={14} /> Documents needing attention</a
+							>
+						</div>
+						<ul class="health-med-list" aria-label="Documents needing attention">
+							{#each data.documentsNeedingAttention as doc (doc.id)}
+								<li class="health-line">
+									<a href={resolve(appPath(`/life-admin/${doc.id}`))}
+										>{doc.title}{#if doc.holderName}<span class="muted">
+												· {doc.holderName}</span
+											>{/if}</a
+									>
+									<span class="health-visit-when">{doc.dueLabel}</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 			</section>
 		</div>
 
