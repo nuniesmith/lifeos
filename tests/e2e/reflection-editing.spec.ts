@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import postgres, { type Sql } from 'postgres';
 import { hashPassword } from '../../src/lib/server/auth/password';
+import { householdToday } from './household-day';
 
 /**
  * Editing, archiving and restoring significant events (/yearly-review) and
@@ -94,7 +95,6 @@ async function signIn(page: Page) {
 }
 
 /** Today, in the plain `YYYY-MM-DD` both `onDate` and a date input use. */
-const today = () => new Date().toISOString().slice(0, 10);
 
 test.describe('editing a significant event', () => {
 	test.use({ viewport: PHONE });
@@ -104,7 +104,7 @@ test.describe('editing a significant event', () => {
 		await page.goto('/yearly-review');
 
 		await page.getByLabel('Something worth remembering').fill('Finished a 5k race');
-		await page.getByLabel('When').fill(today());
+		await page.getByLabel('When').fill(await householdToday(DATABASE_URL));
 		// The sidebar's own "Quick add" would also match a substring "Add".
 		await page.getByRole('button', { name: 'Add', exact: true }).click();
 
