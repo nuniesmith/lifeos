@@ -12,6 +12,7 @@ import {
 	createBill,
 	createBook,
 	createBookSeries,
+	createDocument,
 	createFood,
 	createIncomeEntry,
 	createRoutine,
@@ -204,6 +205,10 @@ describe('every search result links somewhere real', () => {
 			}),
 			'reading challenge'
 		).record;
+		const document = ok(
+			await createDocument(sql, owner, { title: `${word} passport`, kind: 'id' }),
+			'document'
+		).record;
 
 		const hits = await search(sql, owner, word);
 		const routes = routeMatchers();
@@ -235,6 +240,7 @@ describe('every search result links somewhere real', () => {
 		expect(pathOf('book_series')).toBe(`/reading/series/${series.id}`);
 		expect(pathOf('routine')).toBe(`/routines/${routine.id}`);
 		expect(pathOf('reading_challenge')).toBe(`/reading/challenges/${challenge.id}`);
+		expect(pathOf('document')).toBe(`/life-admin/${document.id}`);
 	});
 
 	it('finds a book by its author’s name, and a routine by one of its steps', async () => {

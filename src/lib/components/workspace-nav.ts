@@ -48,7 +48,8 @@ export const WORKSPACE_GROUPS: readonly WorkspaceGroup[] = [
 			{ label: 'Food', icon: 'today', href: '/food' },
 			{ label: 'Finance', icon: 'audit', href: '/finance' },
 			{ label: 'Reading', icon: 'journal', href: '/reading' },
-			{ label: 'Entertainment', icon: 'today', href: '/entertainment' }
+			{ label: 'Entertainment', icon: 'today', href: '/entertainment' },
+			{ label: 'Life Admin', icon: 'clock', href: '/life-admin' }
 		]
 	},
 	{

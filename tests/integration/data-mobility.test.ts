@@ -295,6 +295,35 @@ beforeAll(async () => {
 				${readingBooks[0]!.id}::uuid, '2026-08-30', ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
 		`;
+
+		// Life Admin HQ (migration 0036): a document held by a person --
+		// documents.holder_person_id, restored under the same id as the
+		// people row it points at (ids are preserved verbatim) -- and one
+		// renewal against it, scoped through the document the way
+		// bill_payments is scoped through bills: no household_id of its own.
+		const documentPeople = await source<{ id: string }[]>`
+			insert into people (household_id, name, kind, created_by, updated_by)
+			values (${sourceHousehold}::uuid, 'Fictional Holder', 'person', ${sourceUser}::uuid, ${sourceUser}::uuid)
+			returning id
+		`;
+		const documents = await source<{ id: string }[]>`
+			insert into documents (
+				household_id, owner_user_id, title, kind, holder_person_id, expires_on,
+				renew_lead_days, created_by, updated_by
+			) values (
+				${sourceHousehold}::uuid, ${sourceUser}::uuid, 'Fictional Passport', 'id',
+				${documentPeople[0]!.id}::uuid, '2030-01-01', 30, ${sourceUser}::uuid, ${sourceUser}::uuid
+			)
+			returning id
+		`;
+		await source`
+			insert into document_renewals (
+				document_id, renewed_on, previous_expires_on, new_expires_on, note, created_by
+			) values (
+				${documents[0]!.id}::uuid, '2026-01-01', '2025-01-01', '2030-01-01',
+				'Renewed at the passport office', ${sourceUser}::uuid
+			)
+		`;
 	} finally {
 		await source.end({ timeout: 5 });
 	}
@@ -449,6 +478,8 @@ describe('everything household-scoped is portable', () => {
 		before('routine_steps', 'routines');
 		before('routine_steps', 'habits');
 		before('routine_step_completions', 'routine_steps');
+		before('documents', 'people');
+		before('document_renewals', 'documents');
 
 		expect(listOf('TABLES').sort()).toEqual([...order].sort());
 	});
@@ -724,6 +755,46 @@ describe('portable data mobility', () => {
 				prompt: 'A book with a fictional saga',
 				completed_on: '2026-08-30',
 				book_title: 'The Sample Saga'
+			});
+
+			// migration 0036 (Life Admin HQ): the document travels with its
+			// holder_person_id still resolving -- ids are preserved verbatim,
+			// the same discipline the daily log / health measurement link above
+			// already relies on -- and its renewal, scoped through it exactly
+			// the way bill_payments is scoped through bills, with no
+			// household_id of its own.
+			const [restoredHolder] = await restored<{ id: string }[]>`
+				select id from people where name = 'Fictional Holder'
+			`;
+			const document = await restored<
+				{ title: string; kind: string; expires_on: string; holder_person_id: string }[]
+			>`
+				select title, kind, expires_on::text as expires_on,
+				       holder_person_id::text as holder_person_id
+				from documents where title = 'Fictional Passport'
+			`;
+			expect(document[0]).toMatchObject({
+				title: 'Fictional Passport',
+				kind: 'id',
+				expires_on: '2030-01-01',
+				holder_person_id: restoredHolder?.id
+			});
+
+			const renewal = await restored<
+				{ renewed_on: string; previous_expires_on: string; new_expires_on: string; note: string }[]
+			>`
+				select r.renewed_on::text as renewed_on,
+				       r.previous_expires_on::text as previous_expires_on,
+				       r.new_expires_on::text as new_expires_on, r.note
+				from document_renewals r
+				join documents d on d.id = r.document_id
+				where d.title = 'Fictional Passport'
+			`;
+			expect(renewal[0]).toMatchObject({
+				renewed_on: '2026-01-01',
+				previous_expires_on: '2025-01-01',
+				new_expires_on: '2030-01-01',
+				note: 'Renewed at the passport office'
 			});
 
 			const otherHouseholds = await restored<{ id: string }[]>`

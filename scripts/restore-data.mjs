@@ -91,6 +91,12 @@ const TABLES = [
 	'meal_plans',
 	'library_items',
 	'people',
+	// migration 0036 (Life Admin HQ): documents references people
+	// (holder_person_id), already restored just above; document_renewals
+	// references documents, so it lands right after, the same place
+	// export-data.mjs puts it.
+	'documents',
+	'document_renewals',
 	'media_items',
 	// migration 0025: media_item_id needs no special remapping -- ids are
 	// preserved verbatim, so media_viewings only has to land after
@@ -196,6 +202,11 @@ const ORDER = [
 	'meal_plans',
 	'library_items',
 	'people',
+	// migration 0036 (Life Admin HQ): documents references people
+	// (holder_person_id), already restored just above; document_renewals
+	// references documents, so it lands right after.
+	'documents',
+	'document_renewals',
 	'media_items',
 	// migration 0025: media_item_id needs no special remapping -- ids are
 	// preserved verbatim, so media_viewings only has to land after

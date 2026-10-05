@@ -68,7 +68,8 @@ export const ARCHIVE_KINDS = [
 	'income_entry',
 	'routine',
 	'savings_contribution',
-	'reading_challenge'
+	'reading_challenge',
+	'document'
 ] as const;
 export type ArchiveKind = (typeof ARCHIVE_KINDS)[number];
 
@@ -375,6 +376,18 @@ const SOURCES: Record<ArchiveKind, Source> = {
 		scope: 'visibility',
 		title: column('title'),
 		path: detailPage('/reading/challenges/')
+	},
+
+	// Life Admin HQ (migration 0036). A full owned record like a bill, so it
+	// scopes by visibility the same way -- `document_renewals` needs nothing
+	// here: it carries no archived_at of its own (see that migration's
+	// header), the same reasoning routine_steps and reading_challenge_items
+	// are excused by NOT_IN_THE_ARCHIVE below.
+	document: {
+		table: 'documents',
+		scope: 'visibility',
+		title: column('title'),
+		path: detailPage('/life-admin/')
 	}
 };
 
