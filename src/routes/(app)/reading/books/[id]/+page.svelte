@@ -12,6 +12,7 @@
 		appPath
 	} from '$lib/components';
 	import BookFields from '../BookFields.svelte';
+	import { readDayLabel } from '$lib/read-dates';
 	import { FORMAT_LABELS } from '../form';
 	import ReadingSection from './ReadingSection.svelte';
 	import ReadSheet, { type EditableRead } from './ReadSheet.svelte';
@@ -32,9 +33,11 @@
 	 *  the history below. */
 	function readMeta(read: (typeof data.reads)[number]): string {
 		const parts: string[] = [];
-		if (read.startedOn && read.finishedOn) parts.push(`${read.startedOn} – ${read.finishedOn}`);
-		else if (read.finishedOn) parts.push(`Finished ${read.finishedOn}`);
-		else if (read.startedOn) parts.push(`Started ${read.startedOn}`);
+		const started = read.startedOn && readDayLabel(read.startedOn, read.startedPrecision);
+		const finished = read.finishedOn && readDayLabel(read.finishedOn, read.finishedPrecision);
+		if (started && finished) parts.push(`${started} – ${finished}`);
+		else if (finished) parts.push(`Finished ${finished}`);
+		else if (started) parts.push(`Started ${started}`);
 		if (read.format) parts.push(FORMAT_LABELS[read.format]);
 		if (read.status === 'dnf') parts.push('DNF');
 		else if (read.status === 'paused') parts.push('Paused');

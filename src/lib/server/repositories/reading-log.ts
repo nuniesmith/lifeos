@@ -1,4 +1,5 @@
 import type { Fragment } from 'postgres';
+import type { DatePrecision } from '../../read-dates';
 import type { Viewer } from '../auth/authz';
 import { toDate } from '../db/coerce';
 import {
@@ -60,6 +61,11 @@ export interface BookRead {
 	status: ReadStatus;
 	startedOn: string | null;
 	finishedOn: string | null;
+	/** How much of each date is real (migration 0037): an imported StoryGraph
+	 *  read can be known only to the month or the year. Always `day` for a
+	 *  read logged in the app. */
+	startedPrecision: DatePrecision;
+	finishedPrecision: DatePrecision;
 	format: BookFormat | null;
 	progressPages: number | null;
 	progressMinutes: number | null;
@@ -79,6 +85,8 @@ interface BookReadRow {
 	status: string;
 	started_on: string | null;
 	finished_on: string | null;
+	started_precision: string;
+	finished_precision: string;
 	format: string | null;
 	progress_pages: unknown;
 	progress_minutes: unknown;
@@ -95,7 +103,8 @@ const BOOK_READS = 'book_reads';
 
 const bookReadColumns = (sql: Queryable): Fragment => sql`
 	id, book_id, reader_user_id, status, started_on::text as started_on,
-	finished_on::text as finished_on, format, progress_pages, progress_minutes,
+	finished_on::text as finished_on, started_precision, finished_precision,
+	format, progress_pages, progress_minutes,
 	rating, review, dnf_reason, created_at, updated_at, created_by, updated_by`;
 
 function mapBookRead(row: BookReadRow): BookRead {
@@ -106,6 +115,8 @@ function mapBookRead(row: BookReadRow): BookRead {
 		status: row.status as ReadStatus,
 		startedOn: toDayOrNull(row.started_on),
 		finishedOn: toDayOrNull(row.finished_on),
+		startedPrecision: row.started_precision as DatePrecision,
+		finishedPrecision: row.finished_precision as DatePrecision,
 		format: (row.format as BookFormat | null) ?? null,
 		progressPages: toIntOrNull(row.progress_pages),
 		progressMinutes: toIntOrNull(row.progress_minutes),
@@ -523,7 +534,16 @@ export function updateRead(
 			readScope: readableThroughBook(sql, viewer),
 			writeScope: writableThroughBook(sql, viewer),
 			...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+			// A date the edit leaves as it was keeps its precision, so saving
+			// an imported "read in 2019" without touching its dates does not
+			// turn it into a claim about 1 January. A date the reader changes
+			// was typed in full, so it becomes a whole day. The CASE reads
+			// the row's values from before this UPDATE.
 			assignments: sql`
+				started_precision = case when started_on is not distinct from ${startedOn}::date
+					then started_precision else 'day' end,
+				finished_precision = case when finished_on is not distinct from ${finishedOn}::date
+					then finished_precision else 'day' end,
 				started_on = ${startedOn}::date, finished_on = ${finishedOn}::date, format = ${format},
 				rating = ${rating}, review = ${review},
 				updated_at = now(), updated_by = ${viewer.userId}::uuid`,
@@ -573,7 +593,10 @@ export interface BookReadWithReader extends BookRead {
 
 /** A book's whole read history, every reader's, newest read first — for
  *  `/reading/books/[id]`'s "Reading" section. Visible whenever the book is;
- *  editing any one row is still gated to its own reader (hard rule 8). */
+ *  editing any one row is still gated to its own reader (hard rule 8).
+ *  A read is dated by its start, else its finish (an imported StoryGraph
+ *  read often knows only when it ended), and only then by when it was
+ *  logged, which for an import is the day the import ran. */
 export async function listReadsForBook(
 	sql: Queryable,
 	viewer: Viewer,
@@ -583,6 +606,7 @@ export async function listReadsForBook(
 	const rows = await sql<(BookReadRow & { reader_name: string })[]>`
 		select r.id, r.book_id, r.reader_user_id, r.status,
 			r.started_on::text as started_on, r.finished_on::text as finished_on,
+			r.started_precision, r.finished_precision,
 			r.format, r.progress_pages, r.progress_minutes, r.rating, r.review, r.dnf_reason,
 			r.created_at, r.updated_at, r.created_by, r.updated_by,
 			u.display_name as reader_name
@@ -590,7 +614,7 @@ export async function listReadsForBook(
 		join users u on u.id = r.reader_user_id
 		where r.book_id = ${bookId}::uuid
 		  and exists (select 1 from books b where b.id = r.book_id and ${readableScope(sql, viewer, 'b')})
-		order by coalesce(r.started_on, r.created_at::date) desc, r.created_at desc
+		order by coalesce(r.started_on, r.finished_on, r.created_at::date) desc, r.created_at desc
 	`;
 	return rows.map((row) => ({ ...mapBookRead(row), readerName: toText(row.reader_name) }));
 }
