@@ -208,11 +208,17 @@ test.describe('the food log', () => {
 		await page.getByLabel('Food or recipe').selectOption(`food:${foodId}`);
 		await page.getByLabel('Meal').selectOption('breakfast');
 		await page.getByRole('button', { name: 'Add to log' }).click();
+
+		// The add form is redrawn once a save lands, so typing the second
+		// entry before the first is saved can be wiped by that redraw. Under
+		// load that lost the second entry and left one where two were due.
+		const breakfast = meal(page, 'Breakfast');
+		await expect(breakfast.getByRole('listitem')).toHaveCount(1);
+
 		await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Fictional toast');
 		await page.getByLabel('Meal').selectOption('breakfast');
 		await page.getByRole('button', { name: 'Add to log' }).click();
 
-		const breakfast = meal(page, 'Breakfast');
 		await expect(breakfast.getByRole('listitem')).toHaveCount(2);
 
 		await breakfast
