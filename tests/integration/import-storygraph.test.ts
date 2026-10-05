@@ -299,6 +299,70 @@ describe('importing the fixture for the operator', () => {
 	});
 });
 
+describe('a row that fails at the database', () => {
+	it('is counted as a failure without losing the rows around it (hard rule 4)', async () => {
+		const header = [
+			'Title',
+			'Authors',
+			'Date Added',
+			'Dates Read',
+			'Format',
+			'ISBN/UID',
+			'Last Date Read',
+			'Moods',
+			'Owned?',
+			'Pace',
+			'Read Count',
+			'Read Status',
+			'Review',
+			'Star Rating',
+			'Tags'
+		];
+		const goodRow = (title: string, uid: string) =>
+			[
+				title,
+				'Fictional Author',
+				'2024/01/01',
+				'',
+				'digital',
+				uid,
+				'',
+				'',
+				'No',
+				'medium',
+				'0',
+				'to-read',
+				'',
+				'',
+				''
+			].join(',');
+		// `books.title` CHECKs length(trim(title)) <= 300 -- the one bound on
+		// this field mapStorygraphRow does not itself enforce (it only
+		// refuses a blank title), so this is a real way for an otherwise
+		// well-formed row to fail at the database rather than at mapping:
+		// exactly the case a savepoint per row exists to contain.
+		const overlongTitle = 'X'.repeat(301);
+		const text =
+			`${header.join(',')}\n` +
+			`${goodRow('Before the Bad Row', 'FAIL-UID-1')}\n` +
+			`${goodRow(overlongTitle, 'FAIL-UID-2')}\n` +
+			`${goodRow('After the Bad Row', 'FAIL-UID-3')}\n`;
+
+		const summary = await importStorygraph(sql, text, {
+			householdId,
+			userId: operatorId,
+			dryRun: false
+		});
+		expect(summary).toMatchObject({ rowsRead: 3, booksCreated: 2, booksFailed: 1 });
+		expect(summary.warnings).toContainEqual({ row: 2, field: 'row', message: expect.any(String) });
+
+		const titles = await sql<{ title: string }[]>`
+			select title from books where household_id = ${householdId}::uuid order by title
+		`;
+		expect(titles.map((t) => t.title)).toEqual(['After the Bad Row', 'Before the Bad Row']);
+	});
+});
+
 describe('through a client configured the way the app’s is', () => {
 	it('imports the fixture with no Date-parameter error', async () => {
 		// `$lib/server/db` also hands its client to drizzle(), which replaces
