@@ -1,4 +1,5 @@
 import type { Fragment } from 'postgres';
+import type { DatePrecision } from '../../read-dates';
 import type { Viewer } from '../auth/authz';
 import { toDate, toDateOrNull } from '../db/coerce';
 import {
@@ -396,6 +397,7 @@ export interface ChallengeCountBook {
 	id: string;
 	title: string;
 	finishedOn: string | null;
+	finishedPrecision: DatePrecision;
 }
 
 /**
@@ -410,8 +412,10 @@ export async function countChallengeBooks(
 	viewer: Viewer,
 	challenge: ReadingChallenge
 ): Promise<ChallengeCountBook[]> {
-	const rows = await sql<{ id: string; title: string; finished_on: string | null }[]>`
-		select b.id, b.title, r.finished_on::text as finished_on
+	const rows = await sql<
+		{ id: string; title: string; finished_on: string | null; finished_precision: string }[]
+	>`
+		select b.id, b.title, r.finished_on::text as finished_on, r.finished_precision
 		from book_reads r
 		join books b on b.id = r.book_id
 		where r.reader_user_id = ${challenge.ownerUserId}::uuid
@@ -434,7 +438,8 @@ export async function countChallengeBooks(
 	return rows.map((row) => ({
 		id: row.id,
 		title: toText(row.title),
-		finishedOn: row.finished_on
+		finishedOn: row.finished_on,
+		finishedPrecision: row.finished_precision as DatePrecision
 	}));
 }
 
@@ -861,6 +866,9 @@ export interface ReadingInsights {
 	/** Index 0 is January. Zero-filled: a month with nothing finished is 0,
 	 *  never a missing entry. */
 	finishedPerMonth: number[];
+	/** Finished this year, but on a date known only to the year (migration
+	 *  0037), so counted in `finishedCount` and absent from the months. */
+	finishedMonthUnknown: number;
 	byFormat: FormatCount[];
 	byCategory: CategoryCount[];
 	topGenres: NamedCount[];
@@ -948,8 +956,13 @@ export async function readingInsights(
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)}
 			`,
+		// A read known only to the year (an imported StoryGraph date, migration
+		// 0037) has no month, so it groups under a null month and is reported
+		// beside the chart rather than piled into January.
 		sql<{ month: unknown; count: unknown }[]>`
-				select extract(month from r.finished_on)::int as month, count(*)::int as count
+				select case when r.finished_precision = 'year' then null
+					else extract(month from r.finished_on)::int end as month,
+					count(*)::int as count
 				from book_reads r join books b on b.id = r.book_id
 				where ${readerReadsInYear(sql, viewer, year)} and r.status = 'finished'
 				group by month
@@ -1008,9 +1021,11 @@ export async function readingInsights(
 
 	const totals = totalsRows[0];
 	const finishedPerMonth = Array.from({ length: 12 }, (_, index) => {
-		const row = monthRows.find((m) => toInt(m.month) === index + 1);
+		const row = monthRows.find((m) => m.month !== null && toInt(m.month) === index + 1);
 		return row ? toInt(row.count) : 0;
 	});
+	const unknownMonth = monthRows.find((m) => m.month === null);
+	const finishedMonthUnknown = unknownMonth ? toInt(unknownMonth.count) : 0;
 	const audiobookMinutes = toNumberOrNull(totals?.audiobook_minutes) ?? 0;
 	const longest = longestRows[0];
 	const shortest = shortestRows[0];
@@ -1025,6 +1040,7 @@ export async function readingInsights(
 		audiobookUnknownCount: toInt(totals?.audiobook_unknown ?? 0),
 		averageRating: toNumberOrNull(totals?.average_rating ?? null),
 		finishedPerMonth,
+		finishedMonthUnknown,
 		byFormat: formatRows.map((row) => ({
 			format: (row.format as BookFormat | null) ?? null,
 			count: toInt(row.count)

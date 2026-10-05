@@ -13,6 +13,7 @@
 		Sheet,
 		Textarea
 	} from '$lib/components';
+	import { readDayLabel } from '$lib/read-dates';
 	import { CATEGORY_LABELS, FORMAT_LABELS } from '../../books/form';
 	import { KIND_LABELS, KIND_OPTIONS, progressLabel, progressPercent } from '../form';
 
@@ -97,7 +98,12 @@
 			{:else}
 				<List label="Books that count">
 					{#each data.countBooks as book (book.id)}
-						<ListRow title={book.title} meta={book.finishedOn ?? undefined} />
+						<ListRow
+							title={book.title}
+							meta={book.finishedOn
+								? readDayLabel(book.finishedOn, book.finishedPrecision)
+								: undefined}
+						/>
 					{/each}
 				</List>
 			{/if}

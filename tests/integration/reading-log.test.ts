@@ -407,6 +407,67 @@ describe('reads are kept apart by reader', () => {
 	});
 });
 
+describe('a read known only to the year or month', () => {
+	it('keeps its precision through an edit that leaves the dates alone', async () => {
+		const book = await addBook(owner, 'Imported Year Only Read');
+		const read = ok(await startRead(sql, owner, book.id, {}), 'start').record;
+		// What the StoryGraph import writes for "read in 2019, started 2019/05".
+		await sql`
+			update book_reads set status = 'finished', started_on = '2019-05-01',
+				started_precision = 'month', finished_on = '2019-06-01', finished_precision = 'year'
+			where id = ${read.id}::uuid
+		`;
+		const [imported] = (await listReadsForBook(sql, owner, book.id)).filter(
+			(r) => r.id === read.id
+		);
+		expect(imported).toMatchObject({ startedPrecision: 'month', finishedPrecision: 'year' });
+
+		const rated = ok(
+			await updateRead(sql, owner, read.id, { rating: 4 }, imported!.updatedAt),
+			'rate'
+		).record;
+		expect(rated).toMatchObject({ startedPrecision: 'month', finishedPrecision: 'year' });
+
+		// A date the reader types is a whole day; the other keeps its precision.
+		const redated = ok(
+			await updateRead(sql, owner, read.id, { finishedOn: '2019-06-20' }, rated.updatedAt),
+			'redate'
+		).record;
+		expect(redated).toMatchObject({
+			finishedOn: '2019-06-20',
+			finishedPrecision: 'day',
+			startedPrecision: 'month'
+		});
+	});
+
+	it('dates a read with no start by its finish in the history, not by the import day', async () => {
+		const book = await addBook(owner, 'Two Imported Reads');
+		// Inserted oldest first, so ordering by when each was logged alone
+		// would put them the wrong way round.
+		const [older] = await sql<{ id: string }[]>`
+			insert into book_reads (book_id, reader_user_id, status, finished_on, created_by, updated_by)
+			values (${book.id}::uuid, ${owner.userId}::uuid, 'finished', '2019-06-01',
+				${owner.userId}::uuid, ${owner.userId}::uuid)
+			returning id
+		`;
+		const [newer] = await sql<{ id: string }[]>`
+			insert into book_reads (
+				book_id, reader_user_id, status, started_on, finished_on, created_by, updated_by
+			) values (${book.id}::uuid, ${owner.userId}::uuid, 'finished', '2021-01-01', '2021-02-01',
+				${owner.userId}::uuid, ${owner.userId}::uuid)
+			returning id
+		`;
+		const history = await listReadsForBook(sql, owner, book.id);
+		expect(history.map((r) => r.id)).toEqual([newer!.id, older!.id]);
+	});
+
+	it('is a whole day for every read logged in the app', async () => {
+		const book = await addBook(owner, 'Logged In The App');
+		const read = ok(await startRead(sql, owner, book.id, {}), 'start').record;
+		expect(read).toMatchObject({ startedPrecision: 'day', finishedPrecision: 'day' });
+	});
+});
+
 describe('authorization', () => {
 	it("forbids changing or deleting another reader's read of a book the viewer can see", async () => {
 		const book = await addBook(owner, 'Operator Book');

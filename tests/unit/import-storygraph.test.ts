@@ -6,7 +6,10 @@ import {
 	mapStorygraphRow,
 	parseIsbn,
 	parseQuarterRating,
-	parseStorygraphDate
+	parseStorygraphDate,
+	parseStorygraphPartialDate,
+	titleKey,
+	type ParsedRead
 } from '$lib/server/import/storygraph';
 
 /**
@@ -50,6 +53,20 @@ function baseRow(overrides: Record<string, string> = {}): Record<string, string>
 	};
 }
 
+/** The read a test expects: undated, unrated and every date a whole day,
+ *  unless the test says otherwise. */
+function expectedRead(fields: Partial<ParsedRead> & Pick<ParsedRead, 'status'>): ParsedRead {
+	return {
+		startedOn: null,
+		startedPrecision: 'day',
+		finishedOn: null,
+		finishedPrecision: 'day',
+		rating: null,
+		review: null,
+		...fields
+	};
+}
+
 /** Maps a row and asserts it produced a book, for tests that only care
  *  about the book's shape rather than a row-level refusal. */
 function bookOf(overrides: Record<string, string> = {}, row = 1) {
@@ -65,30 +82,20 @@ describe('Read Status', () => {
 		const book = bookOf({ 'Read Status': 'read', 'Dates Read': '2024/01/05-2024/01/20' });
 		expect(book.status).toBe('read');
 		expect(book.reads).toEqual([
-			{
-				status: 'finished',
-				startedOn: '2024-01-05',
-				finishedOn: '2024-01-20',
-				rating: null,
-				review: null
-			}
+			expectedRead({ status: 'finished', startedOn: '2024-01-05', finishedOn: '2024-01-20' })
 		]);
 	});
 
 	it('maps currently-reading to status reading with one open read', () => {
 		const book = bookOf({ 'Read Status': 'currently-reading', 'Dates Read': '2024/03/01' });
 		expect(book.status).toBe('reading');
-		expect(book.reads).toEqual([
-			{ status: 'reading', startedOn: '2024-03-01', finishedOn: null, rating: null, review: null }
-		]);
+		expect(book.reads).toEqual([expectedRead({ status: 'reading', startedOn: '2024-03-01' })]);
 	});
 
 	it('maps paused to status paused with one open read', () => {
 		const book = bookOf({ 'Read Status': 'paused', 'Dates Read': '2024/03/01' });
 		expect(book.status).toBe('paused');
-		expect(book.reads).toEqual([
-			{ status: 'paused', startedOn: '2024-03-01', finishedOn: null, rating: null, review: null }
-		]);
+		expect(book.reads).toEqual([expectedRead({ status: 'paused', startedOn: '2024-03-01' })]);
 	});
 
 	it('maps to-read to status tbr with no read at all', () => {
@@ -97,14 +104,29 @@ describe('Read Status', () => {
 		expect(book.reads).toEqual([]);
 	});
 
-	it('maps did-not-finish to status dnf with exactly one dateless read', () => {
-		// Dates Read is populated here on purpose: unlike `read`/`reading`/
-		// `paused`, a dnf row mines no date source at all (this module's
-		// header), so the range above must have no effect on the read built.
+	it('maps did-not-finish to status dnf with one read, dated like the app dates a DNF', () => {
+		// The app's own dnfRead records the day reading stopped as finished_on,
+		// so a dnf range's end is exactly that.
 		const book = bookOf({ 'Read Status': 'did-not-finish', 'Dates Read': '2024/01/05-2024/01/20' });
 		expect(book.status).toBe('dnf');
 		expect(book.reads).toEqual([
-			{ status: 'dnf', startedOn: null, finishedOn: null, rating: null, review: null }
+			expectedRead({ status: 'dnf', startedOn: '2024-01-05', finishedOn: '2024-01-20' })
+		]);
+	});
+
+	it('gives a did-not-finish row with no dates exactly one undated dnf read', () => {
+		const book = bookOf({ 'Read Status': 'did-not-finish', 'Dates Read': '' });
+		expect(book.reads).toEqual([expectedRead({ status: 'dnf' })]);
+	});
+
+	it('imports an empty Read Status as tbr, the table default, with a warning', () => {
+		// StoryGraph lists a book with no status when it is only marked owned.
+		const mapped = mapStorygraphRow(baseRow({ 'Read Status': '', 'Owned?': 'Yes' }), 6);
+		expect(mapped.book?.status).toBe('tbr');
+		expect(mapped.book?.owned).toBe(true);
+		expect(mapped.book?.reads).toEqual([]);
+		expect(mapped.warnings).toEqual([
+			{ row: 6, field: 'Read Status', message: expect.stringContaining('tbr') }
 		]);
 	});
 
@@ -159,21 +181,13 @@ describe('Dates Read shapes', () => {
 	it('a single range becomes one finished read', () => {
 		const book = bookOf({ 'Dates Read': '2024/01/05-2024/01/20' });
 		expect(book.reads).toEqual([
-			{
-				status: 'finished',
-				startedOn: '2024-01-05',
-				finishedOn: '2024-01-20',
-				rating: null,
-				review: null
-			}
+			expectedRead({ status: 'finished', startedOn: '2024-01-05', finishedOn: '2024-01-20' })
 		]);
 	});
 
 	it('a lone date on a read row becomes finished_on with no started_on', () => {
 		const book = bookOf({ 'Dates Read': '2024/01/20' });
-		expect(book.reads).toEqual([
-			{ status: 'finished', startedOn: null, finishedOn: '2024-01-20', rating: null, review: null }
-		]);
+		expect(book.reads).toEqual([expectedRead({ status: 'finished', finishedOn: '2024-01-20' })]);
 	});
 
 	it('several comma-separated ranges become one finished read each, most recent last', () => {
@@ -200,16 +214,12 @@ describe('Dates Read shapes', () => {
 
 	it('an empty Dates Read on a read row falls back to Last Date Read', () => {
 		const book = bookOf({ 'Dates Read': '', 'Last Date Read': '2021/07/04' });
-		expect(book.reads).toEqual([
-			{ status: 'finished', startedOn: null, finishedOn: '2021-07-04', rating: null, review: null }
-		]);
+		expect(book.reads).toEqual([expectedRead({ status: 'finished', finishedOn: '2021-07-04' })]);
 	});
 
 	it('still produces one dateless finished read when Last Date Read is also empty', () => {
 		const book = bookOf({ 'Dates Read': '', 'Last Date Read': '' });
-		expect(book.reads).toEqual([
-			{ status: 'finished', startedOn: null, finishedOn: null, rating: null, review: null }
-		]);
+		expect(book.reads).toEqual([expectedRead({ status: 'finished' })]);
 	});
 
 	it('never invents a read beyond what Dates Read actually gives, regardless of Read Count', () => {
@@ -217,19 +227,22 @@ describe('Dates Read shapes', () => {
 		expect(book.reads).toHaveLength(1);
 	});
 
-	it('a reversed range is skipped with a warning rather than failing the row', () => {
+	it('a reversed range is skipped with a warning, and the read book still gets one read', () => {
 		const mapped = mapStorygraphRow(baseRow({ 'Dates Read': '2023/01/20-2023/01/05' }), 7);
-		expect(mapped.book).not.toBeNull();
-		expect(mapped.book?.reads).toEqual([]);
+		expect(mapped.book?.reads).toEqual([expectedRead({ status: 'finished' })]);
 		expect(mapped.warnings).toEqual([
 			{ row: 7, field: 'Dates Read', message: expect.stringContaining('ends before it starts') }
 		]);
 	});
 
-	it('an unparsable entry is skipped with a warning, not thrown', () => {
-		const mapped = mapStorygraphRow(baseRow({ 'Dates Read': 'sometime last year' }), 8);
-		expect(mapped.book).not.toBeNull();
-		expect(mapped.book?.reads).toEqual([]);
+	it('an unparsable entry is skipped with a warning, falling back to Last Date Read', () => {
+		const mapped = mapStorygraphRow(
+			baseRow({ 'Dates Read': 'sometime last year', 'Last Date Read': '2023/06' }),
+			8
+		);
+		expect(mapped.book?.reads).toEqual([
+			expectedRead({ status: 'finished', finishedOn: '2023-06-01', finishedPrecision: 'month' })
+		]);
 		expect(mapped.warnings).toEqual([{ row: 8, field: 'Dates Read', message: expect.any(String) }]);
 	});
 
@@ -238,8 +251,97 @@ describe('Dates Read shapes', () => {
 			'Read Status': 'currently-reading',
 			'Dates Read': '2024/01/05-2024/01/20'
 		});
-		expect(book.reads).toEqual([
-			{ status: 'reading', startedOn: '2024-01-05', finishedOn: null, rating: null, review: null }
+		expect(book.reads).toEqual([expectedRead({ status: 'reading', startedOn: '2024-01-05' })]);
+	});
+});
+
+describe('partial dates', () => {
+	it('reads a year, a month or a day as the first day of that period', () => {
+		expect(parseStorygraphPartialDate('2019')).toEqual({ day: '2019-01-01', precision: 'year' });
+		expect(parseStorygraphPartialDate('2019/05')).toEqual({
+			day: '2019-05-01',
+			precision: 'month'
+		});
+		expect(parseStorygraphPartialDate('2019/05/03')).toEqual({
+			day: '2019-05-03',
+			precision: 'day'
+		});
+	});
+
+	it('refuses a day or month that does not exist, and anything else', () => {
+		expect(parseStorygraphPartialDate('2019/02/30')).toBeNull();
+		expect(parseStorygraphPartialDate('2019/13')).toBeNull();
+		expect(parseStorygraphPartialDate('2019-05')).toBeNull();
+		expect(parseStorygraphPartialDate('')).toBeNull();
+	});
+
+	it('keeps Date Added to whole days, since tbr_added_on has no precision', () => {
+		expect(parseStorygraphDate('2019')).toBeNull();
+		expect(parseStorygraphDate('2019/05')).toBeNull();
+		expect(parseStorygraphDate('2019/02/30')).toBeNull();
+	});
+
+	it('a lone year or month on a read row is a finished read that precise', () => {
+		expect(bookOf({ 'Dates Read': '2019' }).reads).toEqual([
+			expectedRead({ status: 'finished', finishedOn: '2019-01-01', finishedPrecision: 'year' })
+		]);
+		expect(bookOf({ 'Dates Read': '2019/05' }).reads).toEqual([
+			expectedRead({ status: 'finished', finishedOn: '2019-05-01', finishedPrecision: 'month' })
+		]);
+	});
+
+	it('a range of years keeps both ends to the year', () => {
+		expect(bookOf({ 'Dates Read': '2015-2016' }).reads).toEqual([
+			expectedRead({
+				status: 'finished',
+				startedOn: '2015-01-01',
+				startedPrecision: 'year',
+				finishedOn: '2016-01-01',
+				finishedPrecision: 'year'
+			})
+		]);
+	});
+
+	it('a start inside a coarser end period finishes on the start day, still that precise', () => {
+		// 2019-05-01 would be before the start and break the table's CHECK.
+		expect(bookOf({ 'Dates Read': '2019/05/20-2019/05' }).reads).toEqual([
+			expectedRead({
+				status: 'finished',
+				startedOn: '2019-05-20',
+				finishedOn: '2019-05-20',
+				finishedPrecision: 'month'
+			})
+		]);
+	});
+
+	it('a range ending in a year before its start is reversed', () => {
+		const mapped = mapStorygraphRow(baseRow({ 'Dates Read': '2019/03/01-2018' }), 5);
+		expect(mapped.warnings).toEqual([
+			{ row: 5, field: 'Dates Read', message: expect.stringContaining('ends before it starts') }
+		]);
+	});
+
+	it('puts the rating on the latest read by date, whatever order the entries come in', () => {
+		const book = bookOf({
+			'Dates Read': '2024/02/01-2024/02/20, 2019, 2021/06',
+			'Star Rating': '4.5'
+		});
+		expect(book.reads.map((r) => [r.finishedOn, r.finishedPrecision, r.rating])).toEqual([
+			['2019-01-01', 'year', null],
+			['2021-06-01', 'month', null],
+			['2024-02-20', 'day', 4.5]
+		]);
+	});
+
+	it('dates a did-not-finish from a partial date too', () => {
+		expect(bookOf({ 'Read Status': 'did-not-finish', 'Dates Read': '2022/03' }).reads).toEqual([
+			expectedRead({ status: 'dnf', finishedOn: '2022-03-01', finishedPrecision: 'month' })
+		]);
+	});
+
+	it('starts a paused read from a lone year, to the year', () => {
+		expect(bookOf({ 'Read Status': 'paused', 'Dates Read': '2020' }).reads).toEqual([
+			expectedRead({ status: 'paused', startedOn: '2020-01-01', startedPrecision: 'year' })
 		]);
 	});
 });
@@ -287,11 +389,11 @@ describe('ISBN vs UID', () => {
 		expect(parseIsbn('SG-UID-0002')).toBeNull();
 	});
 
-	it('keeps the raw cell as storygraph_id even when it is not a valid ISBN', () => {
-		const mapped = mapStorygraphRow(baseRow({ 'ISBN/UID': 'SG-UID-0002' }), 2);
+	it('keeps an ASIN as storygraph_id, not as an ISBN, with no warning', () => {
+		const mapped = mapStorygraphRow(baseRow({ 'ISBN/UID': 'B0FICTION0' }), 2);
 		expect(mapped.book?.isbn).toBeNull();
-		expect(mapped.book?.storygraphId).toBe('SG-UID-0002');
-		expect(mapped.warnings).toEqual([{ row: 2, field: 'ISBN/UID', message: expect.any(String) }]);
+		expect(mapped.book?.storygraphId).toBe('B0FICTION0');
+		expect(mapped.warnings).toEqual([]);
 	});
 
 	it('sets both isbn and storygraph_id from a valid ISBN, with no warning', () => {
@@ -301,11 +403,19 @@ describe('ISBN vs UID', () => {
 		expect(mapped.warnings).toEqual([]);
 	});
 
-	it('leaves both null, with no warning, when the cell is blank', () => {
+	it('keys a blank cell by title and authors, so a re-run still recognises it', () => {
 		const mapped = mapStorygraphRow(baseRow({ 'ISBN/UID': '' }), 1);
 		expect(mapped.book?.isbn).toBeNull();
-		expect(mapped.book?.storygraphId).toBeNull();
+		expect(mapped.book?.storygraphId).toBe(titleKey('The Sample Saga', ['Fictional Author']));
+		expect(mapped.book?.storygraphId).toMatch(/^title:[0-9a-f]{64}$/);
 		expect(mapped.warnings).toEqual([]);
+	});
+
+	it('makes the title key ignore case and spacing but not a different author', () => {
+		const key = titleKey('The Sample Saga', ['Fictional Author']);
+		expect(titleKey('  the sample saga ', ['FICTIONAL AUTHOR'])).toBe(key);
+		expect(titleKey('The Sample Saga', ['Another Author'])).not.toBe(key);
+		expect(titleKey('The Sample Saga', [])).not.toBe(key);
 	});
 });
 

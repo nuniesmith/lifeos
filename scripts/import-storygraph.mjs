@@ -92,11 +92,22 @@ try {
 	console.log(
 		`  books failed           ${failedMark}${String(summary.booksFailed).padStart(6)}${OFF}`
 	);
+	console.log(`  keyed by title+author  ${String(summary.booksKeyedByTitle).padStart(6)}`);
 	console.log(`  authors created        ${String(summary.authorsCreated).padStart(6)}`);
 	console.log('');
 	console.log('  reads created by status:');
 	for (const [status, count] of Object.entries(summary.readsByStatus)) {
 		console.log(`    ${status.padEnd(10)} ${String(count).padStart(6)}`);
+	}
+
+	const counted = Object.entries(summary.warningCounts).sort((a, b) => b[1] - a[1]);
+	if (counted.length > 0) {
+		console.log('');
+		// Field name and a fixed message per kind, never cell content.
+		console.log('  warnings by kind:');
+		for (const [kind, count] of counted) {
+			console.log(`    ${String(count).padStart(6)}  ${kind}`);
+		}
 	}
 
 	if (summary.warnings.length > 0) {

@@ -316,6 +316,22 @@ describe('count challenge progress', () => {
 		});
 		const books = await countChallengeBooks(sql, owner, challenge);
 		expect(books.map((b) => b.title)).toEqual(['R3 Finished In 2026']);
+		expect(books[0]?.finishedPrecision).toBe('day');
+	});
+
+	it('carries a year-only finish date’s precision, so the page can show just the year', async () => {
+		const book = await addBook(owner, 'R3 Read Sometime In 2026');
+		const readId = await addRead(owner, book.id, { finishedOn: '2026-01-01' });
+		await sql`update book_reads set finished_precision = 'year' where id = ${readId}::uuid`;
+
+		const challenge = await addChallenge(owner, 'R3 Year Only Count', {
+			year: 2026,
+			targetCount: 5
+		});
+		const books = await countChallengeBooks(sql, owner, challenge);
+		expect(books).toEqual([
+			expect.objectContaining({ finishedOn: '2026-01-01', finishedPrecision: 'year' })
+		]);
 	});
 
 	it('narrows by category, format and genre together', async () => {
@@ -641,6 +657,24 @@ describe('reading insights', () => {
 		const expected = new Array(12).fill(0);
 		expected[0] = 1;
 		expected[6] = 1;
+		expect(insights.finishedPerMonth).toEqual(expected);
+		expect(insights.finishedMonthUnknown).toBe(0);
+	});
+
+	it('counts a finish known only to the year in the year, but in no month', async () => {
+		// An imported StoryGraph "2026" is stored as 1 January (migration 0037);
+		// charting it there would pile every such read into January.
+		const known = await addBook(owner, 'R3 Known Month Book');
+		const yearOnly = await addBook(owner, 'R3 Year Only Book');
+		await addRead(owner, known.id, { finishedOn: '2026-03-10' });
+		const readId = await addRead(owner, yearOnly.id, { finishedOn: '2026-01-01' });
+		await sql`update book_reads set finished_precision = 'year' where id = ${readId}::uuid`;
+
+		const insights = await readingInsights(sql, owner, 2026);
+		expect(insights.finishedCount).toBe(2);
+		expect(insights.finishedMonthUnknown).toBe(1);
+		const expected = new Array(12).fill(0);
+		expected[2] = 1;
 		expect(insights.finishedPerMonth).toEqual(expected);
 	});
 

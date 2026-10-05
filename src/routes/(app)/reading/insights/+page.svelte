@@ -120,6 +120,11 @@
 					</div>
 				{/each}
 			</div>
+			{#if data.insights.finishedMonthUnknown > 0}
+				<p class="chart-note">
+					{data.insights.finishedMonthUnknown} more finished in {data.year}, month not recorded.
+				</p>
+			{/if}
 		</Card>
 
 		{#if data.insights.longestBook || data.insights.shortestBook}
@@ -283,6 +288,11 @@
 		min-height: 0;
 		border-radius: 4px 4px 0 0;
 		background: var(--c-accent);
+	}
+	.chart-note {
+		margin: var(--sp-3) 0 0;
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
 	}
 	.month-label {
 		color: var(--c-text-muted);

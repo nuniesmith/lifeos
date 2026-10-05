@@ -1,8 +1,8 @@
+import { createHash } from 'node:crypto';
 import type { Sql, TransactionSql } from 'postgres';
+import type { DatePrecision } from '../../read-dates.ts';
 import { parseCsvTable } from './csv.ts';
 import { one } from '../db/scalar.ts';
-
-type Queryable = Sql | TransactionSql;
 
 /**
  * StoryGraph reading-history import (Reading Tracker R3b).
@@ -33,15 +33,26 @@ type Queryable = Sql | TransactionSql;
  * the same reason -- this module keeps that boundary rather than being the
  * first to cross it.
  *
- * Mapping decisions worth stating up front, because the brief states them as
- * terse bullets and the code below follows them literally:
- *  - `to-read` produces no read at all; `did-not-finish` produces exactly
- *    one, with no dates of its own -- StoryGraph's `Dates Read` and
- *    `Last Date Read` are mined for `read`/`currently-reading`/`paused` rows
- *    only, never for a dnf one.
- *  - `Star Rating` and `Review` land on whichever read this row builds last.
- *    `Dates Read` ranges are StoryGraph's own chronological list, oldest
- *    first, so "last built" is "most recent" without any date comparison.
+ * Mapping decisions worth stating up front:
+ *  - StoryGraph dates are often partial: a year only ("2019") or a year and
+ *    month ("2019/05") whenever the day was never entered, and in the
+ *    operator's export these are most of the dated reads. They are kept, as
+ *    the first day of the period plus a precision (migration 0037's
+ *    `started_precision` / `finished_precision`), because dropping them
+ *    would drop most of the reading history.
+ *  - `to-read` produces no read at all. `did-not-finish` produces exactly
+ *    one, dated the way the app's own "did not finish" dates one (the day
+ *    reading stopped, as `finished_on`) when the export has a date for it.
+ *    A `read` row always produces at least one finished read, undated if
+ *    StoryGraph kept no usable date: the book was read either way.
+ *  - `Star Rating` and `Review` land on the most recent read, by date, so a
+ *    re-read's rating is never pinned to the first read-through.
+ *  - An empty `Read Status` (StoryGraph lists a book that is only marked
+ *    owned, for one) imports as `tbr`, the books table's own default, with a
+ *    counted warning. A status this module does not recognise still refuses
+ *    the row: guessing at a value nobody has seen would be worse.
+ *  - A row with no `ISBN/UID` is keyed by its title and authors instead
+ *    ({@link titleKey}), so a re-run still recognises it.
  *  - The five character-arc questions (`Character- or Plot-Driven?`,
  *    `Diverse Characters?`, `Flawed Characters?`, `Loveable Characters?`,
  *    `Strong Character Development?`) and `Contributors` are read by
@@ -113,34 +124,78 @@ export function cleanTextArray(value: string): string[] {
 	return out;
 }
 
-const SG_DATE = /^(\d{4})\/(\d{2})\/(\d{2})$/;
+const SG_PARTIAL_DATE = /^(\d{4})(?:\/(\d{2})(?:\/(\d{2}))?)?$/;
 
-/**
- * Converts StoryGraph's own `YYYY/MM/DD` to the `YYYY-MM-DD` this app's
- * `date` columns use everywhere (hard rule 2) -- a plain day string, never a
- * JS `Date`, which would have to pick a timezone to read the day back out of
- * that is not this household's to pick.
- */
-export function parseStorygraphDate(value: string): string | null {
-	const trimmed = value.trim();
-	if (!trimmed) return null;
-	const m = SG_DATE.exec(trimmed);
-	return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+/** A StoryGraph date as the first day of the period it names, and how much
+ *  of that day is real: `2019` is `2019-01-01` to the year. */
+export interface PartialDate {
+	day: string;
+	precision: DatePrecision;
 }
 
-const SG_RANGE = /^(\d{4}\/\d{2}\/\d{2})\s*-\s*(\d{4}\/\d{2}\/\d{2})$/;
+/** True for a day that exists, so `2019/02/30` is refused here as a warning
+ *  rather than failing the whole row when PostgreSQL refuses it at insert.
+ *  The `Date` only checks the calendar; it never reaches SQL (hard rule 2). */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+	const date = new Date(Date.UTC(year, month - 1, day));
+	return (
+		date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+	);
+}
+
+/**
+ * Reads StoryGraph's `YYYY/MM/DD`, `YYYY/MM` or `YYYY` as the `YYYY-MM-DD`
+ * day string this app's `date` columns use everywhere (hard rule 2), padded
+ * to the first day of the period, with the precision that says so.
+ */
+export function parseStorygraphPartialDate(value: string): PartialDate | null {
+	const m = SG_PARTIAL_DATE.exec(value.trim());
+	if (!m) return null;
+	const [, year, month, day] = m;
+	if (!isCalendarDay(Number(year), Number(month ?? '01'), Number(day ?? '01'))) return null;
+	return {
+		day: `${year}-${month ?? '01'}-${day ?? '01'}`,
+		precision: day ? 'day' : month ? 'month' : 'year'
+	};
+}
+
+/**
+ * A whole StoryGraph day (`YYYY/MM/DD`) as `YYYY-MM-DD`, or null. For a
+ * column with no precision of its own (`books.tbr_added_on`), where a
+ * year-only value has nowhere to say it is one.
+ */
+export function parseStorygraphDate(value: string): string | null {
+	const parsed = parseStorygraphPartialDate(value);
+	return parsed?.precision === 'day' ? parsed.day : null;
+}
+
+/** The last day of a partial date's period: `2019` ends on `2019-12-31`. */
+function periodEnd(date: PartialDate): string {
+	if (date.precision === 'day') return date.day;
+	const [year, month] = date.day.split('-').map(Number) as [number, number];
+	// Day 0 of the following month is the last day of this one.
+	const end =
+		date.precision === 'year'
+			? new Date(Date.UTC(year, 11, 31))
+			: new Date(Date.UTC(year, month, 0));
+	return end.toISOString().slice(0, 10);
+}
+
+const SG_PART = String.raw`\d{4}(?:\/\d{2}(?:\/\d{2})?)?`;
+const SG_RANGE = new RegExp(String.raw`^(${SG_PART})\s*-\s*(${SG_PART})$`);
 
 interface DatesReadEntry {
 	/** Null for a lone date -- see {@link buildReads}, the one place that
 	 *  decides what a lone date means for a given Read Status. */
-	first: string | null;
-	second: string;
+	start: PartialDate | null;
+	end: PartialDate;
 }
 
 /**
  * Splits `Dates Read` on its commas and parses each entry as a range or a
- * lone date. An entry that is neither comes back as null so the caller can
- * warn about it and move on, rather than this function guessing.
+ * lone date, either side of a range as precise as StoryGraph kept it. An
+ * entry that is neither comes back as null so the caller can warn about it
+ * and move on, rather than this function guessing.
  */
 function parseDatesReadEntries(value: string): (DatesReadEntry | null)[] {
 	const trimmed = value.trim();
@@ -150,12 +205,12 @@ function parseDatesReadEntries(value: string): (DatesReadEntry | null)[] {
 		if (!p) return null;
 		const range = SG_RANGE.exec(p);
 		if (range) {
-			const first = parseStorygraphDate(range[1]!);
-			const second = parseStorygraphDate(range[2]!);
-			return first && second ? { first, second } : null;
+			const start = parseStorygraphPartialDate(range[1]!);
+			const end = parseStorygraphPartialDate(range[2]!);
+			return start && end ? { start, end } : null;
 		}
-		const lone = parseStorygraphDate(p);
-		return lone ? { first: null, second: lone } : null;
+		const lone = parseStorygraphPartialDate(p);
+		return lone ? { start: null, end: lone } : null;
 	});
 }
 
@@ -165,94 +220,126 @@ export interface RowWarning {
 	message: string;
 }
 
-export interface ParsedRead {
-	status: ReadStatus;
+/** A read's two dates as they will be stored: see migration 0037 for why a
+ *  partial date is its period's first day plus a precision. */
+interface ReadDates {
 	startedOn: string | null;
+	startedPrecision: DatePrecision;
 	finishedOn: string | null;
+	finishedPrecision: DatePrecision;
+}
+
+export interface ParsedRead extends ReadDates {
+	status: ReadStatus;
 	rating: number | null;
 	review: string | null;
 }
 
-const newRead = (
-	status: ReadStatus,
-	startedOn: string | null,
-	finishedOn: string | null
-): ParsedRead => ({
+const UNDATED: ReadDates = {
+	startedOn: null,
+	startedPrecision: 'day',
+	finishedOn: null,
+	finishedPrecision: 'day'
+};
+
+const newRead = (status: ReadStatus, dates: ReadDates): ParsedRead => ({
 	status,
-	startedOn,
-	finishedOn,
+	...dates,
 	rating: null,
 	review: null
 });
 
 /**
- * Builds the reads one row implies, following the brief's per-status rules
- * literally (see this module's header for the dnf/to-read decisions). Takes
- * `Last Date Read` as an already-parsed fallback rather than the raw cell,
- * so this function has one job -- deciding how many reads and which dates --
- * instead of also re-deriving a date it is handed either way.
+ * One `Dates Read` entry as a read's dates, or null when it ends before it
+ * starts. Both dates are stored as the first day of their period, so a start
+ * inside a coarser end's period ("2019/05/20-2019/05") would sit after that
+ * end's first day and break the table's finished-after-started CHECK. The
+ * finish then takes the start's day instead: still inside its own period, so
+ * its precision stays true.
+ */
+function entryDates(entry: DatesReadEntry): ReadDates | null {
+	const { start, end } = entry;
+	if (!start) {
+		return { ...UNDATED, finishedOn: end.day, finishedPrecision: end.precision };
+	}
+	if (start.day > periodEnd(end)) return null;
+	return {
+		startedOn: start.day,
+		startedPrecision: start.precision,
+		finishedOn: start.day > end.day ? start.day : end.day,
+		finishedPrecision: end.precision
+	};
+}
+
+/** Oldest first; an undated read sorts before every dated one. Day strings
+ *  compare correctly as text because they are all `YYYY-MM-DD`. */
+const byFinish = (a: ReadDates, b: ReadDates): number => {
+	const x = a.finishedOn ?? '';
+	const y = b.finishedOn ?? '';
+	return x < y ? -1 : x > y ? 1 : 0;
+};
+
+/**
+ * Builds the reads one row implies, following the per-status rules in this
+ * module's header. Takes `Last Date Read` already parsed, as the fallback
+ * date when `Dates Read` offers nothing usable, so this function has one
+ * job: deciding how many reads and which dates. Returns them oldest first,
+ * which is what lets the caller put the rating on the most recent.
  */
 function buildReads(
 	row: number,
 	status: BookStatus,
 	datesReadRaw: string,
-	lastDateRead: string | null
+	lastDateRead: PartialDate | null
 ): { reads: ParsedRead[]; warnings: RowWarning[] } {
 	const warnings: RowWarning[] = [];
-	const entries = parseDatesReadEntries(datesReadRaw);
-	const valid: DatesReadEntry[] = [];
-	for (const entry of entries) {
-		if (entry) valid.push(entry);
+	const dated: ReadDates[] = [];
+	for (const entry of parseDatesReadEntries(datesReadRaw)) {
+		const dates = entry ? entryDates(entry) : null;
+		if (dates) dated.push(dates);
 		else
 			warnings.push({
 				row,
 				field: 'Dates Read',
-				message: 'an entry could not be parsed and was skipped'
+				message: entry
+					? 'a range ends before it starts and was skipped'
+					: 'an entry could not be parsed and was skipped'
 			});
 	}
+	// Sorted rather than trusted to arrive in order, so "most recent" means
+	// the latest date whatever order the export listed the entries in. The
+	// sort is stable, so equal dates keep the export's order.
+	dated.sort(byFinish);
+	const latest = dated[dated.length - 1] ?? null;
+	const fallback: ReadDates = lastDateRead
+		? { ...UNDATED, finishedOn: lastDateRead.day, finishedPrecision: lastDateRead.precision }
+		: UNDATED;
 
 	if (status === 'read') {
-		const reads: ParsedRead[] = [];
-		for (const entry of valid) {
-			if (entry.first && entry.first > entry.second) {
-				// The table's own CHECK (finished_on >= started_on) would refuse
-				// this outright; catching it here keeps it a counted warning on
-				// one range instead of failing the whole row (the brief's rule 9).
-				warnings.push({
-					row,
-					field: 'Dates Read',
-					message: 'a range ends before it starts and was skipped'
-				});
-				continue;
-			}
-			reads.push(newRead('finished', entry.first, entry.second));
-		}
-		// "No ranges but status read": one finished read, dated from Last Date
-		// Read when StoryGraph gives nothing more specific. Only when the cell
-		// was genuinely empty (`entries.length === 0`) -- ranges that were
-		// present but all invalid already earned their own warning above, and
-		// manufacturing a dateless read on top of that would hide the problem
-		// rather than report it.
-		if (reads.length === 0 && entries.length === 0) {
-			reads.push(newRead('finished', null, lastDateRead));
-		}
-		return { reads, warnings };
+		const reads = dated.map((dates) => newRead('finished', dates));
+		return { reads: reads.length > 0 ? reads : [newRead('finished', fallback)], warnings };
 	}
 
 	if (status === 'dnf') {
-		// "did-not-finish: one dnf read" -- no date source is named for this
-		// status (unlike the two below), so none is mined here either.
-		return { reads: [newRead('dnf', null, null)], warnings };
+		// Dated like the app's own `dnfRead` (reading-log.ts), which records the
+		// day reading stopped as `finished_on`: the latest entry, else Last
+		// Date Read, else no date at all.
+		return { reads: [newRead('dnf', latest ?? fallback)], warnings };
 	}
 
 	if (status === 'reading' || status === 'paused') {
-		// "One open read of that status (started_on from its range if any)":
-		// only the first entry is consulted, and only for a start -- an open
-		// read can never carry finished_on (the table's own CHECK forbids it
-		// outside finished/dnf), so a range's second half is never read here.
-		const first = valid[0] ?? null;
-		const startedOn = first ? (first.first ?? first.second) : null;
-		return { reads: [newRead(status, startedOn, null)], warnings };
+		// An open read can never carry `finished_on` (migration 0033's CHECK
+		// allows it only on finished and dnf reads), so only a start is taken:
+		// the latest entry's start, or its one date when StoryGraph kept only
+		// one, which for a book still being read is when it began.
+		const startedOn = latest ? (latest.startedOn ?? latest.finishedOn) : null;
+		const startedPrecision = latest?.startedOn
+			? latest.startedPrecision
+			: (latest?.finishedPrecision ?? 'day');
+		return {
+			reads: [newRead(status, { ...UNDATED, startedOn, startedPrecision })],
+			warnings
+		};
 	}
 
 	// 'tbr': no read at all.
@@ -263,7 +350,8 @@ export interface ParsedBook {
 	title: string;
 	authorNames: string[];
 	isbn: string | null;
-	storygraphId: string | null;
+	/** Never null: the row's `ISBN/UID`, or {@link titleKey} without one. */
+	storygraphId: string;
 	format: BookFormat | null;
 	status: BookStatus;
 	tbrAddedOn: string | null;
@@ -312,6 +400,20 @@ function joinContentWarnings(
 	return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
+const TITLE_KEY_PREFIX = 'title:';
+
+/**
+ * The identity of a row with no `ISBN/UID` (about one in six in the
+ * operator's export): a digest of its title and authors, so a re-run still
+ * recognises it. Title alone is not a key -- two books can share one -- but
+ * title and authors together named no two rows of that export. The prefix
+ * keeps it apart from every real ISBN, ASIN and StoryGraph id.
+ */
+export function titleKey(title: string, authorNames: string[]): string {
+	const basis = [title, ...authorNames].map((part) => part.trim().toLowerCase()).join('\u0000');
+	return `${TITLE_KEY_PREFIX}${createHash('sha256').update(basis).digest('hex')}`;
+}
+
 /**
  * Maps one StoryGraph CSV row (already parsed to a header-keyed record --
  * `parseCsvTable` in csv.ts) to the book and reads it describes, or to a
@@ -332,7 +434,7 @@ export function mapStorygraphRow(cells: Record<string, string>, row: number): Ma
 	}
 
 	const statusRaw = (cells['Read Status'] ?? '').trim().toLowerCase();
-	const status = READ_STATUS_TO_BOOK_STATUS[statusRaw];
+	const status = statusRaw ? READ_STATUS_TO_BOOK_STATUS[statusRaw] : 'tbr';
 	if (!status) {
 		warnings.push({
 			row,
@@ -341,23 +443,19 @@ export function mapStorygraphRow(cells: Record<string, string>, row: number): Ma
 		});
 		return { book: null, warnings };
 	}
+	if (!statusRaw) {
+		warnings.push({ row, field: 'Read Status', message: 'empty; imported as tbr' });
+	}
 
 	const authorNames = cleanTextArray(cells['Authors'] ?? '');
 
-	// StoryGraph's own UID is sometimes an internal id with no ISBN shape at
-	// all, so it is always kept verbatim as storygraph_id (migration
-	// 0037 -- what makes a re-run idempotent) even on rows where it is not
-	// also a valid ISBN.
+	// `ISBN/UID` is an ISBN-13, an ISBN-10 or an ASIN (a Kindle edition's
+	// Amazon id). Whatever it is, it is kept verbatim as storygraph_id
+	// (migration 0037 -- what makes a re-run idempotent), and also as the
+	// ISBN when it is one. An ASIN is expected, so it earns no warning.
 	const uidRaw = (cells['ISBN/UID'] ?? '').trim();
-	const storygraphId = uidRaw || null;
+	const storygraphId = uidRaw || titleKey(title, authorNames);
 	const isbn = uidRaw ? parseIsbn(uidRaw) : null;
-	if (uidRaw && isbn === null) {
-		warnings.push({
-			row,
-			field: 'ISBN/UID',
-			message: 'not a valid ISBN; kept only as the StoryGraph id'
-		});
-	}
 
 	const formatRaw = (cells['Format'] ?? '').trim().toLowerCase();
 	const format = SG_FORMAT_TO_BOOK_FORMAT[formatRaw] ?? null;
@@ -387,7 +485,7 @@ export function mapStorygraphRow(cells: Record<string, string>, row: number): Ma
 	const owned = (cells['Owned?'] ?? '').trim().toLowerCase() === 'yes';
 
 	const lastDateReadRaw = (cells['Last Date Read'] ?? '').trim();
-	const lastDateRead = lastDateReadRaw ? parseStorygraphDate(lastDateReadRaw) : null;
+	const lastDateRead = lastDateReadRaw ? parseStorygraphPartialDate(lastDateReadRaw) : null;
 	if (lastDateReadRaw && lastDateRead === null) {
 		warnings.push({ row, field: 'Last Date Read', message: 'not a recognised date; ignored' });
 	}
@@ -396,9 +494,8 @@ export function mapStorygraphRow(cells: Record<string, string>, row: number): Ma
 	warnings.push(...built.warnings);
 	const reads = built.reads;
 
-	// "Star Rating and Review go on the MOST RECENT read only": Dates Read's
-	// ranges are StoryGraph's own chronological list, oldest first, so the
-	// last read built above is the most recent one without comparing dates.
+	// The rating and review belong to the most recent read only, and
+	// buildReads returns its reads oldest first, by date.
 	const review = (cells['Review'] ?? '').trim() || null;
 	const mostRecent = reads[reads.length - 1];
 	if (mostRecent) {
@@ -432,15 +529,30 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
+ * A database error by its code and constraint only. PostgreSQL's own message
+ * can quote the offending value ("invalid input syntax for type date:
+ * ..."), and this report must never carry cell content (hard rule 1).
+ */
+function describeDbError(err: unknown): string {
+	if (typeof err !== 'object' || err === null) return 'unexpected error';
+	const { code, constraint_name: constraint } = err as {
+		code?: unknown;
+		constraint_name?: unknown;
+	};
+	const parts = [code, constraint].filter((part): part is string => typeof part === 'string');
+	return parts.length > 0 ? parts.join(' ') : 'unexpected error';
+}
+
+/**
  * Finds a live author by case-insensitive name, or creates one -- the same
  * rule `findOrCreateAuthor` applies in reading.ts, reimplemented here rather
- * than imported (see this module's header). The retry after a unique
- * violation matters even for a one-shot import: two rows several hundred
- * apart can name the same new author, and nothing serialises one row's
- * insert against the next row's find without it.
+ * than imported (see this module's header). Rows of this import share one
+ * transaction, so a later row's find already sees an earlier row's new
+ * author; the retry is for someone adding the same author in the app while
+ * the import runs, whose insert this one's unique index then refuses.
  */
 async function findOrCreateAuthorId(
-	sql: Queryable,
+	sql: TransactionSql,
 	householdId: string,
 	userId: string,
 	name: string
@@ -454,11 +566,16 @@ async function findOrCreateAuthorId(
 	const existing = await find();
 	if (existing[0]) return { id: existing[0].id, created: false };
 	try {
-		const inserted = await sql<{ id: string }[]>`
-			insert into authors (household_id, name, created_by, updated_by)
-			values (${householdId}::uuid, ${name}, ${userId}::uuid, ${userId}::uuid)
-			returning id
-		`;
+		// A savepoint of its own: a unique violation aborts the savepoint it
+		// happens in, and without this one that would be the row's, leaving
+		// the retry below nothing to run in.
+		const inserted = await sql.savepoint(
+			(sp) => sp<{ id: string }[]>`
+				insert into authors (household_id, name, created_by, updated_by)
+				values (${householdId}::uuid, ${name}, ${userId}::uuid, ${userId}::uuid)
+				returning id
+			`
+		);
 		return { id: one(inserted, 'inserted author').id, created: true };
 	} catch (err) {
 		if (isUniqueViolation(err)) {
@@ -491,11 +608,17 @@ export interface StorygraphImportSummary {
 	 *  all -- not even to check whether it agrees. */
 	booksSkipped: number;
 	booksFailed: number;
+	/** Created books with no `ISBN/UID`, recognised on a re-run by
+	 *  {@link titleKey} instead. */
+	booksKeyedByTitle: number;
 	authorsCreated: number;
 	readsByStatus: Record<ReadStatus, number>;
 	/** Capped at `maxWarnings`; never carries a title or any other cell
 	 *  content (hard rule 1) -- only the row number and the field name. */
 	warnings: RowWarning[];
+	/** Every warning, counted by field and message, so the report shows the
+	 *  whole picture where `warnings` shows only the first few rows. */
+	warningCounts: Record<string, number>;
 }
 
 /** Carries a dry run's result out through the rollback -- the same device
@@ -531,6 +654,7 @@ export async function importStorygraph(
 			let booksCreated = 0;
 			let booksSkipped = 0;
 			let booksFailed = 0;
+			let booksKeyedByTitle = 0;
 			let authorsCreated = 0;
 			const readsByStatus: Record<ReadStatus, number> = {
 				reading: 0,
@@ -539,7 +663,10 @@ export async function importStorygraph(
 				dnf: 0
 			};
 			const warnings: RowWarning[] = [];
+			const warningCounts: Record<string, number> = {};
 			const warn = (w: RowWarning) => {
+				const key = `${w.field}: ${w.message}`;
+				warningCounts[key] = (warningCounts[key] ?? 0) + 1;
 				if (warnings.length < maxWarnings) warnings.push(w);
 			};
 
@@ -555,24 +682,24 @@ export async function importStorygraph(
 				}
 
 				try {
-					await tx.savepoint(async (row) => {
-						if (book.storygraphId) {
-							const existing = await row<{ id: string }[]>`
-								select id from books
-								where household_id = ${householdId}::uuid
-								  and storygraph_id = ${book.storygraphId}
-								limit 1
-							`;
-							if (existing[0]) {
-								booksSkipped++;
-								return;
-							}
-						}
+					// The row's own counts come back out of its savepoint and are only
+					// added once it has committed, so a row that fails halfway (and
+					// rolls back its new author with it) is not counted as having
+					// created anything.
+					const outcome = await tx.savepoint(async (row) => {
+						const existing = await row<{ id: string }[]>`
+							select id from books
+							where household_id = ${householdId}::uuid
+							  and storygraph_id = ${book.storygraphId}
+							limit 1
+						`;
+						if (existing[0]) return { skipped: true, authorsCreated: 0 };
 
+						let rowAuthorsCreated = 0;
 						const authorIds: string[] = [];
 						for (const name of book.authorNames) {
 							const found = await findOrCreateAuthorId(row, householdId, userId, name);
-							if (found.created) authorsCreated++;
+							if (found.created) rowAuthorsCreated++;
 							authorIds.push(found.id);
 						}
 
@@ -602,25 +729,34 @@ export async function importStorygraph(
 						for (const read of book.reads) {
 							await row`
 								insert into book_reads (
-									book_id, reader_user_id, status, started_on, finished_on, rating,
-									review, created_by, updated_by
+									book_id, reader_user_id, status, started_on, started_precision,
+									finished_on, finished_precision, rating, review, created_by, updated_by
 								) values (
 									${bookId}::uuid, ${userId}::uuid, ${read.status}, ${read.startedOn}::date,
-									${read.finishedOn}::date, ${read.rating}, ${read.review},
+									${read.startedPrecision}, ${read.finishedOn}::date,
+									${read.finishedPrecision}, ${read.rating}, ${read.review},
 									${userId}::uuid, ${userId}::uuid
 								)
 							`;
-							readsByStatus[read.status]++;
 						}
 
-						booksCreated++;
+						return { skipped: false, authorsCreated: rowAuthorsCreated };
 					});
+
+					if (outcome.skipped) {
+						booksSkipped++;
+						continue;
+					}
+					booksCreated++;
+					if (book.storygraphId.startsWith(TITLE_KEY_PREFIX)) booksKeyedByTitle++;
+					authorsCreated += outcome.authorsCreated;
+					for (const read of book.reads) readsByStatus[read.status]++;
 				} catch (err) {
 					booksFailed++;
 					warn({
 						row: rowsRead,
 						field: 'row',
-						message: err instanceof Error ? err.message : 'could not be imported'
+						message: `could not be imported (${describeDbError(err)})`
 					});
 				}
 			}
@@ -631,9 +767,11 @@ export async function importStorygraph(
 				booksCreated,
 				booksSkipped,
 				booksFailed,
+				booksKeyedByTitle,
 				authorsCreated,
 				readsByStatus,
-				warnings
+				warnings,
+				warningCounts
 			};
 
 			if (dryRun) throw new DryRunComplete(summary);

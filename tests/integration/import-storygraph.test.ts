@@ -6,7 +6,11 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapIfEmpty } from '$lib/server/auth/bootstrap';
 import { createMember } from '$lib/server/auth/admin';
 import { one } from '$lib/server/db/scalar';
-import { importStorygraph, type StorygraphImportSummary } from '$lib/server/import/storygraph';
+import {
+	importStorygraph,
+	titleKey,
+	type StorygraphImportSummary
+} from '$lib/server/import/storygraph';
 
 /**
  * The StoryGraph importer's database half (Reading Tracker R3b; migration
@@ -105,6 +109,24 @@ const readsFor = (storygraphId: string) =>
 		order by r.started_on asc nulls first, r.finished_on asc nulls first
 	`;
 
+/** Each read's dates with their precision (migration 0037), oldest first. */
+const datesFor = (storygraphId: string) =>
+	sql<
+		{
+			started_on: string | null;
+			started_precision: string;
+			finished_on: string | null;
+			finished_precision: string;
+			rating: string | null;
+		}[]
+	>`
+		select r.started_on::text as started_on, r.started_precision,
+		       r.finished_on::text as finished_on, r.finished_precision, r.rating::text as rating
+		from book_reads r join books b on b.id = r.book_id
+		where b.household_id = ${householdId}::uuid and b.storygraph_id = ${storygraphId}
+		order by r.finished_on asc nulls first
+	`;
+
 describe('importing the fixture for the operator', () => {
 	beforeEach(async () => {
 		csvText = await readFile(FIXTURE_PATH, 'utf8');
@@ -114,20 +136,25 @@ describe('importing the fixture for the operator', () => {
 		const summary = await run(false);
 		expect(summary).toMatchObject<Partial<StorygraphImportSummary>>({
 			dryRun: false,
-			rowsRead: 8,
-			booksCreated: 8,
+			rowsRead: 11,
+			booksCreated: 11,
 			booksSkipped: 0,
 			booksFailed: 0,
-			authorsCreated: 7,
-			readsByStatus: { finished: 4, reading: 1, paused: 1, dnf: 1 }
+			booksKeyedByTitle: 1,
+			authorsCreated: 9,
+			readsByStatus: { finished: 8, reading: 1, paused: 1, dnf: 1 }
 		});
-		// Row-level warnings: the three UIDs that are not valid ISBNs (rows
-		// 2, 4, 5) and the one reversed range (row 7) -- see the fixture's
-		// own build script / the unit tests for why each one fires.
-		expect(summary.warnings).toHaveLength(4);
-		for (const w of summary.warnings) {
-			expect(Object.keys(w).sort()).toEqual(['field', 'message', 'row']);
-		}
+		// Two warnings: the reversed range (row 7) and the empty Read Status
+		// (row 10). A UID that is not an ISBN (rows 2, 4, 5 and 10) is
+		// expected, an ASIN or StoryGraph's own id, and earns none.
+		expect(summary.warnings).toEqual([
+			{ row: 7, field: 'Dates Read', message: 'a range ends before it starts and was skipped' },
+			{ row: 10, field: 'Read Status', message: 'empty; imported as tbr' }
+		]);
+		expect(summary.warningCounts).toEqual({
+			'Dates Read: a range ends before it starts and was skipped': 1,
+			'Read Status: empty; imported as tbr': 1
+		});
 	});
 
 	it('creates the books and reads exactly as the fixture implies', async () => {
@@ -177,12 +204,64 @@ describe('importing the fixture for the operator', () => {
 		});
 		expect(Number(reread[1]?.rating)).toBe(5);
 
-		// The reversed range: the book exists and keeps its own rating, but
-		// no read was built from the one range it had.
+		// The reversed range is skipped, but a read book still gets its one
+		// read: undated, since StoryGraph kept no Last Date Read for it.
 		const reversed = await booksByStorygraphId('9780000000003');
 		expect(reversed.title).toBe('The Reversed Timeline');
 		expect(Number(reversed.rating)).toBe(3);
-		expect(await readsFor('9780000000003')).toEqual([]);
+		expect(await readsFor('9780000000003')).toEqual([
+			{
+				status: 'finished',
+				started_on: null,
+				finished_on: null,
+				rating: '3.00',
+				review: 'Weird read.',
+				reader_user_id: operatorId
+			}
+		]);
+
+		// A year-only read with no ISBN/UID: keyed by title and author, and
+		// stored as the year's first day, to the year.
+		const yearKey = titleKey('The Year Only Book', ['Eighth Author']);
+		expect(await booksByStorygraphId(yearKey)).toMatchObject({ status: 'read', isbn: null });
+		expect(await datesFor(yearKey)).toEqual([
+			{
+				started_on: null,
+				started_precision: 'day',
+				finished_on: '2018-01-01',
+				finished_precision: 'year',
+				rating: null
+			}
+		]);
+
+		// No Read Status (only marked owned): the table's default, tbr, and an
+		// ASIN kept as the StoryGraph id but not as an ISBN.
+		expect(await booksByStorygraphId('B0FICTION1')).toMatchObject({
+			title: 'Owned Not Shelved',
+			status: 'tbr',
+			owned: true,
+			isbn: null
+		});
+		expect(await readsFor('B0FICTION1')).toEqual([]);
+
+		// A month-only read and a whole-day re-read: each as precise as
+		// StoryGraph kept it, the rating on the later one.
+		expect(await datesFor('9780000000005')).toEqual([
+			{
+				started_on: null,
+				started_precision: 'day',
+				finished_on: '2020-03-01',
+				finished_precision: 'month',
+				rating: null
+			},
+			{
+				started_on: '2022-08-01',
+				started_precision: 'day',
+				finished_on: '2022-08-15',
+				finished_precision: 'day',
+				rating: '4.00'
+			}
+		]);
 
 		// to-read: no read at all, status tbr.
 		const tbr = await booksByStorygraphId('SG-UID-0004');
@@ -215,8 +294,8 @@ describe('importing the fixture for the operator', () => {
 			}
 		]);
 
-		// "Fictional Author" is reused across rows 1, 2, 6 and 8 rather than
-		// recreated -- one row in authors, linked to all four books.
+		// "Fictional Author" is reused across rows 1, 2, 6, 8 and 10 rather
+		// than recreated -- one row in authors, linked to all five books.
 		const author = one(
 			await sql<{ id: string; count: number }[]>`
 				select a.id, count(*)::int as count from authors a
@@ -226,17 +305,17 @@ describe('importing the fixture for the operator', () => {
 			`,
 			'the reused author'
 		);
-		expect(author.count).toBe(4);
+		expect(author.count).toBe(5);
 
 		const authorCount = await sql<{ count: number }[]>`
 			select count(*)::int as count from authors where household_id = ${householdId}::uuid
 		`;
-		expect(authorCount[0]?.count).toBe(7);
+		expect(authorCount[0]?.count).toBe(9);
 	});
 
 	it('writes nothing on a dry run, even though the report describes a real import', async () => {
 		const summary = await run(true);
-		expect(summary).toMatchObject({ dryRun: true, booksCreated: 8, authorsCreated: 7 });
+		expect(summary).toMatchObject({ dryRun: true, booksCreated: 11, authorsCreated: 9 });
 
 		const counts = await sql<{ books: number; authors: number; reads: number }[]>`
 			select
@@ -257,7 +336,7 @@ describe('importing the fixture for the operator', () => {
 		const second = await run(false);
 		expect(second).toMatchObject({
 			booksCreated: 0,
-			booksSkipped: 8,
+			booksSkipped: 11,
 			booksFailed: 0,
 			authorsCreated: 0,
 			readsByStatus: { finished: 0, reading: 0, paused: 0, dnf: 0 }
@@ -267,7 +346,7 @@ describe('importing the fixture for the operator', () => {
 			select count(*)::int as count from books where household_id = ${householdId}::uuid
 		`;
 		expect(after[0]?.count).toBe(before[0]?.count);
-		expect(after[0]?.count).toBe(8);
+		expect(after[0]?.count).toBe(11);
 	});
 
 	it('leaves a book the household edited since the first run untouched by the second', async () => {
@@ -318,10 +397,10 @@ describe('a row that fails at the database', () => {
 			'Star Rating',
 			'Tags'
 		];
-		const goodRow = (title: string, uid: string) =>
+		const goodRow = (title: string, uid: string, author = 'Fictional Author') =>
 			[
 				title,
-				'Fictional Author',
+				author,
 				'2024/01/01',
 				'',
 				'digital',
@@ -345,7 +424,7 @@ describe('a row that fails at the database', () => {
 		const text =
 			`${header.join(',')}\n` +
 			`${goodRow('Before the Bad Row', 'FAIL-UID-1')}\n` +
-			`${goodRow(overlongTitle, 'FAIL-UID-2')}\n` +
+			`${goodRow(overlongTitle, 'FAIL-UID-2', 'Doomed Author')}\n` +
 			`${goodRow('After the Bad Row', 'FAIL-UID-3')}\n`;
 
 		const summary = await importStorygraph(sql, text, {
@@ -353,13 +432,72 @@ describe('a row that fails at the database', () => {
 			userId: operatorId,
 			dryRun: false
 		});
-		expect(summary).toMatchObject({ rowsRead: 3, booksCreated: 2, booksFailed: 1 });
-		expect(summary.warnings).toContainEqual({ row: 2, field: 'row', message: expect.any(String) });
+		// The bad row created its author before its book failed; the savepoint
+		// rolled both back, so the count must not include it.
+		expect(summary).toMatchObject({
+			rowsRead: 3,
+			booksCreated: 2,
+			booksFailed: 1,
+			authorsCreated: 1
+		});
+		// Error code and constraint only: PostgreSQL's own message can quote a
+		// cell's value, and the report never carries cell content.
+		expect(summary.warnings).toEqual([
+			{ row: 2, field: 'row', message: 'could not be imported (23514 books_title_check)' }
+		]);
+		const doomed = await sql`
+			select 1 from authors where household_id = ${householdId}::uuid and name = 'Doomed Author'
+		`;
+		expect(doomed).toHaveLength(0);
 
 		const titles = await sql<{ title: string }[]>`
 			select title from books where household_id = ${householdId}::uuid order by title
 		`;
 		expect(titles.map((t) => t.title)).toEqual(['After the Bad Row', 'Before the Bad Row']);
+	});
+});
+
+/** Resolves once some session in this database is waiting on a lock: here,
+ *  the import's author insert waiting on another transaction's uncommitted
+ *  author with the same name. */
+async function waitForLockWait() {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		const [row] = await sql<{ waiting: number }[]>`
+			select count(*)::int as waiting from pg_stat_activity
+			where datname = current_database() and wait_event_type = 'Lock'
+		`;
+		if (row && row.waiting > 0) return;
+		await new Promise((done) => setTimeout(done, 50));
+	}
+	throw new Error('the import never waited on the uncommitted author');
+}
+
+describe('an author someone adds in the app while the import runs', () => {
+	it('is found after the import’s own insert collides with it, not failed', async () => {
+		const text =
+			'Title,Authors,Read Status,ISBN/UID\n' + 'The Racing Book,Racing Author,to-read,RACE-UID-1\n';
+		let importing: Promise<StorygraphImportSummary> | undefined;
+		await sql.begin(async (app) => {
+			await app`
+				insert into authors (household_id, name, created_by, updated_by)
+				values (${householdId}::uuid, 'Racing Author', ${operatorId}::uuid, ${operatorId}::uuid)
+			`;
+			importing = importStorygraph(sql, text, { householdId, userId: operatorId, dryRun: false });
+			// Commit only once the import is waiting on this uncommitted author:
+			// its find has missed it by then, so its insert is what collides,
+			// and only a savepoint around that insert leaves the retry a
+			// transaction to run in.
+			await waitForLockWait();
+		});
+		const summary = await importing!;
+		expect(summary).toMatchObject({ booksCreated: 1, booksFailed: 0, authorsCreated: 0 });
+
+		const linked = await sql<{ count: number }[]>`
+			select count(*)::int as count from authors a
+			join book_authors ba on ba.author_id = a.id
+			where a.household_id = ${householdId}::uuid and a.name = 'Racing Author'
+		`;
+		expect(linked[0]?.count).toBe(1);
 	});
 });
 
@@ -381,13 +519,13 @@ describe('through a client configured the way the app’s is', () => {
 				userId: operatorId,
 				dryRun: false
 			});
-			expect(summary.booksCreated).toBe(8);
+			expect(summary.booksCreated).toBe(11);
 			expect(summary.booksFailed).toBe(0);
 
 			const count = await appLike<{ count: number }[]>`
 				select count(*)::int as count from books where household_id = ${householdId}::uuid
 			`;
-			expect(count[0]?.count).toBe(8);
+			expect(count[0]?.count).toBe(11);
 		} finally {
 			await appLike.end({ timeout: 5 });
 		}
