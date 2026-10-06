@@ -2,6 +2,12 @@ import type { Fragment } from 'postgres';
 import type { Viewer } from '../auth/authz';
 import { toDateOrNull } from '../db/coerce';
 import {
+	TASK_CATEGORIES,
+	WORKDAY_THEMES,
+	type TaskCategory,
+	type WorkdayTheme
+} from '$lib/daily-planning';
+import {
 	InvalidInput,
 	archivedAssignment,
 	baseColumns,
@@ -84,6 +90,11 @@ export interface TaskRecord extends RecordBase {
 	isUrgent: boolean;
 	energy: TaskEnergy | null;
 	context: string | null;
+	/** The themed workday this task belongs to (migration 0038). */
+	theme: WorkdayTheme | null;
+	/** The kind of list this task sits on (migration 0038) — a different
+	 *  axis from theme, and from isImportant/isUrgent, untouched by it. */
+	category: TaskCategory | null;
 	recurrenceRule: string | null;
 	recurrenceEvery: number | null;
 	nextDueOn: string | null;
@@ -107,6 +118,8 @@ interface TaskRow extends BaseRow {
 	is_urgent: unknown;
 	energy: string | null;
 	context: string | null;
+	theme: string | null;
+	category: string | null;
 	recurrence_rule: string | null;
 	recurrence_every: unknown;
 	next_due_on: string | null;
@@ -122,7 +135,7 @@ const columns = (sql: Queryable): Fragment => sql`
 	${baseColumns(sql)},
 	title, notes, kind, status, project_id, area_id, parent_task_id,
 	do_on::text as do_on, deadline_on::text as deadline_on, completed_at,
-	is_important, is_urgent, energy, context,
+	is_important, is_urgent, energy, context, theme, category,
 	recurrence_rule, recurrence_every,
 	next_due_on::text as next_due_on, last_completed_on::text as last_completed_on,
 	is_template, sort_order`;
@@ -144,6 +157,8 @@ function mapTask(row: TaskRow): TaskRecord {
 		isUrgent: toBool(row.is_urgent),
 		energy: row.energy as TaskEnergy | null,
 		context: toTextOrNull(row.context),
+		theme: row.theme as WorkdayTheme | null,
+		category: row.category as TaskCategory | null,
 		recurrenceRule: toTextOrNull(row.recurrence_rule),
 		recurrenceEvery: toIntOrNull(row.recurrence_every),
 		nextDueOn: toDayOrNull(row.next_due_on),
@@ -166,6 +181,10 @@ export interface TaskFilters extends PageOptions {
 	ownerUserId?: string | null;
 	isImportant?: boolean;
 	isUrgent?: boolean;
+	/** The themed workday to filter the list to (migration 0038). */
+	theme?: WorkdayTheme;
+	/** The kind of list to filter the list to (migration 0038). */
+	category?: TaskCategory;
 	tagId?: string;
 	search?: string;
 	dueFrom?: string;
@@ -232,6 +251,8 @@ function taskConditions(sql: Queryable, viewer: Viewer, filters: TaskFilters): F
 		parts.push(sql`is_important = ${filters.isImportant}::boolean`);
 	}
 	if (filters.isUrgent !== undefined) parts.push(sql`is_urgent = ${filters.isUrgent}::boolean`);
+	if (filters.theme) parts.push(sql`theme = ${filters.theme}`);
+	if (filters.category) parts.push(sql`category = ${filters.category}`);
 
 	if (filters.tagId) {
 		parts.push(sql`exists (
@@ -483,6 +504,8 @@ export interface TaskInput extends OwnershipInput {
 	isUrgent?: unknown;
 	energy?: unknown;
 	context?: unknown;
+	theme?: unknown;
+	category?: unknown;
 	recurrenceRule?: unknown;
 	recurrenceEvery?: unknown;
 	nextDueOn?: unknown;
@@ -564,7 +587,8 @@ export function createTask(
 			insert into tasks (
 				household_id, owner_user_id, visibility, title, notes, kind, status,
 				project_id, area_id, parent_task_id, do_on, deadline_on, completed_at,
-				is_important, is_urgent, energy, context, recurrence_rule, recurrence_every,
+				is_important, is_urgent, energy, context, theme, category,
+				recurrence_rule, recurrence_every,
 				next_due_on, last_completed_on, is_template, sort_order, created_by, updated_by
 			) values (
 				${viewer.householdId}::uuid, ${ownerUserId}::uuid, ${visibility},
@@ -577,6 +601,8 @@ export function createTask(
 				${optionalBool(input.isUrgent, 'urgent') ?? false}::boolean,
 				${optionalOneOf(input.energy, 'energy', TASK_ENERGY)},
 				${optionalText(input.context, 'context', 200)},
+				${optionalOneOf(input.theme, 'theme', WORKDAY_THEMES)},
+				${optionalOneOf(input.category, 'category', TASK_CATEGORIES)},
 				${optionalText(input.recurrenceRule, 'recurrence rule', 500)},
 				${optionalInt(input.recurrenceEvery, 'repeat every', { min: 1 })}::int,
 				${optionalDay(input.nextDueOn, 'next due')}::date,
@@ -644,6 +670,10 @@ export function updateTask(
 				optionalOneOf(v, 'energy', TASK_ENERGY)
 			),
 			context: patched(patch, 'context', current.context, (v) => optionalText(v, 'context', 200)),
+			theme: patched(patch, 'theme', current.theme, (v) => optionalOneOf(v, 'theme', WORKDAY_THEMES)),
+			category: patched(patch, 'category', current.category, (v) =>
+				optionalOneOf(v, 'category', TASK_CATEGORIES)
+			),
 			recurrenceRule: patched(patch, 'recurrenceRule', current.recurrenceRule, (v) =>
 				optionalText(v, 'recurrence rule', 500)
 			),
@@ -711,6 +741,8 @@ export function updateTask(
 				is_urgent = ${next.isUrgent}::boolean,
 				energy = ${next.energy},
 				context = ${next.context},
+				theme = ${next.theme},
+				category = ${next.category},
 				recurrence_rule = ${next.recurrenceRule},
 				recurrence_every = ${next.recurrenceEvery}::int,
 				next_due_on = ${next.nextDueOn}::date,
