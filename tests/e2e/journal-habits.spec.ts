@@ -152,7 +152,7 @@ test.describe('the journal', () => {
 			Mood: 'Level',
 			Highlight: 'Sat in the sun',
 			'Grateful for': 'A slow morning',
-			Notes: 'Nothing much happened and that was the good part.'
+			'Today, as it happened': 'Nothing much happened and that was the good part.'
 		});
 		await editorForm(page).getByRole('radio', { name: '4' }).check();
 		await writeEntry(page, {});
@@ -161,7 +161,7 @@ test.describe('the journal', () => {
 		await page.reload();
 		const form = editorForm(page);
 		await expect(form.getByLabel('Highlight')).toHaveValue('Sat in the sun');
-		await expect(form.getByLabel('Notes')).toHaveValue(
+		await expect(form.getByLabel('Today, as it happened')).toHaveValue(
 			'Nothing much happened and that was the good part.'
 		);
 		await expect(form.getByRole('radio', { name: '4' })).toBeChecked();
@@ -195,7 +195,7 @@ test.describe('the journal', () => {
 		await page.goto(`/journal/${LATER}`);
 		await writeEntry(page, {
 			Highlight: 'Something private',
-			Notes: 'Written by the owner and nobody else.'
+			'Today, as it happened': 'Written by the owner and nobody else.'
 		});
 
 		// The row really is private, not merely unrendered.
@@ -217,7 +217,7 @@ test.describe('the journal', () => {
 		// editor, because the entry belongs to somebody else.
 		const form = editorForm(page);
 		await expect(form.getByLabel('Highlight')).toHaveValue('');
-		await expect(form.getByLabel('Notes')).toHaveValue('');
+		await expect(form.getByLabel('Today, as it happened')).toHaveValue('');
 		await expect(page.getByText('Something private')).toHaveCount(0);
 		await expect(page.getByText('Written by the owner and nobody else.')).toHaveCount(0);
 		// Not in the history list, and no version to edit it with either.

@@ -18,6 +18,7 @@ import {
 } from '$lib/server/repositories';
 import { sql } from '$lib/server/db';
 import { requireViewer } from '$lib/server/viewer';
+import type { WorkdayTheme } from '$lib/daily-planning';
 import {
 	JOURNAL_TAG_KINDS,
 	isJournalTagKind,
@@ -54,11 +55,31 @@ export interface JournalEntry {
 	/** ISO, not a Date. A Date rendered into a hidden input loses its
 	    milliseconds, and the version precondition then never matches. */
 	updatedAt: string;
+	/** "Today, as it happened" — the page-body section; same column, new label. */
 	note: string;
 	energyLevel: number | null;
 	mood: string;
 	gratitude: string;
 	highlight: string;
+	// Check-in (migration 0038).
+	intention: string;
+	/** Comma-separated for the form field; cleaned on save the way the
+	 *  reading form's own tag fields already are. */
+	patternTags: string;
+	theme: WorkdayTheme | '';
+	activation: number | null;
+	effectiveness: number | null;
+	headSpace: string;
+	// Daily life.
+	water: number | null;
+	caffeine: number | null;
+	carbonation: number | null;
+	// Reflection.
+	wins: string;
+	challenges: string;
+	// The journal page-body's other two sections.
+	worthKeeping: string;
+	anythingElse: string;
 }
 
 export interface JournalHistoryItem {
@@ -156,7 +177,20 @@ export async function loadJournal(
 					energyLevel: entry.energyLevel,
 					mood: entry.mood ?? '',
 					gratitude: entry.gratitude ?? '',
-					highlight: entry.highlight ?? ''
+					highlight: entry.highlight ?? '',
+					intention: entry.intention ?? '',
+					patternTags: entry.patternTags.join(', '),
+					theme: entry.theme ?? '',
+					activation: entry.activation,
+					effectiveness: entry.effectiveness,
+					headSpace: entry.headSpace ?? '',
+					water: entry.water,
+					caffeine: entry.caffeine,
+					carbonation: entry.carbonation,
+					wins: entry.wins ?? '',
+					challenges: entry.challenges ?? '',
+					worthKeeping: entry.worthKeeping ?? '',
+					anythingElse: entry.anythingElse ?? ''
 				}
 			: null,
 		tags,
@@ -192,7 +226,20 @@ export async function saveJournal(locals: App.Locals, request: Request) {
 		energyLevel: form.get('energyLevel'),
 		mood: form.get('mood'),
 		gratitude: form.get('gratitude'),
-		highlight: form.get('highlight')
+		highlight: form.get('highlight'),
+		intention: form.get('intention'),
+		patternTags: form.get('patternTags'),
+		theme: form.get('theme'),
+		activation: form.get('activation'),
+		effectiveness: form.get('effectiveness'),
+		headSpace: form.get('headSpace'),
+		water: form.get('water'),
+		caffeine: form.get('caffeine'),
+		carbonation: form.get('carbonation'),
+		wins: form.get('wins'),
+		challenges: form.get('challenges'),
+		worthKeeping: form.get('worthKeeping'),
+		anythingElse: form.get('anythingElse')
 	};
 
 	const existing = await getDailyLogForDate(sql, viewer, date);
