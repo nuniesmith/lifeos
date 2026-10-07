@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { canRead, canWrite, type OwnedRecord, type Viewer } from '$lib/server/auth/authz';
 import { one } from '$lib/server/db/scalar';
@@ -1146,5 +1147,161 @@ describe('composing inside a transaction', () => {
 				await updateTask(tx, jordan, theirs.id, { title: 'x' }, theirs.updatedAt)
 			).toMatchObject({ ok: false, reason: 'not_found' });
 		});
+	});
+});
+
+describe('task theme and category (migration 0038)', () => {
+	it('saves both, filters by either, and leaves them independent of each other', async () => {
+		const rent = ok(
+			await createTask(sql, jordan, {
+				title: 'Pay rent',
+				theme: 'money_admin',
+				category: 'hard_deadline'
+			})
+		);
+		const plants = ok(
+			await createTask(sql, jordan, { title: 'Water the plants', theme: 'home_environment' })
+		);
+		ok(await createTask(sql, jordan, { title: 'Untouched task' }));
+
+		expect(rent).toMatchObject({ theme: 'money_admin', category: 'hard_deadline' });
+		expect(plants).toMatchObject({ theme: 'home_environment', category: null });
+
+		expect((await listTasks(sql, jordan, { theme: 'money_admin' })).map((t) => t.title)).toEqual([
+			'Pay rent'
+		]);
+		expect(
+			(await listTasks(sql, jordan, { category: 'hard_deadline' })).map((t) => t.title)
+		).toEqual(['Pay rent']);
+		expect(
+			(await listTasks(sql, jordan, { theme: 'home_environment' })).map((t) => t.title)
+		).toEqual(['Water the plants']);
+
+		// Changing one leaves the other exactly as it was.
+		const recategorised = ok(
+			await updateTask(sql, jordan, rent.id, { category: 'parking_lot' }, rent.updatedAt)
+		);
+		expect(recategorised).toMatchObject({ theme: 'money_admin', category: 'parking_lot' });
+	});
+
+	it('refuses a theme or category outside the known set', async () => {
+		expect(
+			await createTask(sql, jordan, { title: 'Bad theme', theme: 'not-a-theme' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(
+			await createTask(sql, jordan, { title: 'Bad category', category: 'not-a-category' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+});
+
+describe('daily log check-in, daily life and reflection (migration 0038)', () => {
+	it('round-trips every new field', async () => {
+		const created = ok(
+			await createDailyLog(sql, jordan, {
+				onDate: '2026-10-05',
+				intention: 'Get the taxes filed',
+				patternTags: ['Low energy', 'Rainy day', 'low energy'],
+				theme: 'money_admin',
+				activation: 2,
+				effectiveness: 4,
+				headSpace: 'Foggy but willing',
+				water: 6,
+				caffeine: 2,
+				carbonation: 1,
+				wins: 'Filed one form',
+				challenges: 'Kept putting it off',
+				worthKeeping: 'Did it anyway',
+				anythingElse: 'Tomorrow: the rest'
+			})
+		);
+		expect(created).toMatchObject({
+			intention: 'Get the taxes filed',
+			// Deduped case-insensitively, keeping the first spelling -- the
+			// same rule reading.ts's own moods/tags already follow.
+			patternTags: ['Low energy', 'Rainy day'],
+			theme: 'money_admin',
+			activation: 2,
+			effectiveness: 4,
+			headSpace: 'Foggy but willing',
+			water: 6,
+			caffeine: 2,
+			carbonation: 1,
+			wins: 'Filed one form',
+			challenges: 'Kept putting it off',
+			worthKeeping: 'Did it anyway',
+			anythingElse: 'Tomorrow: the rest'
+		});
+
+		const edited = ok(
+			await updateDailyLog(sql, jordan, created.id, { water: 8, theme: 'reset' }, created.updatedAt)
+		);
+		// Editing one field leaves the rest exactly as they were.
+		expect(edited).toMatchObject({
+			water: 8,
+			theme: 'reset',
+			intention: 'Get the taxes filed',
+			patternTags: ['Low energy', 'Rainy day']
+		});
+	});
+
+	it('refuses activation, effectiveness, water, caffeine and carbonation out of range', async () => {
+		const bad = (field: string, value: unknown) =>
+			createDailyLog(sql, jordan, { onDate: '2026-10-06', [field]: value });
+		expect(await bad('activation', 0)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('activation', 6)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('effectiveness', 0)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('effectiveness', 6)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('water', 51)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('water', -1)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('caffeine', 51)).toMatchObject({ ok: false, reason: 'invalid' });
+		expect(await bad('carbonation', 51)).toMatchObject({ ok: false, reason: 'invalid' });
+		// None of the refusals above left a row behind to collide with this one.
+		expect(await createDailyLog(sql, jordan, { onDate: '2026-10-06', water: 10 })).toMatchObject({
+			ok: true
+		});
+	});
+
+	it('refuses a theme outside the known set', async () => {
+		expect(
+			await createDailyLog(sql, jordan, { onDate: '2026-10-07', theme: 'not-a-theme' })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+});
+
+describe('through a client configured the way the app’s is', () => {
+	it('writes the new task and daily-log fields without sending a bare JS Date', async () => {
+		// `$lib/server/db` also hands its client to drizzle(), which replaces
+		// the driver's timestamp serializers with pass-throughs, so a JS Date
+		// sent as a parameter reaches the wire unconverted and throws. Neither
+		// write path below ever builds one; this is what proves it, the same
+		// way health-measurements.test.ts proves it for its own two.
+		const appLike = postgres(process.env.DATABASE_URL!, { max: 1, onnotice: () => {} });
+		drizzle(appLike);
+		try {
+			const log = ok(
+				await createDailyLog(appLike, jordan, {
+					onDate: '2026-10-08',
+					intention: 'Through a drizzle-wrapped client',
+					activation: 3
+				})
+			);
+			const editedLog = ok(
+				await updateDailyLog(appLike, jordan, log.id, { water: 4 }, log.updatedAt)
+			);
+			expect(editedLog).toMatchObject({ water: 4, activation: 3 });
+
+			const task = ok(
+				await createTask(appLike, jordan, {
+					title: 'Through a drizzle-wrapped client',
+					theme: 'reset'
+				})
+			);
+			const editedTask = ok(
+				await updateTask(appLike, jordan, task.id, { category: 'parking_lot' }, task.updatedAt)
+			);
+			expect(editedTask).toMatchObject({ theme: 'reset', category: 'parking_lot' });
+		} finally {
+			await appLike.end({ timeout: 5 });
+		}
 	});
 });
