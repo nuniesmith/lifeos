@@ -154,7 +154,14 @@ test.describe('the journal', () => {
 			'Grateful for': 'A slow morning',
 			'Today, as it happened': 'Nothing much happened and that was the good part.'
 		});
-		await editorForm(page).getByRole('radio', { name: '4' }).check();
+		// Scoped to the Energy fieldset: migration 0038 added two more 1-5
+		// scales (Activation, Effectiveness) to the same form, each also
+		// offering a radio named "4" -- a page-wide lookup is now ambiguous.
+		await editorForm(page)
+			.locator('fieldset')
+			.filter({ hasText: 'Energy' })
+			.getByRole('radio', { name: '4' })
+			.check();
 		await writeEntry(page, {});
 
 		// A fresh request, not the state the form was left in.
@@ -164,7 +171,9 @@ test.describe('the journal', () => {
 		await expect(form.getByLabel('Today, as it happened')).toHaveValue(
 			'Nothing much happened and that was the good part.'
 		);
-		await expect(form.getByRole('radio', { name: '4' })).toBeChecked();
+		await expect(
+			form.locator('fieldset').filter({ hasText: 'Energy' }).getByRole('radio', { name: '4' })
+		).toBeChecked();
 	});
 
 	test('a second save edits the day rather than failing on it', async ({ page }) => {
