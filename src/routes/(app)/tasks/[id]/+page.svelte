@@ -14,6 +14,12 @@
 		Textarea,
 		appPath
 	} from '$lib/components';
+	import {
+		TASK_CATEGORY_LABELS as CATEGORY_LABELS,
+		TASK_CATEGORY_OPTIONS,
+		WORKDAY_THEME_LABELS as THEME_LABELS,
+		WORKDAY_THEME_OPTIONS
+	} from '$lib/daily-planning';
 
 	let { data, form } = $props();
 
@@ -45,6 +51,8 @@
 		{#if archived}<Badge tone="neutral">Archived</Badge>{/if}
 		{#if data.task.isImportant}<Badge tone="warn">Important</Badge>{/if}
 		{#if data.task.isUrgent}<Badge tone="crit">Urgent</Badge>{/if}
+		{#if data.task.theme}<Badge tone="accent">{THEME_LABELS[data.task.theme]}</Badge>{/if}
+		{#if data.task.category}<Badge tone="neutral">{CATEGORY_LABELS[data.task.category]}</Badge>{/if}
 	{/snippet}
 	{#snippet actions()}
 		<Button size="sm" variant="ghost" href="/tasks">Back to tasks</Button>
@@ -65,7 +73,17 @@
 {/if}
 
 <Card title="Details">
-	<form method="POST" action="?/save" class="edit" use:enhance>
+	<form
+		method="POST"
+		action="?/save"
+		class="edit"
+		use:enhance={() =>
+			async ({ update }) =>
+				// Not reset: the fields should show what was saved, and this form
+				// carries several <Select>s -- a native reset() would otherwise put
+				// them back on whichever option the page was first served with.
+				update({ reset: false })}
+	>
 		<!-- Carries the version the form was rendered from, so a save from a
 		     stale tab is refused rather than silently overwriting.
 		     `.toISOString()` is required: interpolating the Date directly uses
@@ -85,7 +103,13 @@
 				value={data.task.energy ?? ''}
 				placeholder="Any"
 			/>
-			<Input label="Do on" name="doOn" type="date" value={data.task.doOn ?? ''} />
+			<Input
+				label="Planning day"
+				name="doOn"
+				type="date"
+				value={data.task.doOn ?? ''}
+				hint="The day you intend to do this, set during weekly planning."
+			/>
 			<Input label="Deadline" name="deadlineOn" type="date" value={data.task.deadlineOn ?? ''} />
 			<Select
 				label="Project"
@@ -100,6 +124,22 @@
 				options={areaOptions}
 				value={data.task.areaId ?? ''}
 				placeholder="No area"
+			/>
+			<Select
+				label="Theme"
+				name="theme"
+				options={WORKDAY_THEME_OPTIONS}
+				value={data.task.theme ?? ''}
+				placeholder="No theme"
+				hint="The themed workday this belongs to."
+			/>
+			<Select
+				label="List"
+				name="category"
+				options={TASK_CATEGORY_OPTIONS}
+				value={data.task.category ?? ''}
+				placeholder="No list"
+				hint="The kind of list this sits on."
 			/>
 			<Input label="Context" name="context" value={data.task.context ?? ''} />
 		</div>

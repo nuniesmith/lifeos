@@ -10,8 +10,10 @@
 		List,
 		ListRow,
 		PageHeader,
+		Select,
 		appPath
 	} from '$lib/components';
+	import { TASK_CATEGORY_OPTIONS, WORKDAY_THEME_OPTIONS } from '$lib/daily-planning';
 
 	let { data, form } = $props();
 
@@ -63,6 +65,26 @@
 		</a>
 	{/each}
 </nav>
+
+<form method="GET" class="theme-filters">
+	<input type="hidden" name="view" value={data.view} />
+	{#if data.search}<input type="hidden" name="q" value={data.search} />{/if}
+	<Select
+		label="Theme"
+		name="theme"
+		options={WORKDAY_THEME_OPTIONS}
+		value={data.theme}
+		placeholder="Any theme"
+	/>
+	<Select
+		label="List"
+		name="category"
+		options={TASK_CATEGORY_OPTIONS}
+		value={data.category}
+		placeholder="Any list"
+	/>
+	<Button type="submit" size="sm">Filter</Button>
+</form>
 
 <Card>
 	<form method="POST" action="?/create" class="add" use:enhance>
@@ -145,6 +167,16 @@
 	}
 	.add :global(label) {
 		flex: 1;
+	}
+	.theme-filters {
+		display: flex;
+		gap: var(--sp-3);
+		align-items: flex-end;
+		margin-bottom: var(--sp-4);
+	}
+	.theme-filters :global(.field) {
+		flex: 1;
+		min-width: 0;
 	}
 	/* The whole row is a link; the tick has to sit above it and stay a
 	   44px target without making every row that tall. */

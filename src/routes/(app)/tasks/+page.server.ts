@@ -10,6 +10,7 @@ import {
 import { sql } from '$lib/server/db';
 import { requireViewer } from '$lib/server/viewer';
 import { householdToday } from '$lib/server/repositories/base';
+import { isTaskCategory, isWorkdayTheme } from '$lib/daily-planning';
 import type { Actions, PageServerLoad } from './$types';
 
 /** The list's named views. `all` still excludes archived and templates. */
@@ -54,14 +55,32 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		? (url.searchParams.get('view') as View)
 		: 'open';
 	const search = url.searchParams.get('q')?.trim() || undefined;
+	// Both filters are query params, so a link to a themed or categorised view
+	// can be shared or bookmarked the same way a `?view=` link already can.
+	// An unrecognised value is simply ignored rather than refused — the same
+	// forgiving read `isView` above already gives a bad `view`.
+	const themeParam = url.searchParams.get('theme');
+	const theme = isWorkdayTheme(themeParam) ? themeParam : undefined;
+	const categoryParam = url.searchParams.get('category');
+	const category = isTaskCategory(categoryParam) ? categoryParam : undefined;
 
 	const tasks = await listTasks(sql, viewer, {
 		...filtersFor(view, today),
 		...(search ? { search } : {}),
+		...(theme ? { theme } : {}),
+		...(category ? { category } : {}),
 		limit: 200
 	});
 
-	return { tasks, view, views: VIEWS, search: search ?? '', today };
+	return {
+		tasks,
+		view,
+		views: VIEWS,
+		search: search ?? '',
+		theme: theme ?? '',
+		category: category ?? '',
+		today
+	};
 };
 
 export const actions: Actions = {
