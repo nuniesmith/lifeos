@@ -542,9 +542,16 @@ export function summariseHabit(input: SummariseInput): Omit<HabitSummary, 'habit
 	);
 
 	// Plan the return: the period right before the one containing today —
-	// never the current one, which is still running — had zero check-ins.
+	// never the current one, which is still running — had zero check-ins,
+	// AND there is real history older than that period to have returned to.
+	// Without the second half, a habit younger than its own "most recent
+	// full period" reads as having missed one: it simply did not exist yet,
+	// which is not a return anybody needs prompting to make. Logging a
+	// brand-new habit for the first time today must not open on this nudge.
 	const currentKey = periodKey(today, period, weekStartsOn);
-	const planTheReturn = (counts.get(previousPeriod(currentKey, period)) ?? 0) === 0;
+	const previousKey = previousPeriod(currentKey, period);
+	const hasOlderHistory = input.completedDays.some((day) => day < previousKey);
+	const planTheReturn = hasOlderHistory && (counts.get(previousKey) ?? 0) === 0;
 
 	return {
 		period,

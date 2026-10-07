@@ -281,7 +281,15 @@ describe('last logged, and the plan-the-return nudge', () => {
 	it('reports nothing to return to when there is no history at all', () => {
 		const s = daily([], '2026-09-04');
 		expect(s.lastLoggedOn).toBeNull();
-		expect(s.planTheReturn).toBe(true);
+		expect(s.planTheReturn).toBe(false);
 		expect(s.completionRate).toBe(0);
+	});
+
+	it('does not open a brand-new habit on the nudge the moment it is logged', () => {
+		// Logged for the very first time today: there is no OLDER history for
+		// yesterday's empty period to be a lapse FROM.
+		const s = daily(['2026-09-04'], '2026-09-04');
+		expect(s.lastLoggedOn).toBe('2026-09-04');
+		expect(s.planTheReturn).toBe(false);
 	});
 });
