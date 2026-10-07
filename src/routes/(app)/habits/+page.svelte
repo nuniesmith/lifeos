@@ -42,15 +42,31 @@
 		return `${habit.periodCompleted} of ${habit.targetCount} ${WHEN[habit.targetPeriod] ?? ''}`.trim();
 	}
 
-	const streakLabel = (habit: Row) =>
-		`${habit.streak} ${habit.targetPeriod}${habit.streak === 1 ? '' : 's'}`;
+	/**
+	 * "Last logged 3 Oct" — or "today"/"yesterday" the way the journal's own
+	 * relative labels read. There is nothing to show a date for when the habit
+	 * is prompting a return instead (see the trail snippet below): that case
+	 * never reaches here.
+	 */
+	function lastLoggedLabel(day: string | null, today: string): string {
+		if (!day) return '';
+		if (day === today) return 'Last logged today';
+		const delta = Math.round(
+			(Date.parse(`${day}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000
+		);
+		if (delta === -1) return 'Last logged yesterday';
+		return `Last logged ${new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+	}
 
 	const doneCount = $derived(data.active.filter((habit) => habit.doneToday).length);
 </script>
 
 <svelte:head><title>Habits · LifeOS</title></svelte:head>
 
-<PageHeader title="Habits" description="One tap each. The streak looks after itself.">
+<PageHeader
+	title="Habits"
+	description="Missing once is normal. The important behaviour is returning."
+>
 	{#snippet meta()}
 		{#if data.active.length > 0}
 			<Badge tone={doneCount === data.active.length ? 'ok' : 'neutral'} dot>
@@ -95,8 +111,10 @@
 							</form>
 						{/snippet}
 						{#snippet trail()}
-							{#if habit.streak > 0}
-								<Badge tone={habit.periodMet ? 'ok' : 'accent'}>{streakLabel(habit)}</Badge>
+							{#if habit.planTheReturn}
+								<Badge tone="accent">Plan the return</Badge>
+							{:else}
+								<span class="last-logged">{lastLoggedLabel(habit.lastLoggedOn, data.today)}</span>
 							{/if}
 						{/snippet}
 					</ListRow>
@@ -168,6 +186,11 @@
 	.muted {
 		margin: 0 0 var(--sp-3);
 		color: var(--c-text-muted);
+	}
+	.last-logged {
+		color: var(--c-text-muted);
+		font-size: var(--fs-xs);
+		white-space: nowrap;
 	}
 	/* Two short fields sit side by side even on a phone: "3" and "per week"
 	   are one thought and splitting them over two rows reads as two. */

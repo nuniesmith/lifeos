@@ -135,7 +135,8 @@ export function pickTask(
 ): Promise<WriteResult<TodaysThreePick>> {
 	return guarded<TodaysThreePick>(async () => {
 		if (!isDay(day)) throw new InvalidInput('date must be a calendar date');
-		if (!isSlot(slot)) throw new InvalidInput(`slot must be one of ${TODAYS_THREE_SLOTS.join(', ')}`);
+		if (!isSlot(slot))
+			throw new InvalidInput(`slot must be one of ${TODAYS_THREE_SLOTS.join(', ')}`);
 		if (!isUuid(taskId)) return { ok: false, reason: 'not_found' };
 
 		const rows = await sql<PickRow[]>`

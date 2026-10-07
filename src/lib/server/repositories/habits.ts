@@ -28,14 +28,7 @@ import {
 	type RecordBase,
 	type WriteResult
 } from './base';
-import {
-	nextPeriod,
-	periodKey,
-	periodsBetween,
-	previousPeriod,
-	type Period,
-	type WeekStart
-} from './dates';
+import { periodKey, periodsBetween, previousPeriod, type Period, type WeekStart } from './dates';
 import {
 	optionalBool,
 	optionalId,
@@ -48,13 +41,20 @@ import {
 } from './validate';
 
 /**
- * Habits and their daily logs (MODEL-003).
+ * Habits and their daily logs (MODEL-003; reworked to drop streaks in
+ * migration 0038).
  *
- * A streak is never stored. It is a fact about the logs, and a stored counter
- * is a second copy that goes wrong the first time a log is backfilled or
- * corrected — which is exactly what people do with habit trackers. The
- * arithmetic below is pure and unit-tested; the database only supplies the
- * days.
+ * Kayla deliberately moved the habit system away from streaks: "Missing once
+ * is normal. The important behaviour is returning." So nothing here counts a
+ * current or longest run any more. What replaced it is the same kind of fact
+ * a streak was — never stored, worked out fresh from the logs each time,
+ * because a stored counter is a second copy that goes wrong the first time a
+ * log is backfilled or corrected, which is exactly what people do with habit
+ * trackers. `lastLoggedOn` says when the habit was last logged; `planTheReturn`
+ * says only whether the most recently COMPLETED period — never the one still
+ * running, and never compared against the target — had no check-in at all.
+ * The arithmetic below is pure and unit-tested; the database only supplies
+ * the days.
  */
 
 export const HABIT_PERIODS = ['day', 'week', 'month'] as const;
@@ -475,8 +475,16 @@ export interface HabitSummary {
 	completionRate: number;
 	periodsMet: number;
 	periods: HabitPeriodSummary[];
-	currentStreak: number;
-	longestStreak: number;
+	/** The most recent day logged, at or before `today`; null if never. */
+	lastLoggedOn: string | null;
+	/**
+	 * Whether the period immediately before the one containing `today` — the
+	 * most recent one that has actually finished — had no check-in at all.
+	 * Never the current, still-running period, and never a comparison
+	 * against the target: one check-in out of three is still someone coming
+	 * back, which is the whole point of dropping the streak.
+	 */
+	planTheReturn: boolean;
 }
 
 export interface SummariseInput {
@@ -490,18 +498,20 @@ export interface SummariseInput {
 }
 
 /**
- * Turns a set of completed days into completion and streak numbers.
+ * Turns a set of completed days into completion and return-nudge numbers.
  *
  * Pure, so the rules are testable without a database. Two of them are
  * judgements worth stating:
  *
- *  - **An unfinished current period does not break a streak.** Asking at
- *    breakfast whether today is done and being told the streak is zero is both
- *    wrong and discouraging. The current period only counts once it is met;
- *    until then the streak is measured from the previous one.
- *  - **The streak is counted in periods, not days.** A habit with a target of
- *    three per week is unbroken as long as each week reaches three, whichever
- *    days those were.
+ *  - **An unfinished current period never prompts a return.** Asking at
+ *    breakfast whether today is done and being told to "plan the return" is
+ *    both wrong and discouraging. Only the period immediately before the one
+ *    containing `today` — the most recent one that has actually finished —
+ *    is asked about.
+ *  - **Any log counts, regardless of the target.** A week that fell short of
+ *    its target of three is still a week the household came back to, so
+ *    `planTheReturn` asks only whether the prior period's count is zero, not
+ *    whether it met `target` — that comparison is what `periodsMet` is for.
  */
 export function summariseHabit(input: SummariseInput): Omit<HabitSummary, 'habitId' | 'userId'> {
 	const { period, target, from, to, today } = input;
@@ -521,29 +531,20 @@ export function summariseHabit(input: SummariseInput): Omit<HabitSummary, 'habit
 
 	const completedCount = input.completedDays.filter((day) => day >= from && day <= to).length;
 	const expectedCount = windowKeys.length * target;
-	const met = (key: string) => (counts.get(key) ?? 0) >= target;
 
-	// Current streak: walk back from the period containing today.
+	// The most recently logged day at or before today, from the FULL history
+	// `completedDays` carries — not clipped to [from, to], because a window
+	// of a single day must still be able to say "three days ago" rather than
+	// only ever "" or "today".
+	const lastLoggedOn = input.completedDays.reduce<string | null>(
+		(latest, day) => (day <= today && (latest === null || day > latest) ? day : latest),
+		null
+	);
+
+	// Plan the return: the period right before the one containing today —
+	// never the current one, which is still running — had zero check-ins.
 	const currentKey = periodKey(today, period, weekStartsOn);
-	let cursor = met(currentKey) ? currentKey : previousPeriod(currentKey, period);
-	let currentStreak = 0;
-	for (let guard = 0; guard < 4000 && met(cursor); guard++) {
-		currentStreak++;
-		cursor = previousPeriod(cursor, period);
-	}
-
-	// Longest streak: over every period from the first check-in to today.
-	let longestStreak = 0;
-	const earliest = [...counts.keys()].sort()[0];
-	if (earliest !== undefined) {
-		let run = 0;
-		let key = earliest;
-		for (let guard = 0; guard < 4000 && key <= currentKey; guard++) {
-			run = met(key) ? run + 1 : 0;
-			if (run > longestStreak) longestStreak = run;
-			key = nextPeriod(key, period);
-		}
-	}
+	const planTheReturn = (counts.get(previousPeriod(currentKey, period)) ?? 0) === 0;
 
 	return {
 		period,
@@ -555,8 +556,8 @@ export function summariseHabit(input: SummariseInput): Omit<HabitSummary, 'habit
 		completionRate: expectedCount === 0 ? 0 : Math.min(1, completedCount / expectedCount),
 		periodsMet: periods.filter((p) => p.met).length,
 		periods,
-		currentStreak,
-		longestStreak
+		lastLoggedOn,
+		planTheReturn
 	};
 }
 

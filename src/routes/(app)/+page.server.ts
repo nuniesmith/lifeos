@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import {
 	agenda,
+	clearSlot,
 	countTasks,
 	daysBetween,
 	documentsNeedingAttention,
@@ -12,6 +13,8 @@ import {
 	listProjects,
 	listTasks,
 	logHabit,
+	pickTask,
+	todaysThree,
 	unlogHabit,
 	upcomingImportantDates,
 	updateTask,
@@ -22,6 +25,7 @@ import { sql } from '$lib/server/db';
 import { requireViewer } from '$lib/server/viewer';
 import { calendarWindowForMonth } from '$lib/server/calendar';
 import { getWeather } from '$lib/server/weather';
+import { TODAYS_THREE_DEFINITIONS, isTodaysThreeSlot } from '$lib/daily-planning';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -53,6 +57,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		board,
 		habits,
 		summaries,
+		threePicks,
+		openTasksForThree,
 		recentJournal,
 		upcomingDates,
 		activeProjects,
@@ -73,6 +79,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 			today,
 			filters: { activeOnly: true }
 		}),
+		// Today's Three (migration 0038): whatever the viewer has picked for
+		// today, and the readable open tasks the picker offers for a slot that
+		// is still empty.
+		todaysThree(sql, viewer, today),
+		listTasks(sql, viewer, { status: 'open', order: 'title', limit: 200 }),
 		// Journal previews are always this person's own entries, even when
 		// another household member has chosen to share a journal entry.
 		listDailyLogs(sql, viewer, { ownerUserId: viewer.userId, to: today, limit: 3 }),
@@ -165,9 +176,28 @@ export const load: PageServerLoad = async ({ locals }) => {
 				// Today's check-in state, which is what the tick reflects.
 				doneToday: (summary?.completedCount ?? 0) >= (habit.targetCount || 1),
 				completedToday: summary?.completedCount ?? 0,
-				streak: summary?.currentStreak ?? 0
+				lastLoggedOn: summary?.lastLoggedOn ?? null,
+				planTheReturn: summary?.planTheReturn ?? false
 			};
-		})
+		}),
+		// Today's Three: the three fixed slots, each filled in against whatever
+		// the viewer has actually picked. A slot with no pick simply has no
+		// task fields set; the page's empty state (the picker) covers it.
+		todaysThree: TODAYS_THREE_DEFINITIONS.map((definition) => {
+			const pick = threePicks.find((p) => p.slot === definition.slot);
+			const task = pick?.task ?? null;
+			return {
+				slot: definition.slot,
+				label: definition.label,
+				hint: definition.hint,
+				taskId: pick?.taskId ?? null,
+				title: task?.title ?? null,
+				status: task?.status ?? null,
+				archived: task ? task.archivedAt !== null : false,
+				updatedAt: task ? task.updatedAt.toISOString() : null
+			};
+		}),
+		openTasksForThree: openTasksForThree.map((task) => ({ id: task.id, title: task.title }))
 	};
 };
 
@@ -219,6 +249,39 @@ export const actions: Actions = {
 		// a habit that was never ticked is the state the caller asked for, so
 		// that is success, not a failure to report.
 		await unlogHabit(sql, viewer, habitId, day);
+		return { ok: true };
+	},
+
+	/** Picks a task for a Today's Three slot, replacing whatever it held. */
+	pickThree: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const slot = form.get('slot');
+		if (!isTodaysThreeSlot(slot)) return fail(400, { threeError: 'Not a valid slot.' });
+		const taskId = String(form.get('taskId') ?? '');
+
+		const today = await householdToday(sql, viewer.householdId);
+		const result = await pickTask(sql, viewer, today, slot, taskId);
+		if (!result.ok) {
+			return fail(result.reason === 'not_found' ? 404 : 400, {
+				threeError:
+					result.reason === 'not_found'
+						? 'That task could not be found.'
+						: (result.message ?? 'That task is already one of today’s three.')
+			});
+		}
+		return { ok: true };
+	},
+
+	/** Clears a Today's Three slot. Missing is success: it ends up empty either way. */
+	clearThree: async ({ locals, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const slot = form.get('slot');
+		if (!isTodaysThreeSlot(slot)) return fail(400, { threeError: 'Not a valid slot.' });
+
+		const today = await householdToday(sql, viewer.householdId);
+		await clearSlot(sql, viewer, today, slot);
 		return { ok: true };
 	}
 };

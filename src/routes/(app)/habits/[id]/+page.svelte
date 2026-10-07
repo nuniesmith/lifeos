@@ -82,20 +82,10 @@
 	<Card title="Progress">
 		<dl class="stats">
 			<div>
-				<dt>Current streak</dt>
+				<dt>This {data.habit.targetPeriod}</dt>
 				<dd class="numeric">
-					{data.progress.currentStreak}
-					<span class="unit"
-						>{data.habit.targetPeriod}{data.progress.currentStreak === 1 ? '' : 's'}</span
-					>
-				</dd>
-			</div>
-			<div>
-				<dt>Longest</dt>
-				<dd class="numeric">
-					{data.progress.longestStreak}
-					<span class="unit"
-						>{data.habit.targetPeriod}{data.progress.longestStreak === 1 ? '' : 's'}</span
+					{data.progress.current.completed}<span class="unit"
+						>of {data.progress.current.target}</span
 					>
 				</dd>
 			</div>
@@ -104,6 +94,20 @@
 				<dd class="numeric">{rate}<span class="unit">%</span></dd>
 			</div>
 		</dl>
+		<!-- Opportunity-based, not a streak (Kayla's own framing): what shows is
+		     when the habit was last logged, and — only once a whole period has
+		     actually gone by with nothing logged — a gentle nudge, never a
+		     broken-streak number. -->
+		<p class="last-logged">
+			{data.progress.lastLoggedOn
+				? `Last logged ${dayName(data.progress.lastLoggedOn)}`
+				: 'Not logged yet'}
+		</p>
+		{#if data.progress.planTheReturn}
+			<p class="plan-the-return">
+				Plan the return. Missing once is normal. The important behaviour is returning.
+			</p>
+		{/if}
 	</Card>
 
 	<!-- The grid starts on a Monday, so it runs four whole weeks plus however
@@ -235,7 +239,7 @@
 
 	.stats {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(2, 1fr);
 		gap: var(--sp-3);
 		margin: 0;
 	}
@@ -254,6 +258,19 @@
 		font-size: var(--fs-sm);
 		font-weight: 500;
 		color: var(--c-text-muted);
+	}
+	.last-logged {
+		margin: var(--sp-3) 0 0;
+		color: var(--c-text-muted);
+		font-size: var(--fs-sm);
+	}
+	.plan-the-return {
+		margin: var(--sp-2) 0 0;
+		padding: var(--sp-2) var(--sp-3);
+		border-radius: var(--radius-sm);
+		background: var(--c-accent-soft);
+		color: var(--c-accent);
+		font-size: var(--fs-sm);
 	}
 
 	/* A flush card so the grid can use the full width: seven 44px targets plus

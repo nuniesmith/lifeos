@@ -842,7 +842,7 @@ describe('open task counts', () => {
 });
 
 describe('habits', () => {
-	it('counts a streak from the logs, and stops at the first missed day', async () => {
+	it('reports the last day logged, and nudges a return once a day is missed', async () => {
 		const habit = ok(await createHabit(sql, jordan, { name: 'Stretch' }));
 		for (const day of ['2026-09-01', '2026-09-02', '2026-09-03']) {
 			ok(await logHabit(sql, jordan, { habitId: habit.id, onDate: day }));
@@ -854,18 +854,20 @@ describe('habits', () => {
 			today: '2026-09-04'
 		});
 		expect(summary).not.toBeNull();
-		expect(summary!.currentStreak).toBe(3);
+		expect(summary!.lastLoggedOn).toBe('2026-09-03');
+		expect(summary!.planTheReturn).toBe(false);
 		expect(summary!.completedCount).toBe(3);
 		expect(summary!.expectedCount).toBe(7);
 
-		// A missed day ends the run.
+		// A whole day missed — not merely today still being open — is what the
+		// nudge is for.
 		const later = await habitSummary(sql, jordan, habit.id, {
 			from: '2026-09-01',
 			to: '2026-09-07',
 			today: '2026-09-06'
 		});
-		expect(later!.currentStreak).toBe(0);
-		expect(later!.longestStreak).toBe(3);
+		expect(later!.lastLoggedOn).toBe('2026-09-03');
+		expect(later!.planTheReturn).toBe(true);
 	});
 
 	it('is idempotent per day and can be undone', async () => {
@@ -944,7 +946,7 @@ describe('habits', () => {
 			today: '2026-09-01'
 		});
 		expect(all).toHaveLength(1);
-		expect(all[0]).toMatchObject({ habitId: a.id, currentStreak: 1 });
+		expect(all[0]).toMatchObject({ habitId: a.id, lastLoggedOn: '2026-09-01' });
 	});
 });
 

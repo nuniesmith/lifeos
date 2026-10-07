@@ -670,7 +670,9 @@ export function updateTask(
 				optionalOneOf(v, 'energy', TASK_ENERGY)
 			),
 			context: patched(patch, 'context', current.context, (v) => optionalText(v, 'context', 200)),
-			theme: patched(patch, 'theme', current.theme, (v) => optionalOneOf(v, 'theme', WORKDAY_THEMES)),
+			theme: patched(patch, 'theme', current.theme, (v) =>
+				optionalOneOf(v, 'theme', WORKDAY_THEMES)
+			),
 			category: patched(patch, 'category', current.category, (v) =>
 				optionalOneOf(v, 'category', TASK_CATEGORIES)
 			),

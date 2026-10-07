@@ -143,7 +143,7 @@ describe('who may own a new record', () => {
 	});
 });
 
-describe('habit completion and streaks', () => {
+describe('habit period progress', () => {
 	const daily = (completedDays: string[], today: string, target = 1) =>
 		summariseHabit({
 			completedDays,
@@ -153,34 +153,6 @@ describe('habit completion and streaks', () => {
 			to: '2026-09-07',
 			today
 		});
-
-	it('counts consecutive days', () => {
-		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-03');
-		expect(s.currentStreak).toBe(3);
-		expect(s.longestStreak).toBe(3);
-	});
-
-	it('does not break the streak because today is not done yet', () => {
-		// Asked at breakfast, a tracker that answers "zero" is both wrong and
-		// discouraging: the period is not over.
-		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-04');
-		expect(s.currentStreak).toBe(3);
-	});
-
-	it('does break once a whole period has been missed', () => {
-		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-05');
-		expect(s.currentStreak).toBe(0);
-		expect(s.longestStreak).toBe(3);
-	});
-
-	it('reports the longest run even when the current one is shorter', () => {
-		const s = daily(
-			['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-06', '2026-09-07'],
-			'2026-09-07'
-		);
-		expect(s.currentStreak).toBe(2);
-		expect(s.longestStreak).toBe(3);
-	});
 
 	it('measures a weekly target in weeks, not in days', () => {
 		// Three per week: the days chosen do not matter, only that each week
@@ -202,7 +174,6 @@ describe('habit completion and streaks', () => {
 		});
 		expect(s.periods.map((p) => p.key)).toEqual(['2026-08-31', '2026-09-07']);
 		expect(s.periodsMet).toBe(2);
-		expect(s.currentStreak).toBe(2);
 	});
 
 	it('leaves a week short of its target unmet', () => {
@@ -215,7 +186,6 @@ describe('habit completion and streaks', () => {
 			today: '2026-09-06'
 		});
 		expect(s.periodsMet).toBe(0);
-		expect(s.currentStreak).toBe(0);
 		expect(s.completedCount).toBe(2);
 		expect(s.expectedCount).toBe(3);
 	});
@@ -225,8 +195,8 @@ describe('habit completion and streaks', () => {
 			['2026-08-20', '2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'],
 			'2026-09-04'
 		);
-		// The August check-in is outside the window but still feeds the streak
-		// history; it must not inflate the window's completion count.
+		// The August check-in is outside the window but still real history; it
+		// must not inflate the window's own completion count.
 		expect(s.completedCount).toBe(4);
 		expect(s.expectedCount).toBe(7);
 		expect(s.completionRate).toBeCloseTo(4 / 7, 6);
@@ -241,11 +211,77 @@ describe('habit completion and streaks', () => {
 		});
 		expect(over.completionRate).toBe(1);
 	});
+});
 
-	it('reports nothing rather than dividing by zero when there is no history', () => {
+/**
+ * Kayla's own framing for the habit rework: "Missing once is normal. The
+ * important behaviour is returning." No stored streak counts a broken run
+ * any more (habits.ts's own header); these are the two numbers that replaced
+ * it, and the boundaries that make "once is normal" actually true rather
+ * than just stated.
+ */
+describe('last logged, and the plan-the-return nudge', () => {
+	const daily = (completedDays: string[], today: string, target = 1) =>
+		summariseHabit({
+			completedDays,
+			period: 'day',
+			target,
+			from: '2026-09-01',
+			to: '2026-09-07',
+			today
+		});
+
+	it('reports the most recent day logged, at or before today', () => {
+		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-03');
+		expect(s.lastLoggedOn).toBe('2026-09-03');
+		expect(s.planTheReturn).toBe(false);
+	});
+
+	it('does not prompt a return because today simply has not happened yet', () => {
+		// Yesterday — the most recent period that has actually finished — was
+		// logged, so today still being open is not itself a miss.
+		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-04');
+		expect(s.lastLoggedOn).toBe('2026-09-03');
+		expect(s.planTheReturn).toBe(false);
+	});
+
+	it('prompts a return once a whole day has passed with nothing logged', () => {
+		// today is 09-05; the most recent FULL day is 09-04, which has no log —
+		// 09-03 does, but that is not the period this asks about.
+		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03'], '2026-09-05');
+		expect(s.lastLoggedOn).toBe('2026-09-03');
+		expect(s.planTheReturn).toBe(true);
+	});
+
+	it('forgets an older gap once the habit has actually returned', () => {
+		// Missed 09-04 and 09-05, then logged again on 09-06 — so by 09-07 the
+		// most recent full day (09-06) is covered, and the earlier gap is not
+		// still being held against it.
+		const s = daily(['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-06'], '2026-09-07');
+		expect(s.lastLoggedOn).toBe('2026-09-06');
+		expect(s.planTheReturn).toBe(false);
+	});
+
+	it('never compares the prior period against the target — any log counts as returning', () => {
+		// Three per week, but last week only got one check-in. periodsMet would
+		// call that week short; plan-the-return must not, because one check-in
+		// out of three is still someone coming back.
+		const s = summariseHabit({
+			completedDays: ['2026-08-31', '2026-09-08'],
+			period: 'week',
+			target: 3,
+			from: '2026-08-31',
+			to: '2026-09-13',
+			today: '2026-09-13'
+		});
+		expect(s.lastLoggedOn).toBe('2026-09-08');
+		expect(s.planTheReturn).toBe(false);
+	});
+
+	it('reports nothing to return to when there is no history at all', () => {
 		const s = daily([], '2026-09-04');
-		expect(s.currentStreak).toBe(0);
-		expect(s.longestStreak).toBe(0);
+		expect(s.lastLoggedOn).toBeNull();
+		expect(s.planTheReturn).toBe(true);
 		expect(s.completionRate).toBe(0);
 	});
 });

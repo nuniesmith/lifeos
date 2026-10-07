@@ -308,12 +308,16 @@ export function updateDailyLog(
 			gratitude: patched(patch, 'gratitude', current.gratitude, (v) =>
 				optionalText(v, 'gratitude')
 			),
-			highlight: patched(patch, 'highlight', current.highlight, (v) => optionalText(v, 'highlight')),
+			highlight: patched(patch, 'highlight', current.highlight, (v) =>
+				optionalText(v, 'highlight')
+			),
 			intention: patched(patch, 'intention', current.intention, (v) =>
 				optionalText(v, 'intention', 500)
 			),
 			patternTags: patched(patch, 'patternTags', current.patternTags, cleanTextArray),
-			theme: patched(patch, 'theme', current.theme, (v) => optionalOneOf(v, 'theme', WORKDAY_THEMES)),
+			theme: patched(patch, 'theme', current.theme, (v) =>
+				optionalOneOf(v, 'theme', WORKDAY_THEMES)
+			),
 			activation: patched(patch, 'activation', current.activation, (v) =>
 				optionalInt(v, 'activation', { min: 1, max: 5 })
 			),
@@ -323,7 +327,9 @@ export function updateDailyLog(
 			headSpace: patched(patch, 'headSpace', current.headSpace, (v) =>
 				optionalText(v, 'head space', 200)
 			),
-			water: patched(patch, 'water', current.water, (v) => optionalInt(v, 'water', { min: 0, max: 50 })),
+			water: patched(patch, 'water', current.water, (v) =>
+				optionalInt(v, 'water', { min: 0, max: 50 })
+			),
 			caffeine: patched(patch, 'caffeine', current.caffeine, (v) =>
 				optionalInt(v, 'caffeine', { min: 0, max: 50 })
 			),
@@ -331,7 +337,9 @@ export function updateDailyLog(
 				optionalInt(v, 'carbonation', { min: 0, max: 50 })
 			),
 			wins: patched(patch, 'wins', current.wins, (v) => optionalText(v, 'wins')),
-			challenges: patched(patch, 'challenges', current.challenges, (v) => optionalText(v, 'challenges')),
+			challenges: patched(patch, 'challenges', current.challenges, (v) =>
+				optionalText(v, 'challenges')
+			),
 			worthKeeping: patched(patch, 'worthKeeping', current.worthKeeping, (v) =>
 				optionalText(v, 'worth keeping')
 			),
