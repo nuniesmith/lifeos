@@ -21,15 +21,31 @@
 --     updated_at either, the same shape `habit_logs` and
 --     `routine_step_completions` already take for a per-day, per-person row.
 --
---  3. The Daily Log grows a real check-in and reflection, in place of the
---     four fields migration 0004 gave it. Nullable throughout, and nothing
---     existing changes meaning: `note` keeps its column name even though the
---     UI relabels it "Today, as it happened" (repositories.*.ts and the
---     journal page are where a label lives, not the schema), and `highlight`
---     is unchanged but for the hint its edit form now shows.
+--  3. The Daily Log grows a real check-in and reflection. Nullable
+--     throughout, and nothing existing changes meaning: `note` keeps its
+--     column name even though the UI relabels it "Today, as it happened"
+--     (repositories.*.ts and the journal page are where a label lives, not
+--     the schema), and `highlight` is unchanged but for the hint its edit
+--     form now shows.
 --
--- Additive and backward compatible: every new column is nullable (or
--- defaults to an empty array), so an old row simply has nothing recorded yet.
+-- `activation`, `effectiveness` and `head_space` are NOT added below —
+-- migration 0011 already put them on `daily_logs`, for the Daily Log's own
+-- Energy Level / Mood vocabulary, with the exact types and 1-5 range this
+-- pack needs, and they already carry the household's real imported history.
+-- Re-adding them would just fail on "column already exists"; this pack's own
+-- job for the three is wiring, not schema.
+--
+-- `water`/`caffeine`/`carbonation` are a sharper case: migration 0011 added
+-- all three too, but as what the SOURCE recorded then -- `water` in ounces
+-- with no upper bound, `caffeine`/`carbonation` a bare yes/no -- and real
+-- imported rows already sit under that shape. Kayla's redesign asks a
+-- different question of the same three facts ("how many today", 0-50), so
+-- this converts them in place rather than adding three more columns beside
+-- the old ones, which would leave two answers for "how much water today".
+--
+-- Additive and backward compatible otherwise: every other new column is
+-- nullable (or defaults to an empty array), so an old row simply has nothing
+-- recorded yet.
 
 -- ─── the shared theme vocabulary ────────────────────────────────────────────
 -- One domain, so a task's theme and a day's theme can never name two
@@ -85,8 +101,11 @@ create table todays_three (
 -- neither unique index puts task_id first.
 create index todays_three_task_idx on todays_three (task_id);
 
--- ─── daily log: check-in, daily life, and reflection ───────────────────────
+-- ─── daily log: check-in and reflection ─────────────────────────────────────
 -- Grouped in the migration the way the journal page now groups them.
+-- activation/effectiveness/head_space are deliberately absent -- see the
+-- header. Daily life (water/caffeine/carbonation) is handled separately
+-- below, since all three already exist under migration 0011's shape.
 alter table daily_logs
     -- Check-in.
     add column intention     text,
@@ -94,15 +113,6 @@ alter table daily_logs
     -- a book's moods/tags: trimmed, blanks dropped, deduped case-insensitively.
     add column pattern_tags  text[] not null default '{}',
     add column theme         workday_theme,
-    add column activation    integer check (activation is null or activation between 1 and 5),
-    add column effectiveness integer
-        check (effectiveness is null or effectiveness between 1 and 5),
-    -- "The broader mental/cognitive-state context" (Kayla's own definition).
-    add column head_space    text,
-    -- Daily life: "how many today", not a time of day.
-    add column water         integer check (water is null or water between 0 and 50),
-    add column caffeine      integer check (caffeine is null or caffeine between 0 and 50),
-    add column carbonation   integer check (carbonation is null or carbonation between 0 and 50),
     -- Reflection.
     add column wins          text,
     add column challenges    text,
@@ -111,3 +121,28 @@ alter table daily_logs
     -- these two are new.
     add column worth_keeping text,
     add column anything_else text;
+
+-- ─── daily life: water, caffeine and carbonation become counts ─────────────
+-- `water` is already the right type (migration 0011); only its range
+-- tightens, and NOT VALID on purpose -- some already-imported days recorded
+-- real ounces above 50, and this must not fail the migration over history it
+-- is not rewriting. New and edited rows are held to the bound from here on;
+-- nothing already stored is touched or re-checked.
+alter table daily_logs
+    add constraint daily_logs_water_upper_check check (water is null or water <= 50) not valid;
+
+-- `caffeine`/`carbonation` move from a yes/no checkbox to "how many today".
+-- The conversion is total, not a guess: true/false become exactly 1/0,
+-- which already satisfy the new bound, so this needs no NOT VALID and no
+-- backfill. NULL is carried through explicitly -- "never recorded" must stay
+-- "never recorded", not become a recorded zero, which `case when caffeine
+-- then 1 else 0 end` would otherwise do (NULL is neither true nor false, so
+-- a two-armed case silently sends it down the else branch).
+alter table daily_logs
+    alter column caffeine type integer
+        using (case when caffeine is null then null when caffeine then 1 else 0 end),
+    alter column carbonation type integer
+        using (case when carbonation is null then null when carbonation then 1 else 0 end),
+    add constraint daily_logs_caffeine_check check (caffeine is null or caffeine between 0 and 50),
+    add constraint daily_logs_carbonation_check
+        check (carbonation is null or carbonation between 0 and 50);

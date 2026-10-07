@@ -79,6 +79,14 @@ beforeAll(async () => {
 				'Child task', ${parentId}::uuid, ${sourceUser}::uuid, ${sourceUser}::uuid
 			)
 		`;
+		// migration 0038: a Today's Three pick, scoped through the task above
+		// rather than by household_id -- no household_id column of its own,
+		// the same shape bill_payments takes through bills. user_id has to be
+		// remapped to the target account the same way habit_logs.user_id is.
+		await source`
+			insert into todays_three (user_id, on_date, slot, task_id)
+			values (${sourceUser}::uuid, '2026-09-20', 'due', ${childId}::uuid)
+		`;
 
 		// Feature-pack rows, including both sides of a link table: the lists
 		// agreeing that a table exists is not the same as its rows arriving.
@@ -460,6 +468,7 @@ describe('everything household-scoped is portable', () => {
 				order.indexOf(parent)
 			);
 
+		before('todays_three', 'tasks');
 		before('prep_tasks', 'recipes');
 		before('wishlist_items', 'people');
 		before('life_assessments', 'areas');
@@ -550,6 +559,18 @@ describe('portable data mobility', () => {
 				'ffffffff-ffff-4fff-8fff-ffffffffffff'
 			);
 			expect(tasks.every((row) => row.owner_user_id === targetUser)).toBe(true);
+
+			// migration 0038: the pick travels, resolving through task_id (ids
+			// are preserved verbatim, like tasks.parent_task_id above) with
+			// user_id remapped to the target account the same way
+			// habit_logs.user_id already is.
+			const picks = await restored<{ slot: string; on_date: string; user_id: string }[]>`
+				select tt.slot, tt.on_date::text as on_date, tt.user_id::text as user_id
+				from todays_three tt
+				join tasks t on t.id = tt.task_id
+				where t.title = 'Child task'
+			`;
+			expect(picks).toEqual([{ slot: 'due', on_date: '2026-09-20', user_id: targetUser }]);
 
 			// The feature packs travel too, link tables included. Without this
 			// the export could list the tables and still carry none of them.

@@ -42,6 +42,12 @@ const TABLES = [
 	'goals',
 	'projects',
 	'tasks',
+	// migration 0038: todays_three has no household_id of its own -- scoped
+	// through tasks the same way bill_payments is scoped through bills below
+	// -- so it is listed here for real (a person's daily picks are still the
+	// household's data) even though data-mobility.test.ts's household_id scan
+	// would not have caught its absence.
+	'todays_three',
 	'important_dates',
 	'daily_logs',
 	'habits',
@@ -198,6 +204,8 @@ async function rowsFor(db, table, id) {
 			return db`select * from projects where household_id = ${id}::uuid order by id`;
 		case 'tasks':
 			return db`select * from tasks where household_id = ${id}::uuid order by id`;
+		case 'todays_three':
+			return db`select p.* from todays_three p join tasks t on t.id = p.task_id where t.household_id = ${id}::uuid order by p.on_date, p.slot, p.user_id`;
 		case 'important_dates':
 			return db`select * from important_dates where household_id = ${id}::uuid order by id`;
 		case 'daily_logs':

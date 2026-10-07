@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 	listHabits: vi.fn(),
 	listProjects: vi.fn(),
 	listTasks: vi.fn(),
+	todaysThree: vi.fn(),
 	upcomingImportantDates: vi.fn(),
 	getWeather: vi.fn(),
 	healthOverview: vi.fn(),
@@ -24,7 +25,15 @@ vi.mock('$lib/server/weather', () => ({ getWeather: mocks.getWeather }));
 vi.mock('$lib/server/repositories/base', () => ({ householdToday: mocks.householdToday }));
 vi.mock('$lib/server/repositories', async () => {
 	const { daysBetween } = await import('$lib/server/repositories/dates');
-	return { ...mocks, daysBetween, logHabit: vi.fn(), unlogHabit: vi.fn(), updateTask: vi.fn() };
+	return {
+		...mocks,
+		daysBetween,
+		logHabit: vi.fn(),
+		unlogHabit: vi.fn(),
+		updateTask: vi.fn(),
+		pickTask: vi.fn(),
+		clearSlot: vi.fn()
+	};
 });
 
 import { load } from '../../src/routes/(app)/+page.server';
@@ -50,6 +59,7 @@ beforeEach(() => {
 		'listHabits',
 		'listProjects',
 		'listTasks',
+		'todaysThree',
 		'upcomingImportantDates',
 		'documentsNeedingAttention'
 	] as const) {
