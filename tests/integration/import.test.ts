@@ -181,7 +181,7 @@ describe('committed import', () => {
 			await sql<
 				{
 					water: number | null;
-					caffeine: boolean | null;
+					caffeine: number | null;
 					intimacy: boolean | null;
 					head_space: string | null;
 				}[]
@@ -191,7 +191,9 @@ describe('committed import', () => {
 			`
 		);
 		expect(log.water).toBe(32);
-		expect(log.caffeine).toBe(true);
+		// migration 0038: caffeine moved from a checkbox to a count. The source
+		// export only ever has yes/no, so a recorded Yes lands on 1.
+		expect(log.caffeine).toBe(1);
 		// No is a recorded No, not an absent value.
 		expect(log.intimacy).toBe(false);
 		expect(log.head_space).toBe('Engaged');
@@ -211,12 +213,12 @@ describe('committed import', () => {
 
 	it('keeps "not recorded" distinct from a recorded No', async () => {
 		await run(false);
-		const [busy, quiet] = await sql<{ caffeine: boolean | null; on_date: string }[]>`
+		const [busy, quiet] = await sql<{ caffeine: number | null; on_date: string }[]>`
 			select caffeine, on_date::text as on_date from daily_logs order by on_date
 		`;
 		// A day nobody wrote anything down on is not a day without caffeine.
-		// Folding an absent checkbox to false invents a measurement.
-		expect(busy?.caffeine).toBe(true);
+		// Folding an absent checkbox to 0 would invent a measurement.
+		expect(busy?.caffeine).toBe(1);
 		expect(quiet?.caffeine).toBeNull();
 	});
 

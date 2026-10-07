@@ -120,6 +120,20 @@ const bool = (row: StagedRow, column: string): boolean =>
 const boolOrNull = (row: StagedRow, column: string): boolean | null =>
 	parseSourceBoolean(row.raw[column] ?? '');
 
+/**
+ * `boolOrNull`, read as "how many" (0 or 1) rather than yes/no.
+ *
+ * Migration 0038 turned `daily_logs.caffeine`/`carbonation` from a checkbox
+ * into a count, to match what the Daily Log now asks; the source export
+ * still only ever has yes/no to offer, so an import maps onto the two ends
+ * of the new range rather than guessing a real count. NULL carries through
+ * unchanged — "not recorded" must not become a recorded zero.
+ */
+const boolAsCount = (row: StagedRow, column: string): number | null => {
+	const value = boolOrNull(row, column);
+	return value === null ? null : value ? 1 : 0;
+};
+
 export const int = (row: StagedRow, column: string): number | null => {
 	const n = Number.parseInt(row.raw[column] ?? '', 10);
 	return Number.isFinite(n) ? n : null;
@@ -931,8 +945,8 @@ const upsertDailyLogs = mapper('daily_logs', async (sql, row, o) => {
 		        ${text(row, 'Gratitude')},
 		        ${text(row, 'Highlight of the Day')},
 		        ${int(row, 'Heart Rate Variability')}, ${int(row, 'Sleep Score')},
-		        ${int(row, 'Water')}, ${boolOrNull(row, 'Caffeine')},
-		        ${boolOrNull(row, 'Carbonation')}, ${boolOrNull(row, 'Intimacy')},
+		        ${int(row, 'Water')}, ${boolAsCount(row, 'Caffeine')},
+		        ${boolAsCount(row, 'Carbonation')}, ${boolOrNull(row, 'Intimacy')},
 		        ${int(row, 'Activation')}, ${int(row, 'Effectiveness')},
 		        ${text(row, 'Head Space')},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy})
