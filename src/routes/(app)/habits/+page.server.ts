@@ -49,7 +49,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			doneToday: (summary?.completedCount ?? 0) > 0,
 			periodCompleted: period?.completed ?? 0,
 			periodMet: period?.met ?? false,
-			streak: summary?.currentStreak ?? 0
+			lastLoggedOn: summary?.lastLoggedOn ?? null,
+			planTheReturn: summary?.planTheReturn ?? false
 		};
 	});
 

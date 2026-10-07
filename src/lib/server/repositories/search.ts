@@ -459,12 +459,22 @@ export async function search(
 
 	if (wanted('daily_log')) {
 		// Deliberately owner-scoped, not visibility-scoped. See the header.
+		// migration 0038 added the check-in and reflection columns below --
+		// every TEXT field joins the same tsvector/body, with the identical
+		// privacy predicate untouched. `pattern_tags` is `text[]`, not TEXT,
+		// and is left out on purpose: it is a label a person picks from a
+		// list, not prose worth searching into.
 		branches.push(sql`
 			select 'daily_log' as kind, t.id, to_char(t.on_date, 'FMDay FMDD Mon YYYY') as title,
 			       to_tsvector('english',
 			           coalesce(t.note,'') || ' ' || coalesce(t.gratitude,'') || ' ' ||
-			           coalesce(t.highlight,'') || ' ' || coalesce(t.mood,'')) as doc,
-			       concat_ws(' ', t.note, t.gratitude, t.highlight) as body,
+			           coalesce(t.highlight,'') || ' ' || coalesce(t.mood,'') || ' ' ||
+			           coalesce(t.intention,'') || ' ' || coalesce(t.theme,'') || ' ' ||
+			           coalesce(t.head_space,'') || ' ' || coalesce(t.wins,'') || ' ' ||
+			           coalesce(t.challenges,'') || ' ' || coalesce(t.worth_keeping,'') || ' ' ||
+			           coalesce(t.anything_else,'')) as doc,
+			       concat_ws(' ', t.note, t.gratitude, t.highlight, t.intention, t.head_space,
+			           t.wins, t.challenges, t.worth_keeping, t.anything_else) as body,
 			       (t.archived_at is not null) as archived,
 			       '/journal/' || to_char(t.on_date, 'YYYY-MM-DD') as path
 			from daily_logs t

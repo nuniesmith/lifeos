@@ -10,9 +10,11 @@
 		List,
 		ListRow,
 		PageHeader,
+		Select,
 		Textarea,
 		appPath
 	} from '$lib/components';
+	import { WORKDAY_THEME_OPTIONS } from '$lib/daily-planning';
 	import type { JournalData } from './entry';
 	import HealthTags, { type TagResult } from './HealthTags.svelte';
 
@@ -32,9 +34,21 @@
 	const written = $derived(
 		data.entry !== null &&
 			(data.entry.energyLevel !== null ||
-				[data.entry.note, data.entry.mood, data.entry.gratitude, data.entry.highlight].some(
-					(text) => text.trim() !== ''
-				))
+				data.entry.activation !== null ||
+				data.entry.effectiveness !== null ||
+				[
+					data.entry.note,
+					data.entry.mood,
+					data.entry.gratitude,
+					data.entry.highlight,
+					data.entry.intention,
+					data.entry.patternTags,
+					data.entry.headSpace,
+					data.entry.wins,
+					data.entry.challenges,
+					data.entry.worthKeeping,
+					data.entry.anythingElse
+				].some((text) => text.trim() !== ''))
 	);
 
 	/**
@@ -67,7 +81,7 @@
 	const shortDate = (day: string) =>
 		at(day).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 
-	const ENERGY = [1, 2, 3, 4, 5];
+	const LEVELS = [1, 2, 3, 4, 5];
 	const ENERGY_LABELS: Record<number, string> = {
 		1: 'Drained',
 		2: 'Low',
@@ -78,6 +92,26 @@
 
 	const isToday = $derived(data.date === data.today);
 </script>
+
+<!-- A one-to-five scale, shared by Energy, Activation and Effectiveness
+     rather than written out three times -- each still gets its own fieldset
+     and legend, so the question being asked stays explicit. -->
+{#snippet scale(fieldName: string, value: number | null, labels?: Record<number, string>)}
+	<div class="scale">
+		<label class="level">
+			<input type="radio" name={fieldName} value="" checked={value == null} />
+			<span class="pip">–</span>
+			<span class="sr-only">Not recorded</span>
+		</label>
+		{#each LEVELS as level (level)}
+			<label class="level">
+				<input type="radio" name={fieldName} value={String(level)} checked={value === level} />
+				<span class="pip">{level}</span>
+				<span class="sr-only">{labels?.[level] ?? `${level} of 5`}</span>
+			</label>
+		{/each}
+	</div>
+{/snippet}
 
 <svelte:head><title>Journal · LifeOS</title></svelte:head>
 
@@ -121,45 +155,28 @@
 </nav>
 
 <div class="stack">
-	<Card title={isToday ? 'How was today?' : 'How was the day?'}>
-		<form method="POST" action="?/save" class="edit" use:enhance>
-			<!-- The day travels with the form, so an editor left open across
-			     midnight still writes to the day it is showing. -->
-			<input type="hidden" name="date" value={data.date} />
-			{#if data.entry}
-				<!-- The version this form was rendered from, so a save from a
-				     stale tab is refused rather than overwriting silently. -->
-				<input type="hidden" name="updatedAt" value={data.entry.updatedAt} />
-			{/if}
+	<form
+		method="POST"
+		action="?/save"
+		class="edit"
+		use:enhance={() =>
+			async ({ update }) =>
+				// Not reset: this form carries a <Select> (theme), and stays on
+				// screen after every save -- a native reset() would otherwise put
+				// it back on whichever option the page was first served with
+				// (hard rule 6).
+				update({ reset: false })}
+	>
+		<!-- The day travels with the form, so an editor left open across
+		     midnight still writes to the day it is showing. -->
+		<input type="hidden" name="date" value={data.date} />
+		{#if data.entry}
+			<!-- The version this form was rendered from, so a save from a
+			     stale tab is refused rather than overwriting silently. -->
+			<input type="hidden" name="updatedAt" value={data.entry.updatedAt} />
+		{/if}
 
-			<fieldset class="energy">
-				<legend>Energy</legend>
-				<div class="scale">
-					<label class="level">
-						<input
-							type="radio"
-							name="energyLevel"
-							value=""
-							checked={data.entry?.energyLevel == null}
-						/>
-						<span class="pip">–</span>
-						<span class="sr-only">Not recorded</span>
-					</label>
-					{#each ENERGY as level (level)}
-						<label class="level">
-							<input
-								type="radio"
-								name="energyLevel"
-								value={String(level)}
-								checked={data.entry?.energyLevel === level}
-							/>
-							<span class="pip">{level}</span>
-							<span class="sr-only">{ENERGY_LABELS[level]}</span>
-						</label>
-					{/each}
-				</div>
-			</fieldset>
-
+		<Card title="Check-in">
 			<Input
 				label="Mood"
 				name="mood"
@@ -168,13 +185,85 @@
 				placeholder="A word or two"
 				autocomplete="off"
 			/>
-			<Input
-				label="Highlight"
-				name="highlight"
-				value={data.entry?.highlight ?? ''}
-				placeholder="The best bit"
-				autocomplete="off"
+			<fieldset class="energy">
+				<legend>Energy</legend>
+				{@render scale('energyLevel', data.entry?.energyLevel ?? null, ENERGY_LABELS)}
+			</fieldset>
+			<Textarea
+				label="Intention"
+				name="intention"
+				rows={2}
+				maxlength={500}
+				value={data.entry?.intention ?? ''}
+				placeholder="What is the day for?"
 			/>
+			<Input
+				label="Pattern tags"
+				name="patternTags"
+				value={data.entry?.patternTags ?? ''}
+				placeholder="comma, separated, tags"
+			/>
+			<fieldset class="energy">
+				<legend>Activation</legend>
+				{@render scale('activation', data.entry?.activation ?? null)}
+			</fieldset>
+			<p class="scale-hint">Ability to initiate/start tasks and activities.</p>
+			<fieldset class="energy">
+				<legend>Effectiveness</legend>
+				{@render scale('effectiveness', data.entry?.effectiveness ?? null)}
+			</fieldset>
+			<p class="scale-hint">
+				Ability to follow through, sustain effort, and complete things after starting.
+			</p>
+			<Textarea
+				label="Head space"
+				name="headSpace"
+				rows={2}
+				maxlength={200}
+				value={data.entry?.headSpace ?? ''}
+				hint="The broader mental/cognitive-state context."
+			/>
+			<Select
+				label="Theme"
+				name="theme"
+				options={WORKDAY_THEME_OPTIONS}
+				value={data.entry?.theme ?? ''}
+				placeholder="No theme"
+			/>
+		</Card>
+
+		<Card title="Daily life">
+			<Input
+				label="Water"
+				name="water"
+				type="number"
+				min={0}
+				max={50}
+				value={data.entry?.water != null ? String(data.entry.water) : ''}
+				hint="How many today."
+			/>
+			<Input
+				label="Caffeine"
+				name="caffeine"
+				type="number"
+				min={0}
+				max={50}
+				value={data.entry?.caffeine != null ? String(data.entry.caffeine) : ''}
+				hint="How many today."
+			/>
+			<Input
+				label="Carbonation"
+				name="carbonation"
+				type="number"
+				min={0}
+				max={50}
+				value={data.entry?.carbonation != null ? String(data.entry.carbonation) : ''}
+				hint="How many today."
+			/>
+		</Card>
+
+		<Card title="Reflection">
+			<Textarea label="Wins & Celebrations" name="wins" rows={2} value={data.entry?.wins ?? ''} />
 			<Textarea
 				label="Grateful for"
 				name="gratitude"
@@ -182,18 +271,47 @@
 				value={data.entry?.gratitude ?? ''}
 			/>
 			<Textarea
-				label="Notes"
+				label="Challenges"
+				name="challenges"
+				rows={2}
+				value={data.entry?.challenges ?? ''}
+			/>
+			<Input
+				label="Highlight"
+				name="highlight"
+				value={data.entry?.highlight ?? ''}
+				placeholder="The best bit"
+				autocomplete="off"
+				hint="The moment, experience, accomplishment, or small thing that stood out most and is worth remembering."
+			/>
+		</Card>
+
+		<Card title={isToday ? 'How was today?' : 'How was the day?'}>
+			<Textarea
+				label="Today, as it happened"
 				name="note"
 				rows={6}
 				value={data.entry?.note ?? ''}
 				placeholder="Anything worth keeping."
 			/>
+			<Textarea
+				label="Something worth keeping"
+				name="worthKeeping"
+				rows={3}
+				value={data.entry?.worthKeeping ?? ''}
+			/>
+			<Textarea
+				label="Anything else?"
+				name="anythingElse"
+				rows={3}
+				value={data.entry?.anythingElse ?? ''}
+			/>
+		</Card>
 
-			<Button type="submit" variant="primary" full>
-				{data.entry ? 'Save entry' : 'Write entry'}
-			</Button>
-		</form>
-	</Card>
+		<Button type="submit" variant="primary" full>
+			{data.entry ? 'Save entry' : 'Write entry'}
+		</Button>
+	</form>
 
 	<HealthTags date={data.date} tags={data.tags} result={form} />
 
@@ -349,6 +467,11 @@
 		font-size: var(--fs-sm);
 		font-weight: 600;
 		color: var(--c-text-muted);
+	}
+	.scale-hint {
+		margin: calc(-1 * var(--sp-2)) 0 0;
+		color: var(--c-text-muted);
+		font-size: var(--fs-xs);
 	}
 	/* Six one-tap targets rather than a picker: choosing a number should not
 	   cost a wheel spin and a confirm on a phone. */

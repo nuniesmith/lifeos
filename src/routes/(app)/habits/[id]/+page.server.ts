@@ -74,10 +74,14 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		areas: areas.map((area) => ({ value: area.id, label: area.name })),
 		days,
 		progress: {
-			currentStreak: summary.currentStreak,
-			longestStreak: summary.longestStreak,
+			lastLoggedOn: summary.lastLoggedOn,
+			planTheReturn: summary.planTheReturn,
 			completionRate: summary.completionRate,
 			periodsMet: summary.periodsMet,
+			// The period containing today -- always the window's own last
+			// entry, since `periods` runs oldest to newest -- for "X of target
+			// this period" on the habit's own page.
+			current: summary.periods.at(-1) ?? { completed: 0, target: habit.targetCount, met: false },
 			// Oldest first, and only as many as the window is meant to show.
 			periods: summary.periods.slice(-window.periods)
 		}

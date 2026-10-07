@@ -76,6 +76,8 @@ export const actions: Actions = {
 				areaId: nullable(form.get('areaId')),
 				energy: nullable(form.get('energy')),
 				context: nullable(form.get('context')),
+				theme: nullable(form.get('theme')),
+				category: nullable(form.get('category')),
 				isImportant: form.get('isImportant') === 'on',
 				isUrgent: form.get('isUrgent') === 'on'
 			},

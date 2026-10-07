@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { base, resolve } from '$app/paths';
 	import Icon from '$lib/components/Icon.svelte';
+	import Select from '$lib/components/Select.svelte';
 	import HomeCalendar from '$lib/components/home/HomeCalendar.svelte';
 	import HomeClock from '$lib/components/home/HomeClock.svelte';
 	import { appPath } from '$lib/components/nav';
@@ -9,11 +10,23 @@
 	import type { IconName } from '$lib/components/icons';
 	import DueMedicationRow from './health/DueMedicationRow.svelte';
 	import { summaryOf } from './health/measurements/format';
+	import { WORKDAY_THEME_LABELS as THEME_LABELS } from '$lib/daily-planning';
 
 	let { data, form } = $props();
 	const isDone = (status: string) => status === 'done' || status === 'dropped';
 	const openToday = $derived(data.dueToday.filter((task) => !isDone(task.status)).length);
 	const habitsDone = $derived(data.habits.filter((habit) => habit.doneToday).length);
+
+	// ─── today's three ──────────────────────────────────────────────────────
+	// Options the picker offers, excluding whatever is already sitting in any
+	// slot today -- picking the same task into two slots would only come back
+	// as a refusal (the table's own second uniqueness), so there is no reason
+	// to offer it.
+	const openTaskOptions = $derived(
+		data.openTasksForThree
+			.filter((task) => !data.todaysThree.some((slot) => slot.taskId === task.id))
+			.map((task) => ({ value: task.id, label: task.title }))
+	);
 
 	// ─── today's health panel ────────────────────────────────────────────
 	const dueMedications = $derived([
@@ -234,6 +247,83 @@
 			<section class="today" id="today" aria-labelledby="today-heading">
 				<h2 id="today-heading">☀️ Today</h2>
 				<p class="section-note gold">The shape of today at a glance.</p>
+
+				<!-- Today's Three (migration 0038): the daily focus, first because
+				     it is the one thing this page asks you to decide rather than
+				     merely shows you. -->
+				<div class="three-panel">
+					<div class="habits-heading">
+						<span class="view-label"><Icon name="tasks" size={14} /> Today's Three</span>
+					</div>
+					{#if form?.threeError}<p class="three-error" role="alert">{form.threeError}</p>{/if}
+					<ul class="three-list" aria-label="Today's three">
+						{#each data.todaysThree as slot (slot.slot)}
+							<li>
+								<div class="three-head">
+									<span class="three-label">{slot.label}</span>
+									<span class="three-hint">{slot.hint}</span>
+								</div>
+								{#if slot.taskId}
+									{@const slotDone = isDone(slot.status ?? '')}
+									<div class="three-task" class:done={slotDone || slot.archived}>
+										<a href={resolve(appPath(`/tasks/${slot.taskId}`))}>{slot.title}</a>
+										<div class="three-actions">
+											<form method="POST" action="?/toggleTask" use:enhance>
+												<input type="hidden" name="id" value={slot.taskId} />
+												<input type="hidden" name="updatedAt" value={slot.updatedAt} />
+												<input type="hidden" name="done" value={slotDone ? 'false' : 'true'} />
+												<button
+													class="tick"
+													type="submit"
+													aria-pressed={slotDone}
+													aria-label={slotDone ? `Reopen ${slot.title}` : `Complete ${slot.title}`}
+													>{slotDone ? '✓' : ''}</button
+												>
+											</form>
+											<form method="POST" action="?/clearThree" use:enhance>
+												<input type="hidden" name="slot" value={slot.slot} />
+												<button class="clear-three" type="submit">Clear</button>
+											</form>
+										</div>
+									</div>
+								{:else}
+									<form
+										method="POST"
+										action="?/pickThree"
+										class="three-pick"
+										use:enhance={() =>
+											// Not reset: this form carries a <Select>, and stays on
+											// screen whenever the pick is refused -- a native reset
+											// would otherwise put it back on whichever option the
+											// page was first served with (hard rule 6).
+											async ({ update }) =>
+												update({ reset: false })}
+									>
+										<input type="hidden" name="slot" value={slot.slot} />
+										<Select
+											label={`Pick a task for ${slot.label}`}
+											labelHidden
+											name="taskId"
+											options={openTaskOptions}
+											placeholder="Choose a task"
+											required
+										/>
+										<button class="pick-three" type="submit">Pick</button>
+									</form>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+					{#if data.dailyLog?.theme || data.dailyLog?.intention}
+						<p class="three-theme">
+							{#if data.dailyLog.theme}<span class="theme-chip"
+									>{THEME_LABELS[data.dailyLog.theme]}</span
+								>{/if}
+							{#if data.dailyLog.intention}<span>{data.dailyLog.intention}</span>{/if}
+						</p>
+					{/if}
+				</div>
+
 				<div class="database-header">
 					<h3><Icon name="journal" size={20} /> Daily Log</h3>
 					<a class="new-button" href={resolve('/journal')}
@@ -330,7 +420,8 @@
 												>{habit.doneToday ? '✓ Logged today' : 'Log Today'}</button
 											>
 										</form>
-										{#if habit.streak > 0}<span class="streak">{habit.streak}d streak</span>{/if}
+										{#if habit.planTheReturn}<span class="plan-return-note">Plan the return</span
+											>{/if}
 									</div>
 								</li>
 							{/each}
@@ -958,6 +1049,124 @@
 		margin-left: auto;
 		color: var(--c-warn);
 	}
+	.three-panel {
+		padding: 16px;
+		margin-bottom: 22px;
+		border-radius: 9px;
+		background: var(--c-surface-alt);
+	}
+	.three-error {
+		margin: 0 0 10px;
+		color: var(--c-crit);
+		font-size: 0.78rem;
+	}
+	.three-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.three-list li {
+		padding: 11px;
+		border: 1px solid var(--c-border);
+		border-radius: 8px;
+		background: var(--c-surface);
+	}
+	.three-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+	.three-label {
+		font-weight: 650;
+		font-size: 0.82rem;
+	}
+	.three-hint {
+		color: var(--home-muted);
+		font-size: 0.72rem;
+	}
+	.three-task {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.three-task a {
+		color: var(--c-text);
+		font-size: 0.85rem;
+		text-decoration: none;
+	}
+	.three-task.done a {
+		color: var(--home-muted);
+		text-decoration: line-through;
+	}
+	.three-actions {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex: none;
+	}
+	/* A 44px target would blow out this already-dense panel on a phone; these
+	   two live inside a list row that is itself the tap target's container,
+	   not a thumb-first primary action. */
+	.clear-three {
+		min-height: 34px;
+		padding: 0 8px;
+		border: 1px solid var(--c-border);
+		border-radius: 4px;
+		background: transparent;
+		color: var(--home-muted);
+		font-size: 0.72rem;
+		cursor: pointer;
+	}
+	.clear-three:hover {
+		background: var(--c-surface-alt);
+		color: var(--c-text);
+	}
+	.three-pick {
+		display: flex;
+		align-items: flex-end;
+		gap: 8px;
+	}
+	.three-pick :global(.field) {
+		flex: 1;
+	}
+	.pick-three {
+		min-height: var(--tap);
+		padding: 0 14px;
+		border: 1px solid var(--c-accent);
+		border-radius: 5px;
+		background: var(--c-accent-soft);
+		color: var(--c-accent);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.pick-three:hover {
+		background: var(--c-accent);
+		color: var(--c-accent-text);
+	}
+	.three-theme {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		margin: 14px 0 0;
+		color: var(--home-muted);
+		font-size: 0.78rem;
+	}
+	.theme-chip {
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--c-accent-soft);
+		color: var(--c-accent);
+		font-size: 0.7rem;
+		font-weight: 600;
+	}
 	.habits-panel {
 		padding: 16px;
 		border-radius: 9px;
@@ -1018,7 +1227,7 @@
 	.logged button {
 		color: var(--c-ok);
 	}
-	.streak {
+	.plan-return-note {
 		color: var(--home-muted);
 		font-size: 0.65rem;
 	}

@@ -59,6 +59,11 @@ const TABLES = [
 	'goals',
 	'projects',
 	'tasks',
+	// migration 0038: todays_three references tasks (task_id), so it lands
+	// right after -- the same place export-data.mjs puts it. user_id is
+	// remapped below the same way habit_logs.user_id and
+	// routine_step_completions.user_id already are.
+	'todays_three',
 	'important_dates',
 	'daily_logs',
 	'habits',
@@ -170,6 +175,11 @@ const ORDER = [
 	'goals',
 	'projects',
 	'tasks',
+	// migration 0038: todays_three references tasks (task_id), so it lands
+	// right after -- the same place export-data.mjs puts it. user_id is
+	// remapped below the same way habit_logs.user_id and
+	// routine_step_completions.user_id already are.
+	'todays_three',
 	'important_dates',
 	'daily_logs',
 	'habits',
@@ -308,7 +318,13 @@ function mappedValue(table, column, value, targetOwner) {
 	if (column === 'sha256' && typeof value === 'string') return Buffer.from(value, 'hex');
 	if (['owner_user_id', 'created_by', 'updated_by', 'started_by', 'logged_by'].includes(column))
 		return targetOwner;
-	if (['habit_logs', 'routine_step_completions'].includes(table) && column === 'user_id') {
+	// migration 0038: todays_three.user_id is "the person whose day it is" --
+	// the same shape habit_logs.user_id and routine_step_completions.user_id
+	// already take for their own per-person row.
+	if (
+		['habit_logs', 'routine_step_completions', 'todays_three'].includes(table) &&
+		column === 'user_id'
+	) {
 		return targetOwner;
 	}
 	// migration 0033: book_reads.reader_user_id is NOT NULL, like
