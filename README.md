@@ -156,47 +156,23 @@ var/                   gitignored runtime data
 
 ## Deployment
 
-Production is one 64-bit Docker host on the household's tailnet, running the
-three containers in `compose.prod.yml`: PostgreSQL, the app, and Nginx. The
-app is never built on the server.
+Production deployment lives in the [`nuniesmith/freddy`](https://github.com/nuniesmith/freddy)
+repo (freddy is the host it runs on): the `lifeos-db` / `lifeos-app` /
+`lifeos-nginx` services in freddy's `docker-compose.yml`, with the app image
+built here by CI and published to GHCR (`ghcr.io/nuniesmith/lifeos:main`).
 
 - **CI** (`.github/workflows/ci.yml`) runs svelte-check, lint, the unit,
   integration and end-to-end tests, a first-run check against the built
   server, and `npm audit`. On `main` it publishes a `linux/amd64` +
-  `linux/arm64` image to GHCR tagged with the commit, and scans it. A push to
-  `main` that changes the deploy or backup scripts, `compose.prod.yml`, the
-  Dockerfile or the CI workflow also rehearses a deploy and a rollback against
-  a throwaway stack (`scripts/rehearse-deploy.sh`).
-- **Deploy** (`.github/workflows/deploy.yml`) follows a green `main` run, or
-  takes an explicit image for a rollback. It joins the runner to the tailnet
-  and runs `scripts/deploy.sh` on the host over SSH: pull, back up, migrate
-  with the app stopped, start the app and Nginx, and roll the app — never the
-  database — back if it fails its health check. The shared composites from
-  [`nuniesmith/actions`](https://github.com/nuniesmith/actions) are pinned to
-  one reviewed commit.
+  `linux/arm64` image to GHCR tagged with the commit (plus the `main` tag),
+  and scans it.
+- **Deploy** happens from freddy's CI/CD: it pulls the image, runs pending
+  database migrations as a one-shot (`node scripts/migrate.mjs` inside the
+  app image — the app never auto-migrates), then `docker compose up`.
 
-The plan was written for a Linode Nanode with Tailscale Serve in front of a
-loopback Nginx. Production has since moved to a home server shared with other
-services, reached through a reverse proxy on another tailnet machine. What
-differs between hosts is configuration, not code. The host's
-`/srv/lifeos/.env`, written once by `scripts/setup-server.sh`, decides:
-
-- `LIFEOS_BIND_ADDR` and `LIFEOS_BIND_PORT` — where Nginx is published. The
-  default, `127.0.0.1:8080`, suits Tailscale Serve on the same host; a host
-  whose proxy is elsewhere sets its own Tailscale address. Never `0.0.0.0` or
-  a routable address. The deploy's health gate polls the same address.
-- `ORIGIN` — the exact HTTPS origin people use. If it does not match, every
-  form post is rejected as cross-site.
-
-Deploys log in to GHCR under a Docker config of their own (`DOCKER_CONFIG` set
-to `~/.docker-lifeos`), so a deploy account shared with other services keeps
-its default Docker login untouched. Repository secrets use the unprefixed
-names (`LIFEOS_TAILSCALE_IP`, `SSH_USER`, `SSH_KEY`, `SSH_PORT`); the
-`PROD_`-prefixed names that `nuniesmith/scripts` generates are accepted as
-fallbacks.
-
-[`docs/deployment.md`](docs/deployment.md) has server setup, the full deploy
-sequence, rollback, and the secrets table.
+The database lives at `/srv/lifeos` on freddy (bind mounts, untouched by the
+repo move). Copy the credentials from there into freddy's GitHub secrets —
+see `docs/GITHUB_SECRETS.md` in the freddy repo.
 
 ## Data mobility and backups
 
