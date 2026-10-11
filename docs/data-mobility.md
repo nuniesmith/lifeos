@@ -6,8 +6,8 @@ LifeOS has two different recovery tools. Keep them separate:
   application records, relationships, imported source provenance, and
   content-addressed media. It deliberately leaves out password hashes,
   sessions, invites, audit IPs, change history, settings, and server secrets.
-- `scripts/backup.sh` creates the operational PostgreSQL custom archive used
-  before deploys and by the server backup schedule. That is the tool for
+- `scripts/backup.sh` creates the operational PostgreSQL custom archive meant
+  to run before deploys and daily (see `docs/deployment.md`). That is the tool for
   recovering the exact production database and account state.
 
 ## Portable export and restore
@@ -51,18 +51,20 @@ large media archive into memory. Preserve the whole directory, including
 SHA-256 checksums for every payload file, and restore refuses a mismatch.
 
 On the production host, run the commands inside the app container because the
-server does not need a separate Node installation:
+server does not need a separate Node installation. Production runs in freddy's
+compose stack, as the `lifeos-app` service:
 
 ```sh
-container=$(docker compose -f compose.prod.yml ps -q app)
-docker compose -f compose.prod.yml exec -T app \
+cd /home/actions/freddy
+container=$(docker compose ps -q lifeos-app)
+docker compose exec -T lifeos-app \
   node scripts/export-data.mjs --output /tmp/lifeos-export
 docker cp "$container:/tmp/lifeos-export" ./lifeos-export
 
 # Copy an export directory into the running app container before validating or
 # applying it on a fresh installation.
 docker cp ./lifeos-export "$container:/tmp/lifeos-export"
-docker compose -f compose.prod.yml exec -T app \
+docker compose exec -T lifeos-app \
   node scripts/restore-data.mjs --input /tmp/lifeos-export \
   --owner-user admin --dry-run
 ```

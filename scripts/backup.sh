@@ -2,8 +2,15 @@
 # Database backup (BKP-001). Runs ON the server.
 #
 #   ./scripts/backup.sh                 a manual backup
-#   ./scripts/backup.sh --pre-deploy    what deploy.sh calls before migrating
-#   ./scripts/backup.sh --scheduled     what the systemd timer calls
+#   ./scripts/backup.sh --pre-deploy    before migrating
+#   ./scripts/backup.sh --scheduled     from a daily timer
+#
+# Production runs in freddy's compose stack, so point it there:
+#
+#   LIFEOS_COMPOSE_FILE=/home/actions/freddy/docker-compose.yml \
+#   LIFEOS_ENV_FILE=/home/actions/freddy/.env \
+#   LIFEOS_DB_SERVICE=lifeos-db \
+#   ./scripts/backup.sh --scheduled
 #
 # A backup is only a backup if it can be restored, so this records what it
 # captured — size, checksum, and per-table row counts — and refuses to report
@@ -30,14 +37,15 @@ say() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
 ok()  { printf '\033[32m✔\033[0m %s\n' "$*"; }
 die() { printf '\033[31m✘\033[0m %s\n' "$*" >&2; exit 1; }
 
-ENV_FILE="$(readlink -f .env 2>/dev/null || echo .env)"
-[[ -r "$ENV_FILE" ]] || die ".env is not readable; run scripts/setup-server.sh"
-# Overridable so the script can be exercised against the development
-# stack; production leaves it at the default.
-COMPOSE_FILE="${LIFEOS_COMPOSE_FILE:-compose.prod.yml}"
+ENV_FILE="$(readlink -f "${LIFEOS_ENV_FILE:-.env}" 2>/dev/null || echo "${LIFEOS_ENV_FILE:-.env}")"
+[[ -r "$ENV_FILE" ]] || die "$ENV_FILE is not readable; set LIFEOS_ENV_FILE"
+# The defaults are the development stack (compose.yml, service `db`);
+# production overrides all three, as in the header.
+COMPOSE_FILE="${LIFEOS_COMPOSE_FILE:-compose.yml}"
+DB="${LIFEOS_DB_SERVICE:-db}"
 COMPOSE=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 
-psql_q() { "${COMPOSE[@]}" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -qtA -c "$1"; }
+psql_q() { "${COMPOSE[@]}" exec -T "$DB" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -qtA -c "$1"; }
 
 set -a; . "$ENV_FILE"; set +a
 : "${POSTGRES_USER:?POSTGRES_USER missing from .env}"
@@ -47,16 +55,16 @@ mkdir -p "$BACKUP_DIR"
 
 # ─── preflight ─────────────────────────────────────────────────────────────
 #
-# Waits rather than asking once, matching the loop deploy.sh already uses
-# before it calls this. A single probe failed a deploy on the Raspberry Pi
-# minutes after deploy.sh had itself confirmed the database was up: on a slow
+# Waits rather than asking once. A single probe failed a deploy on the
+# Raspberry Pi minutes after the deploy had itself confirmed the database was
+# up: on a slow
 # host `docker compose exec` is not instantaneous, and "not ready this
 # millisecond" is not the same as "not coming".
 #
 # Still bounded, and it still fails: a database that is genuinely down must
 # stop the deploy before anything migrates, which is the whole reason the
 # backup runs first.
-db_ready() { "${COMPOSE[@]}" exec -T db pg_isready -q >/dev/null 2>&1; }
+db_ready() { "${COMPOSE[@]}" exec -T "$DB" pg_isready -q >/dev/null 2>&1; }
 
 # Announced BEFORE the call, not after. Every `docker compose exec` below is
 # tens of seconds on the Pi, and a step that only reports once it finishes is
@@ -113,7 +121,7 @@ fail_run() {
 
 # ─── dump ──────────────────────────────────────────────────────────────────
 say "Dumping $POSTGRES_DB ($KIND)"
-if ! "${COMPOSE[@]}" exec -T db sh -c \
+if ! "${COMPOSE[@]}" exec -T "$DB" sh -c \
         'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
         > "$TARGET.partial"; then
     fail_run "pg_dump failed"
@@ -137,15 +145,15 @@ fi
 # or to `-` both fail on a custom-format archive, so it is copied in first.
 say "Staging the archive for verification"
 VERIFY_PATH="/tmp/lifeos-verify-$$.dump"
-if ! "${COMPOSE[@]}" cp "$TARGET.partial" "db:$VERIFY_PATH" >/dev/null 2>&1; then
+if ! "${COMPOSE[@]}" cp "$TARGET.partial" "$DB:$VERIFY_PATH" >/dev/null 2>&1; then
     fail_run "could not stage the archive for verification"
 fi
 say "Reading the archive back with pg_restore"
-if ! "${COMPOSE[@]}" exec -T db pg_restore --list "$VERIFY_PATH" >/dev/null 2>&1; then
-    "${COMPOSE[@]}" exec -T db rm -f "$VERIFY_PATH" >/dev/null 2>&1 || true
+if ! "${COMPOSE[@]}" exec -T "$DB" pg_restore --list "$VERIFY_PATH" >/dev/null 2>&1; then
+    "${COMPOSE[@]}" exec -T "$DB" rm -f "$VERIFY_PATH" >/dev/null 2>&1 || true
     fail_run "pg_restore could not read the archive"
 fi
-"${COMPOSE[@]}" exec -T db rm -f "$VERIFY_PATH" >/dev/null 2>&1 || true
+"${COMPOSE[@]}" exec -T "$DB" rm -f "$VERIFY_PATH" >/dev/null 2>&1 || true
 
 mv "$TARGET.partial" "$TARGET"
 chmod 600 "$TARGET"

@@ -38,9 +38,9 @@ Notion exports. What exists:
   and why. `scripts/import-covers.mjs` adds page covers from the HTML export,
   and `scripts/verify-import.mjs` checks imported values against the export.
 - **Data mobility and backups.** A portable export and restore, and a verified
-  database backup before every deploy and once a day. See below.
-- **Delivery.** CI, a deploy workflow, and a local rehearsal of the deploy and
-  its rollback. See [Deployment](#deployment).
+  database backup script (not yet scheduled on freddy). See below.
+- **Delivery.** CI that tests every pull request and publishes a multi-arch
+  image; the freddy repo deploys it. See [Deployment](#deployment).
 
 The schema is the ordered SQL in `migrations/`; `./run.sh migrate --status`
 lists what is applied.
@@ -146,10 +146,8 @@ migrations/            ordered SQL, applied by scripts/migrate.mjs
 src/routes/            (app) pages, (auth) sign-in, api/ health, media, quick-add
 src/lib/server/        auth db health import repositories, env logger storage
 src/lib/components/    shared UI components
-scripts/               migrate, import, export/restore, backup, deploy, server setup, recovery
+scripts/               migrate, import, export/restore, backup, recovery
 tests/                 unit integration e2e fixtures
-deploy/systemd/        the daily backup timer
-infrastructure/nginx/  the one Nginx site
 docs/                  deployment, data mobility, source catalog
 var/                   gitignored runtime data
 ```
@@ -186,7 +184,8 @@ Two separate tools, kept apart on purpose:
   [`docs/data-mobility.md`](docs/data-mobility.md).
 - **Operational backup** — `scripts/backup.sh` on the server: a custom-format
   `pg_dump`, read back with `pg_restore --list` and recorded with its checksum
-  and row counts. `scripts/deploy.sh` runs it before every migration, and the
-  systemd timer that `setup-server.sh` installs runs it daily. Dumps stay on
-  the host for 14 days by default. Nothing copies them off the host yet, and
-  there is no scripted restore; both are still open in §13 (BKP-001, BKP-003).
+  and row counts, kept on the host for 14 days by default. **Nothing runs it
+  in production since the move to freddy** — freddy needs a daily timer and a
+  pre-migration run; [`docs/deployment.md`](docs/deployment.md) has the
+  command. Nothing copies dumps off the host yet, and there is no scripted
+  restore; both are still open in §13 (BKP-001, BKP-003).

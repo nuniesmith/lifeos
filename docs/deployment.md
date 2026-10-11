@@ -1,104 +1,56 @@
 # Deployment
 
-Same shape on a Raspberry Pi and on a Linode: a 64-bit host running Docker,
-reached only over Tailscale, serving a loopback Nginx through Tailscale Serve.
-The application is never built on the server — CI publishes a multi-arch image
-(`linux/amd64` + `linux/arm64`) and the server pulls it.
+Production runs on freddy, and the [`nuniesmith/freddy`](https://github.com/nuniesmith/freddy)
+repo owns it: the `lifeos-db`, `lifeos-app` and `lifeos-nginx` services in
+its `docker-compose.yml`, the Nginx site in `services/lifeos/nginx.conf`, the
+secrets, and the CI/CD that deploys them. This repo builds the image.
 
-## One-time server setup
+## What this repo provides
 
-Create the `actions` deploy account and its SSH key with the canonical setup
-scripts first. The generator downloads `setup-prod-server.sh` automatically
-when that account is missing:
+CI (`.github/workflows/ci.yml`) publishes a `linux/amd64` + `linux/arm64`
+image to GHCR from every push to `main`, tagged with the commit and with
+`main`, and scans it. A weekly refresh rebuilds `main` on fresh base images
+and publishes it as `refresh-<run id>` and `main`; it does not move the
+commit's own tag, so `:<sha>` stays a rollback target. Nothing here deploys:
+freddy's next deploy pulls `:main` (or whatever `LIFEOS_IMAGE` names).
 
-```sh
-curl -fL https://raw.githubusercontent.com/nuniesmith/scripts/main/scripts/setup/generate-secrets.sh \
-  -o /tmp/generate-secrets.sh
-sudo bash /tmp/generate-secrets.sh --no-confirm --env prod
-```
+The image carries what a deploy runs inside it, and
+`tests/unit/deployment.test.ts` fails if that stops being true:
 
-Copy the generated SSH values into the LifeOS
-repository's Actions secrets. Then prepare the application directory:
-
-```sh
-git clone https://github.com/nuniesmith/lifeos.git ~/lifeos
-cd ~/lifeos && sudo ./scripts/setup-server.sh
-```
-
-If Tailscale is not connected yet, run `sudo tailscale up` before recording the
-server address below. `setup-server.sh` expects the `actions` account created by
-the canonical generator and repairs its state-directory permissions safely on
-re-runs.
-
-`setup-server.sh` installs Docker, creates `/srv/lifeos`, and generates
-`/srv/lifeos/.env` with a random `POSTGRES_PASSWORD`. The file is owned by the
-`actions` deploy account and remains on the server; the password never travels
-through a CI runner.
-
-Then expose it and record the address:
-
-```sh
-sudo tailscale serve --bg --https=443 8080
-tailscale status                      # note the 100.x address
-```
-
-Put that 100.x address in the `LIFEOS_TAILSCALE_IP` repository secret, and set
-`ORIGIN` in `/srv/lifeos/.env` to the `https://…ts.net` name Serve printed.
-`ORIGIN` must match exactly or every form post is rejected as cross-site.
-
-Funnel stays off. This host is reachable from the tailnet only.
-
-## Deploying
-
-Push to `main`. CI runs, publishes the image, and the Deploy workflow follows
-it. `workflow_dispatch` also accepts an explicit image reference for rollback.
-
-`scripts/deploy.sh` runs on the server and is the whole sequence:
-
-1. preflight — refuse below 2 GB free, take a `flock` so two deploys cannot
-   interleave;
-2. pull the image first, so a bad reference fails before anything stops;
-3. bring PostgreSQL up and wait for it;
-4. back up before migrating;
-5. stop the app, migrate as a one-shot, so no request meets a half-migrated
-   schema;
-6. start the app and Nginx, with PostgreSQL up throughout;
-7. gate on `/api/health/live`, rolling the **application** back on failure —
-   never the database, because a migration may already have committed;
-8. prune images, keeping the last three so a rollback target survives.
+- `scripts/migrate.mjs` and `migrations/` — freddy runs
+  `docker compose run --rm lifeos-app node scripts/migrate.mjs` before the
+  app restarts. The app never migrates itself.
+- `scripts/export-data.mjs` and `scripts/restore-data.mjs` — see
+  [`data-mobility.md`](data-mobility.md).
 
 ## Rollback
 
+Point `LIFEOS_IMAGE` in freddy's `.env` at `ghcr.io/nuniesmith/lifeos:<sha>`
+and redeploy. Rolling back the image does not roll back the database; if a
+migration must be reversed, that is a restore, not a deploy.
+
+## Backups
+
+`scripts/backup.sh` runs on the host against freddy's stack:
+
 ```sh
-gh workflow run deploy.yml -f image=ghcr.io/nuniesmith/lifeos:<sha>
+LIFEOS_COMPOSE_FILE=/home/actions/freddy/docker-compose.yml \
+LIFEOS_ENV_FILE=/home/actions/freddy/.env \
+LIFEOS_DB_SERVICE=lifeos-db \
+  ./scripts/backup.sh --scheduled
 ```
 
-The previous digest is in `/srv/lifeos/releases/history`. Rolling back the
-image does not roll back the database; if a migration must be reversed, that
-is a restore, not a deploy.
+It writes a verified custom-format dump to `/srv/lifeos/backups` (override
+with `LIFEOS_STATE_DIR`), records it in `backup_runs`, and keeps 14 days.
+`/api/health/ready` reports a backup older than 36 hours.
 
-## Required secrets
-
-Secret names are the unprefixed ones. `nuniesmith/scripts`
-`generate-secrets.sh --env prod` emits `PROD_`-prefixed names instead; those
-are accepted as a fallback, so running the generator later does not quietly
-stop matching. Set one spelling or the other, not both.
-
-| Secret                                                 | Purpose                                                                                                                                                      |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `LIFEOS_TAILSCALE_IP`                                  | The server's 100.x address. **Load-bearing** — `tailscale-connect` logs out before name resolution would run. `PROD_TAILSCALE_IP` is accepted as a fallback. |
-| `TAILSCALE_OAUTH_CLIENT_ID` / `TAILSCALE_OAUTH_SECRET` | Joins the runner to the tailnet as `tag:ci`.                                                                                                                 |
-| `SSH_USER` / `SSH_KEY` / `SSH_PORT`                    | Deploy account. The private key is generated off-server. The `PROD_SSH_*` spelling is accepted as a fallback.                                                |
-| `GHCR_USERNAME` / `GHCR_READ_TOKEN`                    | Pull credential for the private image. `read:packages` only.                                                                                                 |
-| `DISCORD_WEBHOOK_ACTIONS`                              | Deploy notifications.                                                                                                                                        |
-
-`POSTGRES_PASSWORD` is deliberately **not** a repository secret. It is
-generated on the server into `/srv/lifeos/.env`, so a runner compromise does
-not expose the database.
+**Not wired up yet.** Since the move to freddy, nothing runs this: freddy's
+own `scripts/backup.sh` covers Authentik and Nextcloud only, and its deploy
+migrates without a backup first. Both belong in freddy — a daily timer, and a
+`--pre-deploy` run before the migration step.
 
 ## Architecture
 
 The published image covers `linux/amd64` and `linux/arm64`. A 32-bit
 Raspberry Pi OS will pull an image it cannot run, and the failure looks like a
-corrupt container rather than a mismatch — `setup-server.sh` checks `uname -m`
-and refuses early.
+corrupt container rather than a mismatch.

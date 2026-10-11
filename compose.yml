@@ -1,4 +1,4 @@
-# Development stack. Production uses compose.prod.yml.
+# Development stack. Production runs in the freddy repo's compose stack.
 name: lifeos
 
 services:
