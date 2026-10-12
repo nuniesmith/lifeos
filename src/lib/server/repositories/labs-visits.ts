@@ -753,7 +753,7 @@ export interface MedicalVisitInput extends OwnershipInput {
 /**
  * The household's own timezone, the same column `householdToday` (./base)
  * reads. A visit's wall-clock time has to be placed in this zone rather than
- * the server process's: nothing in the Dockerfile or compose.prod.yml pins
+ * the server process's: nothing in the Dockerfile or the production compose file pins
  * the container's own `TZ`, so a bare `new Date("2026-09-25T14:40")` would
  * read the form field as UTC on most deployments -- the same class of bug
  * `sourceInstant` exists to prevent on the import side (see mappers/
