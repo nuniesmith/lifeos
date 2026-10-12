@@ -168,19 +168,28 @@ chmod 600 "$TARGET"
 BYTES=$(stat -c %s "$TARGET")
 SHA=$(sha256sum "$TARGET" | cut -d' ' -f1)
 
-# Row counts per table, recorded so a restore can be checked against them.
+# Row counts per table, recorded so a restore can be checked against them:
+# in backup_runs, and beside the dump so a restore on a fresh host, whose
+# database knows nothing of this backup, can check them too.
+# restore-backup.sh runs this same query against what it restored.
 say "Counting rows for the restore check"
-COUNTS=$(psql_q "
-    select coalesce(jsonb_object_agg(relname, n), '{}'::jsonb)::text from (
-        select c.relname, (
-            xpath('/row/c/text()',
-                  query_to_xml(format('select count(*) as c from public.%I', c.relname),
-                               false, true, ''))
-        )[1]::text::bigint as n
-        from pg_class c
-        join pg_namespace s on s.oid = c.relnamespace
-        where s.nspname = 'public' and c.relkind = 'r'
-    ) t" | tr -d '\n')
+COUNT_TSV=$(psql_q "
+    select c.relname || E'\t' || (
+        xpath('/row/c/text()',
+              query_to_xml(format('select count(*) as c from public.%I', c.relname),
+                           false, true, ''))
+    )[1]::text
+    from pg_class c
+    join pg_namespace s on s.oid = c.relnamespace
+    where s.nspname = 'public' and c.relkind = 'r'
+    order by c.relname")
+# Table names are plain identifiers, so they need no JSON escaping.
+COUNTS=$(awk -F'\t' 'BEGIN { printf "{" } NF == 2 { printf "%s\"%s\":%s", (n++ ? "," : ""), $1, $2 } END { printf "}" }' <<<"$COUNT_TSV")
+
+# The sidecars: `sha256sum -c` reads the first as it is.
+printf '%s  %s\n' "$SHA" "$(basename "$TARGET")" > "$TARGET.sha256"
+printf '%s\n' "$COUNT_TSV" > "$TARGET.counts"
+chmod 600 "$TARGET.sha256" "$TARGET.counts"
 
 if [[ -n "$RUN_ID" ]]; then
     say "Recording the result"
@@ -203,6 +212,6 @@ newest=$(find "$BACKUP_DIR" -name 'lifeos-*.dump' -printf '%T@ %p\n' | sort -rn 
 removed=0
 for f in "${old[@]:-}"; do
     [[ -n "$f" && "$f" != "$newest" ]] || continue
-    rm -f "$f" && removed=$((removed + 1))
+    rm -f "$f" "$f.sha256" "$f.counts" && removed=$((removed + 1))
 done
 ok "removed $removed expired backup(s); $(find "$BACKUP_DIR" -name 'lifeos-*.dump' | wc -l) retained"

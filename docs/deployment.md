@@ -41,13 +41,42 @@ LIFEOS_DB_SERVICE=lifeos-db \
 ```
 
 It writes a verified custom-format dump to `/srv/lifeos/backups` (override
-with `LIFEOS_STATE_DIR`), records it in `backup_runs`, and keeps 14 days.
-`/api/health/ready` reports a backup older than 36 hours.
+with `LIFEOS_STATE_DIR`) with two files beside it — `.sha256`, its checksum,
+and `.counts`, the row count of every table — records it in `backup_runs`,
+and keeps 14 days. `/api/health/ready` reports a backup older than 36 hours.
+Copy all three files when moving a backup anywhere.
 
 **Not wired up yet.** Since the move to freddy, nothing runs this: freddy's
 own `scripts/backup.sh` covers Authentik and Nextcloud only, and its deploy
 migrates without a backup first. Both belong in freddy — a daily timer, and a
 `--pre-deploy` run before the migration step.
+
+## Restoring a backup
+
+`scripts/restore-backup.sh` takes the same three variables, plus
+`LIFEOS_APP_SERVICE=lifeos-app`:
+
+```sh
+./scripts/restore-backup.sh /srv/lifeos/backups/lifeos-scheduled-….dump          # check only
+./scripts/restore-backup.sh /srv/lifeos/backups/lifeos-scheduled-….dump --apply  # and switch
+```
+
+It never restores over the live database. The dump goes into a staging
+database, which must match the checksum and every table's row count (a
+difference in `sessions`, `auth_audit` or `backup_runs` only warns: those can
+move in the seconds between the dump and the count). Without `--apply` it
+stops there and drops the staging database.
+
+With `--apply` it backs up the live database, stops the app, swaps the two
+databases' names in one transaction, deletes every session so everyone signs
+in again, and starts the app. If the app does not report its database and
+migrations ready within a minute, the names swap back and the app starts on
+the database it had. The replaced database is kept as
+`<db>_pre_restore_<stamp>`; the script prints the `dropdb` for it.
+
+A dump with no `.sha256` and `.counts` (one taken before they existed) needs
+`--without-manifest` and is restored unchecked. Uploads are not in the dump,
+so this restores the database only.
 
 ## Architecture
 
