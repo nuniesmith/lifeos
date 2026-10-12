@@ -47,9 +47,16 @@ COMPOSE=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 
 psql_q() { "${COMPOSE[@]}" exec -T "$DB" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -qtA -c "$1"; }
 
-set -a; . "$ENV_FILE"; set +a
-: "${POSTGRES_USER:?POSTGRES_USER missing from .env}"
-: "${POSTGRES_DB:?POSTGRES_DB missing from .env}"
+# Reads only the two keys it needs rather than sourcing the file: on freddy
+# it is the whole host's .env, and one unquoted value with a space or a `$`
+# in any other service's secret would break the shell.
+env_value() {
+    { grep -m1 "^$1=" "$ENV_FILE" || true; } | cut -d= -f2- | sed -e "s/^[\"']//" -e "s/[\"']\$//"
+}
+POSTGRES_USER="$(env_value POSTGRES_USER)"
+POSTGRES_DB="$(env_value POSTGRES_DB)"
+: "${POSTGRES_USER:?POSTGRES_USER missing from $ENV_FILE}"
+: "${POSTGRES_DB:?POSTGRES_DB missing from $ENV_FILE}"
 
 mkdir -p "$BACKUP_DIR"
 
