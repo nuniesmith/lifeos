@@ -316,6 +316,56 @@ test.describe('the Financial Hub', () => {
 		await expect(perGoal).toContainText('CA$200.00');
 	});
 
+	test('looks back at past months from the glance, a year at a time', async ({ page }) => {
+		// A past year nothing else in the suite writes to.
+		await query(async (sql) => {
+			const householdId = await firstHousehold(sql);
+			const userId = await idOf(sql, OWNER.username);
+			const billId = await seedBill(OWNER.username, { name: 'Fictional Past Bill' });
+			await sql`insert into bill_payments (bill_id, paid_on, amount_paid, created_by)
+			          values (${billId}, '2025-02-03', 80, ${userId}),
+			                 (${billId}, '2025-02-20', 20, ${userId})`;
+			await sql`insert into income_entries
+			            (household_id, title, received_on, expected_amount, actual_amount, created_by)
+			          values (${householdId}, 'Fictional Pay', '2025-02-15', 3000, 2950, ${userId})`;
+			await sql`insert into savings_contributions
+			            (household_id, title, amount, contributed_on, created_by)
+			          values (${householdId}, 'Fictional Fund', 250, '2025-02-25', ${userId})`;
+		});
+
+		await signIn(page, OWNER.username);
+		await page.goto('/finance');
+		await page.getByRole('link', { name: 'Earlier months' }).click();
+		await expect(page.getByRole('heading', { level: 1, name: 'Money by month' })).toBeVisible();
+		// This month leads, marked as not over yet.
+		await expect(page.getByRole('article').first().getByText('So far')).toBeVisible();
+
+		await page.goto('/finance/months?to=2025-03');
+		const february = page.getByRole('article', { name: 'February 2025' });
+		await expect(february.getByText('Received')).toBeVisible();
+		await expect(february).toContainText(/2,950\.00/);
+		await expect(february).toContainText(/3,000\.00 expected/);
+		await expect(february).toContainText(/100\.00/);
+		await expect(february).toContainText('2 payments');
+		await expect(february).toContainText(/250\.00/);
+		await expect(
+			page.getByRole('article', { name: 'January 2025' }).getByText('Nothing recorded.')
+		).toBeVisible();
+		await expect(page.getByRole('article')).toHaveCount(12);
+
+		await page.getByRole('link', { name: '← Earlier' }).click();
+		await expect(page).toHaveURL(/to=2024-03/);
+		await page.getByRole('link', { name: 'Later →' }).click();
+		await expect(page).toHaveURL(/to=2025-03/);
+
+		// A month that has not happened is not a page of zeros.
+		const future = await page.goto('/finance/months?to=2999-01');
+		expect(future?.status()).toBe(404);
+
+		await page.goto('/finance/months?to=2025-03');
+		expect(await sideways(page)).toBeLessThanOrEqual(0);
+	});
+
 	test('the other household member cannot reach a private bill', async ({ page }) => {
 		const billId = await seedBill(OWNER.username, {
 			name: 'Fictional Private Bill',

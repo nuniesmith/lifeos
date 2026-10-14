@@ -125,6 +125,9 @@
 				<span class="label">saved in total</span>
 			</div>
 		</div>
+		<div class="glance-more">
+			<Button href="/finance/months" variant="ghost">Earlier months</Button>
+		</div>
 	</section>
 
 	<section aria-labelledby="bills-heading">
@@ -596,6 +599,11 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
 		gap: var(--sp-3);
+	}
+	.glance-more {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: var(--sp-2);
 	}
 	.stat {
 		display: grid;
