@@ -10,10 +10,13 @@ import {
 	isDay,
 	listDailyLogs,
 	logHealthTerm,
+	mealPlan,
+	MEAL_SLOTS,
 	unlogHealthTerm,
 	updateDailyLog,
 	type DailyLogInput,
 	type DailyLogRecord,
+	type MealSlot,
 	type Viewer
 } from '$lib/server/repositories';
 import { sql } from '$lib/server/db';
@@ -101,6 +104,12 @@ export interface JournalData {
 	 * twenty-five imported days have one.
 	 */
 	images: { id: string; width: number | null; height: number | null; alt: string }[];
+	/**
+	 * What was planned to eat that day, breakfast first (PACK2-003). The plan
+	 * and each recipe are scoped as on `/food`, so a member never sees the
+	 * other member's private recipe here either.
+	 */
+	menu: { slot: MealSlot; recipeId: string; recipeName: string }[];
 	/** The health words on this day, and the household's words to add. */
 	tags: JournalTags;
 	previous: string;
@@ -138,7 +147,7 @@ export async function loadJournal(
 	if (requested !== null && !isDay(requested)) error(404, 'Not a date');
 	const date = requested ?? today;
 
-	const [entry, history] = await Promise.all([
+	const [entry, history, plan] = await Promise.all([
 		getDailyLogForDate(sql, viewer, date),
 		listDailyLogs(sql, viewer, {
 			// The viewer's own days only. A household-visible entry of the
@@ -147,8 +156,13 @@ export async function loadJournal(
 			ownerUserId: viewer.userId,
 			order: 'newest',
 			limit: HISTORY_LIMIT
-		})
+		}),
+		mealPlan(sql, viewer, date, date)
 	]);
+	// The query orders slots by name, which puts dinner before lunch.
+	const menu = plan
+		.flatMap((day) => day.meals)
+		.sort((a, b) => MEAL_SLOTS.indexOf(a.slot) - MEAL_SLOTS.indexOf(b.slot));
 
 	// Sequenced after the entry rather than beside it: the images hang off the
 	// entry's own page id, and the tags off its id, so there is nothing to ask
@@ -194,6 +208,7 @@ export async function loadJournal(
 				}
 			: null,
 		tags,
+		menu,
 		previous: addDays(date, -1),
 		next: date < today ? addDays(date, 1) : null,
 		history: history.map((row) => ({

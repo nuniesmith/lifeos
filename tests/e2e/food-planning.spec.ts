@@ -185,6 +185,40 @@ test('undo takes the week back off the list, and a meal can be removed', async (
 	await expect(monday.getByRole('button', { name: /Plan a meal for Monday/ })).toBeFocused();
 });
 
+test('the journal shows the day’s menu, breakfast first, linked to each recipe', async ({
+	page
+}) => {
+	await signIn(page);
+	await page.goto(`/food?from=${WEEK}`);
+
+	// Dinner first, breakfast second: the journal must still list breakfast first.
+	const thursday = page.getByRole('article', { name: /Thu/ });
+	for (const [meal, recipe] of [
+		['Dinner', RECIPES[0]!],
+		['Breakfast', RECIPES[1]!]
+	] as const) {
+		await thursday.getByRole('button', { name: /Plan a meal for Thursday/ }).click();
+		const sheet = page.getByRole('dialog', { name: /Plan Thursday/ });
+		await sheet.getByRole('radio', { name: meal }).check();
+		await sheet.getByRole('button', { name: new RegExp(recipe) }).click();
+		await expect(thursday.getByText(recipe, { exact: true })).toBeVisible();
+	}
+
+	await page.goto('/journal/2031-03-13');
+	const menu = page.getByRole('list', { name: 'Meals planned for this day' });
+	await expect(menu.getByRole('listitem')).toHaveText([
+		new RegExp(`${RECIPES[1]}.*Breakfast`),
+		new RegExp(`${RECIPES[0]}.*Dinner`)
+	]);
+
+	await menu.getByRole('link', { name: new RegExp(RECIPES[0]!) }).click();
+	await expect(page.getByRole('heading', { level: 1, name: RECIPES[0] })).toBeVisible();
+
+	// A day with nothing planned has no menu card at all.
+	await page.goto('/journal/2031-03-14');
+	await expect(page.getByRole('heading', { name: 'On the menu' })).toHaveCount(0);
+});
+
 test('the planning sheet works from the keyboard, with thumb-sized targets', async ({ page }) => {
 	await signIn(page);
 	await page.goto(`/food?from=${WEEK}`);
