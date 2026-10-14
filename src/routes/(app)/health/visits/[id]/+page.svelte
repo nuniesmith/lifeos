@@ -354,7 +354,7 @@
 						required
 					/>
 				</label>
-				<Button type="submit">Attach</Button>
+				<Button type="submit">Attach file</Button>
 			</form>
 			<p class="muted small">A PDF or a photo, up to 20 MB. Files follow the visit's privacy.</p>
 		</Card>

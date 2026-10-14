@@ -61,6 +61,16 @@ test.beforeEach(async () => {
 			insert into household_members (household_id, user_id)
 			values (${householdId}, ${user!.id}) on conflict do nothing
 		`;
+		// A household symptom word, as other specs leave behind: the visit page
+		// then has the symptom picker's own "Attach" button as well.
+		await sql`
+			insert into health_vocabulary (household_id, kind, name)
+			select ${householdId}, 'symptom', 'Fictional ache'
+			where not exists (
+				select 1 from health_vocabulary
+				where household_id = ${householdId} and kind = 'symptom' and name = 'Fictional ache'
+			)
+		`;
 		await sql`delete from medical_visits where owner_user_id = ${user!.id}`;
 		const [visit] = await sql<{ id: string }[]>`
 			insert into medical_visits (household_id, owner_user_id, visibility, reason, visit_at)
@@ -92,7 +102,7 @@ test('attaches a PDF to a visit, downloads it, and removes it', async ({ page })
 		mimeType: 'application/pdf',
 		buffer: Buffer.from('not really a pdf')
 	});
-	await page.getByRole('button', { name: 'Attach', exact: true }).click();
+	await page.getByRole('button', { name: 'Attach file' }).click();
 	await expect(page.getByRole('alert')).toHaveText(
 		'Attach a PDF or a photo (JPEG, PNG, WebP or GIF).'
 	);
@@ -102,7 +112,7 @@ test('attaches a PDF to a visit, downloads it, and removes it', async ({ page })
 		mimeType: 'application/pdf',
 		buffer: PDF
 	});
-	await page.getByRole('button', { name: 'Attach', exact: true }).click();
+	await page.getByRole('button', { name: 'Attach file' }).click();
 	const files = page.getByRole('list', { name: 'Files on this visit' });
 	await expect(files.getByRole('link', { name: 'referral.pdf' })).toBeVisible();
 
