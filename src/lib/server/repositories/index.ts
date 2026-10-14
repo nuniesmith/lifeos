@@ -70,3 +70,4 @@ export * from './search';
 export * from './tags';
 export * from './tasks';
 export * from './todays-three';
+export * from './visit-files';

@@ -38,7 +38,9 @@ export default defineConfig({
 				process.env.E2E_DATABASE_URL ??
 				process.env.DATABASE_URL ??
 				'postgresql://lifeos_app:devpassword@127.0.0.1:5433/lifeos_e2e',
-			LIFEOS_BOOTSTRAP_PASSWORD: 'e2e-bootstrap-password'
+			LIFEOS_BOOTSTRAP_PASSWORD: 'e2e-bootstrap-password',
+			// As the Dockerfile sets it, so uploads are tested at production's limit.
+			BODY_SIZE_LIMIT: '21M'
 		}
 	}
 });

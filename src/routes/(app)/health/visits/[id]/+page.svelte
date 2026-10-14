@@ -84,6 +84,11 @@
 
 	const addedFeedback = (action: 'addProvider' | 'addPlace' | 'addPet') =>
 		form && form.action === action && 'addedId' in form ? 'Added.' : undefined;
+
+	const fileSize = (bytes: number): string =>
+		bytes < 1024 * 1024
+			? `${Math.max(1, Math.round(bytes / 1024))} KB`
+			: `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 </script>
 
 <svelte:head><title>{data.visit.reason} · LifeOS</title></svelte:head>
@@ -311,6 +316,49 @@
 			</p>
 		</Card>
 
+		<Card title="Files" subtitle="Referrals, receipts, photos of a page">
+			{#if data.files.length > 0}
+				<ul class="files" aria-label="Files on this visit">
+					{#each data.files as file (file.id)}
+						<li>
+							<a href={resolve(appPath(`/api/media/${file.id}`))} target="_blank" rel="noopener"
+								>{file.name}</a
+							>
+							<span class="muted small">{fileSize(file.byteSize)}</span>
+							<form method="POST" action="?/detachFile" use:enhance>
+								<input type="hidden" name="fileId" value={file.id} />
+								<button type="submit" aria-label={`Remove ${file.name}`}>×</button>
+							</form>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="muted">No files yet.</p>
+			{/if}
+
+			<form
+				method="POST"
+				action="?/attachFile"
+				enctype="multipart/form-data"
+				class="add-symptom"
+				use:enhance={() =>
+					({ update }) =>
+						update({ reset: true })}
+			>
+				<label class="grow file-pick">
+					<span class="sr-only">Attach a file</span>
+					<input
+						type="file"
+						name="file"
+						accept="application/pdf,image/jpeg,image/png,image/webp,image/gif"
+						required
+					/>
+				</label>
+				<Button type="submit">Attach</Button>
+			</form>
+			<p class="muted small">A PDF or a photo, up to 20 MB. Files follow the visit's privacy.</p>
+		</Card>
+
 		<Card title={archived ? 'Restore' : 'Archive'}>
 			<p class="muted">
 				{archived
@@ -411,6 +459,40 @@
 	.chips button:hover {
 		background: var(--c-surface);
 		color: var(--c-crit);
+	}
+	.files {
+		display: grid;
+		gap: var(--sp-2);
+		margin: 0 0 var(--sp-3);
+		padding: 0;
+		list-style: none;
+	}
+	.files li {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+		min-width: 0;
+	}
+	.files a {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.files button {
+		min-width: var(--tap);
+		min-height: var(--tap);
+		border: 0;
+		background: none;
+		color: var(--c-text-muted);
+		font-size: var(--fs-lg);
+		cursor: pointer;
+	}
+	.file-pick input {
+		width: 100%;
+		min-height: var(--tap);
+		font-size: var(--fs-sm);
 	}
 	.add-symptom {
 		display: flex;
