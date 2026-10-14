@@ -284,6 +284,20 @@ describe('committed import', () => {
 		expect(rows.map((r) => r.name)).toEqual(['Broccoli', 'Cheddar']);
 	});
 
+	it('relates two recipes once, though the source lists the pair on both', async () => {
+		await run(false);
+		const rows = await sql<{ a: string; b: string }[]>`
+			select ra.name as a, rb.name as b from recipe_links l
+			join recipes ra on ra.id = l.recipe_a_id
+			join recipes rb on rb.id = l.recipe_b_id
+		`;
+		expect(rows).toHaveLength(1);
+		expect([rows[0]!.a, rows[0]!.b].sort()).toEqual([
+			'Broccoli Cheese Soup',
+			'Fluffy Buttermilk Pancakes'
+		]);
+	});
+
 	it('takes the meal slot from the property name, not the recipe', async () => {
 		await run(false);
 		const rows = await sql<{ slot: string; name: string }[]>`

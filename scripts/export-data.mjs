@@ -149,6 +149,8 @@ const TABLES = [
 	'goal_habits',
 	'daily_log_health',
 	'recipe_ingredients',
+	// migration 0039: both ends are recipes, so it is scoped through them.
+	'recipe_links',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
 	// migration 0030: book_authors/book_genres have no household_id of their
@@ -284,6 +286,8 @@ async function rowsFor(db, table, id) {
 			return db`select d.* from medication_doses d join medications m on m.id = d.medication_id where m.household_id = ${id}::uuid order by d.medication_id, d.on_date, d.slot`;
 		case 'recipe_ingredients':
 			return db`select r.* from recipe_ingredients r join recipes x on x.id = r.recipe_id where x.household_id = ${id}::uuid order by r.recipe_id, r.ingredient_id`;
+		case 'recipe_links':
+			return db`select l.* from recipe_links l join recipes x on x.id = l.recipe_a_id where x.household_id = ${id}::uuid order by l.recipe_a_id, l.recipe_b_id`;
 		case 'meal_plan_recipes':
 			return db`select m.* from meal_plan_recipes m join meal_plans p on p.id = m.meal_plan_id where p.household_id = ${id}::uuid order by m.meal_plan_id, m.recipe_id, m.slot`;
 		case 'medical_visit_symptoms':

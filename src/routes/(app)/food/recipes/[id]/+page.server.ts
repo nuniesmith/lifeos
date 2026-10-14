@@ -5,6 +5,7 @@ import { sql } from '$lib/server/db';
 import { renderMarkdown, safeLinkUrl } from '$lib/server/markdown';
 import {
 	addRecipeIngredient,
+	addRelatedRecipe,
 	attachNewIngredientToRecipe,
 	bodyImagesForPage,
 	coversForPages,
@@ -12,7 +13,10 @@ import {
 	householdToday,
 	ingredientsForRecipe,
 	listIngredients,
+	listRecipes,
+	listRelatedRecipes,
 	removeRecipeIngredient,
+	removeRelatedRecipe,
 	setRecipeArchived,
 	updateRecipe,
 	type WriteResult
@@ -41,17 +45,21 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	// exists is itself the disclosure.
 	if (!recipe) error(404, 'Recipe not found');
 
-	const [ingredients, allIngredients, covers, bodyImages, today] = await Promise.all([
-		ingredientsForRecipe(sql, viewer, recipe.id),
-		// For "attach an ingredient": every ingredient the household can see,
-		// so picking one is a client-side filter rather than a query per
-		// keystroke — the same trade-off the meal-plan sheet makes over recipes.
-		listIngredients(sql, viewer, { order: 'name', limit: 500 }),
-		// The display copy, not the list thumbnail: this one is drawn at card width.
-		coversForPages(sql, viewer, [recipe.notionPageId], 'display'),
-		bodyImagesForPage(sql, viewer, recipe.notionPageId),
-		householdToday(sql, viewer.householdId)
-	]);
+	const [ingredients, allIngredients, covers, bodyImages, today, related, allRecipes] =
+		await Promise.all([
+			ingredientsForRecipe(sql, viewer, recipe.id),
+			// For "attach an ingredient": every ingredient the household can see,
+			// so picking one is a client-side filter rather than a query per
+			// keystroke — the same trade-off the meal-plan sheet makes over recipes.
+			listIngredients(sql, viewer, { order: 'name', limit: 500 }),
+			// The display copy, not the list thumbnail: this one is drawn at card width.
+			coversForPages(sql, viewer, [recipe.notionPageId], 'display'),
+			bodyImagesForPage(sql, viewer, recipe.notionPageId),
+			householdToday(sql, viewer.householdId),
+			listRelatedRecipes(sql, viewer, recipe.id),
+			// For "add a related recipe", filtered below to the ones not linked yet.
+			listRecipes(sql, viewer, { limit: 500 })
+		]);
 
 	const cover = (recipe.notionPageId && covers.get(recipe.notionPageId)) || null;
 
@@ -91,6 +99,11 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		}),
 		source,
 		today,
+		related,
+		pickableRecipes: allRecipes
+			.filter((r) => r.id !== recipe.id && !related.some((x) => x.recipeId === r.id))
+			.map((r) => ({ id: r.id, name: r.name }))
+			.sort((a, b) => a.name.localeCompare(b.name)),
 		// Presentation only: every action below is refused in SQL for someone
 		// who may not write this recipe, whatever the page offered them.
 		canEdit: canWrite(recipe, viewer)
@@ -243,6 +256,27 @@ export const actions: Actions = {
 		);
 		if (!result.ok) return ingredientRefused('setAmount', result);
 		return { action: 'setAmount' as const };
+	},
+
+	relate: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const result = await addRelatedRecipe(
+			sql,
+			viewer,
+			params.id,
+			String(form.get('recipeId') ?? '')
+		);
+		if (!result.ok)
+			return fail(400, { action: 'relate' as const, error: 'Could not link that recipe.' });
+		return { action: 'relate' as const };
+	},
+
+	unrelate: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		await removeRelatedRecipe(sql, viewer, params.id, String(form.get('recipeId') ?? ''));
+		return { action: 'unrelate' as const };
 	},
 
 	detach: async ({ locals, params, request }) => {

@@ -212,6 +212,41 @@ test.describe('a recipe on a phone', () => {
 		expect(await sideways(page)).toBeLessThanOrEqual(0);
 	});
 
+	test('links two recipes, shows the link on both, and unlinks it', async ({ page }) => {
+		const soup = attempt('Fictional leek soup');
+		const bread = attempt('Fictional soda bread');
+		const ids = await withDb(async (sql) => {
+			const householdId = await firstHousehold(sql);
+			await sql`delete from recipes where household_id = ${householdId}::uuid
+			          and name in (${soup}, ${bread})`;
+			return sql<{ id: string; name: string }[]>`
+				insert into recipes (household_id, name)
+				values (${householdId}::uuid, ${soup}), (${householdId}::uuid, ${bread})
+				returning id, name
+			`;
+		});
+		const idOf = (name: string) => ids.find((r) => r.name === name)!.id;
+
+		await signIn(page);
+		await page.goto(`/food/recipes/${idOf(soup)}`);
+		await page.getByLabel('Link a recipe').selectOption({ label: bread });
+		await page.getByRole('button', { name: 'Link recipe' }).click();
+
+		const related = page.getByRole('list', { name: 'Related recipes' });
+		await expect(related.getByRole('link', { name: bread })).toBeVisible();
+		expect(await sideways(page)).toBeLessThanOrEqual(0);
+
+		// The same link, from the other recipe's page.
+		await related.getByRole('link', { name: bread }).click();
+		await expect(page.getByRole('heading', { level: 1, name: bread })).toBeVisible();
+		await expect(
+			page.getByRole('list', { name: 'Related recipes' }).getByRole('link', { name: soup })
+		).toBeVisible();
+
+		await page.getByRole('button', { name: `Unlink ${soup}` }).click();
+		await expect(page.getByRole('list', { name: 'Related recipes' })).toHaveCount(0);
+	});
+
 	test('a new recipe starts from Food HQ with only a name', async ({ page }) => {
 		await signIn(page);
 		await page.goto('/food');
