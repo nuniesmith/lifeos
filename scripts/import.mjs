@@ -4,6 +4,11 @@
  *
  *   node scripts/import.mjs --root data                  dry run (default)
  *   node scripts/import.mjs --root data --commit         actually write
+ *   ... --log-as <username>                              whose reading and routine logs
+ *
+ * The Reading Log and Routine Log are one person's history each, and the
+ * export does not say whose. `--log-as` names that person; without it they
+ * are logged as the household's first member, the owner of everything else.
  *
  * A dry run does all the same work inside a transaction and rolls it back, so
  * the report describes a real import rather than a simulation of one.
@@ -30,6 +35,7 @@ const flag = (name, fallback) => {
 // wherever it happened to be run from.
 const root = flag('--root', process.env.LIFEOS_IMPORT_DIR || 'data');
 const dryRun = !argv.includes('--commit');
+const logAs = flag('--log-as');
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -52,10 +58,25 @@ try {
 		where hm.household_id = ${household.id}
 		order by u.created_at limit 1
 	`;
+	let logUserId = null;
+	if (logAs) {
+		const [person] = await sql`
+			select u.id, u.display_name from users u
+			join household_members hm on hm.user_id = u.id
+			where hm.household_id = ${household.id} and lower(u.username::text) = lower(${logAs})
+		`;
+		if (!person) {
+			console.error(`No user "${logAs}" in "${household.name}".`);
+			process.exit(1);
+		}
+		logUserId = person.id;
+		console.log(`> Reading and routine logs belong to ${person.display_name}`);
+	}
 	const s = await runImport(sql, {
 		root,
 		householdId: household.id,
 		ownerUserId: owner?.id ?? null,
+		logUserId,
 		startedBy: owner?.id ?? null,
 		// Without this the importer fell back to a hardcoded relative
 		// `var/uploads` and ignored LIFEOS_UPLOAD_DIR — the one variable that

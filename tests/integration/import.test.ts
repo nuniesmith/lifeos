@@ -657,7 +657,9 @@ describe('the import CLI', () => {
 describe('exports whose shape changed between imports', () => {
 	const DAILY_LOG = { name: 'Daily Log Database', id: '3b7879a556f180788365fc81070ab3bf' };
 	const SYMPTOMS_ID = '3bc879a556f1801a97e8d6ab23727d35';
-	const SERIES = { name: 'Series Database', id: '3d4879a556f180869fdac9138875a432' };
+	// Series had this role until it got a mapper (2026-10-14); Vet Visit is
+	// the empty placeholder that export added.
+	const VET = { name: 'Vet Visit Database', id: '3c8879a556f180d19073f721acdd70f6' };
 	const INCOME = { name: 'Income Database', id: '3d3879a556f180b98b18d283ba9a94fb' };
 	const page = (n: number) => 'e'.repeat(28) + n.toString(16).padStart(4, '0');
 	const uuid = (hex: string) =>
@@ -813,18 +815,18 @@ describe('exports whose shape changed between imports', () => {
 			await importFrom(
 				await exportOf([
 					{
-						...SERIES,
-						headers: ['Series', 'Books Released'],
-						rows: [{ page: page(20), cells: { Series: 'A Series', 'Books Released': '3' } }]
+						...VET,
+						headers: ['Reason', 'Cost'],
+						rows: [{ page: page(20), cells: { Reason: 'Annual checkup', Cost: '120' } }]
 					},
 					{ ...INCOME, headers: ['Name', 'Amount'], rows: [{ cells: { Name: '', Amount: '' } }] }
 				])
 			)
 		);
 
-		const series = promoted.unrecognised.find((d) => d.database === 'Series Database');
-		expect(series?.note).toMatch(/placeholder/);
-		expect(promoted.notImported.map((d) => d.database)).not.toContain('Series Database');
+		const vet = promoted.unrecognised.find((d) => d.database === 'Vet Visit Database');
+		expect(vet?.note).toMatch(/placeholder/);
+		expect(promoted.notImported.map((d) => d.database)).not.toContain('Vet Visit Database');
 		// Still empty, so still skipped on purpose.
 		expect(promoted.notImported.map((d) => d.database)).toContain('Income Database');
 	});
