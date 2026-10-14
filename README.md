@@ -45,8 +45,7 @@ Notion exports. What exists:
 The schema is the ordered SQL in `migrations/`; `./run.sh migrate --status`
 lists what is applied.
 
-Not done yet (§13 has the detail): copying backups off the host and a scripted
-restore of them; the Notion formula definitions that still have to be captured
+Not done yet (§13 has the detail): copying backups off the host; the Notion formula definitions that still have to be captured
 from the live workspace; finance beyond bills; adding library entries, recipes
 and meals from the app, and logging symptoms against a day there; and the
 final cutover from Notion.
@@ -187,5 +186,6 @@ Two separate tools, kept apart on purpose:
   and row counts, kept on the host for 14 days by default. **Nothing runs it
   in production since the move to freddy** — freddy needs a daily timer and a
   pre-migration run; [`docs/deployment.md`](docs/deployment.md) has the
-  command. Nothing copies dumps off the host yet, and there is no scripted
-  restore; both are still open in §13 (BKP-001, BKP-003).
+  command. `scripts/restore-backup.sh` restores one: into a staging database
+  first, checked against the dump's checksum and row counts, then switched to
+  only with `--apply`. Nothing copies dumps off the host yet (BKP-001).
