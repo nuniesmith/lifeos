@@ -25,9 +25,13 @@ RUN npm run build
 
 # ─── runtime ───────────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim AS runtime
+# BODY_SIZE_LIMIT: adapter-node refuses request bodies over 512K by default,
+# and a file attached to a medical visit is limited to 20 MB in the app, so
+# the server must accept a little more than that for the form around it.
 ENV NODE_ENV=production \
     PORT=3000 \
-    NODE_OPTIONS=--max-old-space-size=384
+    NODE_OPTIONS=--max-old-space-size=384 \
+    BODY_SIZE_LIMIT=21M
 
 # dumb-init reaps zombies and forwards signals, so container stop is a clean
 # SIGTERM to node rather than a 10s timeout kill.

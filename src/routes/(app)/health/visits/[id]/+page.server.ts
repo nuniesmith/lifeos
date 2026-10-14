@@ -1,12 +1,16 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { sql } from '$lib/server/db';
+import { env } from '$lib/server/env';
 import {
 	addVisitSymptom,
+	attachVisitFile,
 	createPerson,
+	detachVisitFile,
 	getMedicalVisit,
 	linkedNamesForVisit,
 	listHealthTerms,
 	listPeople,
+	listVisitFiles,
 	removeVisitSymptom,
 	resultsForVisit,
 	setMedicalVisitArchived,
@@ -40,17 +44,17 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const asOptions = (people: { id: string; name: string }[]) =>
 		people.map((p) => ({ id: p.id, name: p.name }));
 
-	const [results, symptoms, availableSymptoms, providers, places, pets, linked] = await Promise.all(
-		[
+	const [results, symptoms, availableSymptoms, providers, places, pets, linked, files] =
+		await Promise.all([
 			resultsForVisit(sql, viewer, visit.id),
 			symptomsForVisit(sql, viewer, visit.id),
 			listHealthTerms(sql, viewer, { kind: 'symptom', limit: 300 }),
 			listPeople(sql, viewer, { kind: 'person', limit: 300 }),
 			listPeople(sql, viewer, { kind: 'place', limit: 300 }),
 			listPeople(sql, viewer, { kind: 'pet', limit: 300 }),
-			linkedNamesForVisit(sql, viewer, visit)
-		]
-	);
+			linkedNamesForVisit(sql, viewer, visit),
+			listVisitFiles(sql, viewer, visit.id)
+		]);
 
 	const attached = new Set(symptoms.map((s) => s.vocabularyId));
 	return {
@@ -63,7 +67,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		providers: asOptions(providers),
 		places: asOptions(places),
 		pets: asOptions(pets),
-		linked
+		linked,
+		files
 	};
 };
 
@@ -144,6 +149,36 @@ export const actions: Actions = {
 		);
 		if (!result.ok) return fail(400, { error: 'Could not attach that symptom.' });
 		return { symptomAdded: true };
+	},
+
+	attachFile: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const file = form.get('file');
+		if (!(file instanceof File) || file.size === 0) {
+			return fail(400, { error: 'Choose a file to attach.' });
+		}
+		const result = await attachVisitFile(
+			sql,
+			viewer,
+			params.id,
+			{ bytes: Buffer.from(await file.arrayBuffer()), name: file.name },
+			env.LIFEOS_UPLOAD_DIR
+		);
+		if (!result.ok) {
+			return fail(result.reason === 'invalid' ? 400 : 404, {
+				error: result.message ?? 'Could not attach that file.'
+			});
+		}
+		return { fileAttached: true };
+	},
+
+	detachFile: async ({ locals, params, request }) => {
+		const viewer = await requireViewer(locals.user);
+		const form = await request.formData();
+		const result = await detachVisitFile(sql, viewer, params.id, String(form.get('fileId') ?? ''));
+		if (!result.ok) return fail(400, { error: 'Could not remove that file.' });
+		return { fileDetached: true };
 	},
 
 	removeSymptom: async ({ locals, params, request }) => {

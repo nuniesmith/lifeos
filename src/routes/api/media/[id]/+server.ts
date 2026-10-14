@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { error } from '@sveltejs/kit';
 import { env } from '$lib/server/env';
 import { sql } from '$lib/server/db';
+import { servableAttachment } from '$lib/server/repositories';
 import { requireViewer } from '$lib/server/viewer';
 import type { RequestHandler } from './$types';
 
@@ -30,13 +31,9 @@ const uploadRoot = resolve(env.LIFEOS_UPLOAD_DIR);
 export const GET: RequestHandler = async ({ params, locals, setHeaders }) => {
 	const viewer = await requireViewer(locals.user);
 
-	const [row] = await sql<{ storage_key: string; content_type: string; byte_size: string }[]>`
-		select storage_key, content_type, byte_size
-		from attachments
-		where id = ${params.id}::uuid
-		  and household_id = ${viewer.householdId}::uuid
-		  and archived_at is null
-	`;
+	// Household-scoped, and a file on a medical visit only for someone who
+	// can read a visit it is on (see servableAttachment).
+	const row = await servableAttachment(sql, viewer, params.id);
 
 	// The same answer for "does not exist" and "belongs to another household":
 	// a 403 would confirm the id is real, which is the one thing an id
@@ -53,8 +50,8 @@ export const GET: RequestHandler = async ({ params, locals, setHeaders }) => {
 	// absolute key lands harmlessly inside the root. It is kept because the
 	// obvious refactor of this line is `resolve`, where an absolute key WOULD
 	// escape, and the guard should survive that edit.
-	const candidate = normalize(join(uploadRoot, row.storage_key));
-	if (isAbsolute(row.storage_key) || !candidate.startsWith(uploadRoot + sep)) {
+	const candidate = normalize(join(uploadRoot, row.storageKey));
+	if (isAbsolute(row.storageKey) || !candidate.startsWith(uploadRoot + sep)) {
 		error(404, 'Not found');
 	}
 
@@ -71,7 +68,7 @@ export const GET: RequestHandler = async ({ params, locals, setHeaders }) => {
 	}
 
 	setHeaders({
-		'content-type': row.content_type,
+		'content-type': row.contentType,
 		'content-length': String(size),
 		// Content-addressed: the bytes at a given id never change, so this can
 		// be cached hard. Private, because the response is household-scoped and
@@ -80,7 +77,12 @@ export const GET: RequestHandler = async ({ params, locals, setHeaders }) => {
 		'x-content-type-options': 'nosniff',
 		// Uploaded bytes are served, so the browser must never be talked into
 		// running them as a document.
-		'content-security-policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
+		'content-security-policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+		// Images show in the page; anything else (a PDF on a visit) downloads
+		// under its own name, which that CSP would otherwise leave blank.
+		'content-disposition': row.contentType.startsWith('image/')
+			? 'inline'
+			: `attachment; filename*=UTF-8''${encodeURIComponent(row.originalName ?? 'file')}`
 	});
 
 	// Converted properly rather than cast. The first version of this passed the
