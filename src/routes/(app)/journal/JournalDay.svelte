@@ -18,6 +18,13 @@
 	import type { JournalData } from './entry';
 	import HealthTags, { type TagResult } from './HealthTags.svelte';
 
+	const SLOT_LABELS: Record<JournalData['menu'][number]['slot'], string> = {
+		breakfast: 'Breakfast',
+		lunch: 'Lunch',
+		dinner: 'Dinner',
+		snack: 'Snacks'
+	};
+
 	interface Props {
 		data: JournalData;
 		/** Whatever the last action returned; both routes post the same ones. */
@@ -314,6 +321,20 @@
 	</form>
 
 	<HealthTags date={data.date} tags={data.tags} result={form} />
+
+	{#if data.menu.length > 0}
+		<Card title="On the menu" subtitle="From the meal plan" flush>
+			<List label="Meals planned for this day">
+				{#each data.menu as meal (meal.slot + meal.recipeId)}
+					<ListRow
+						title={meal.recipeName}
+						meta={SLOT_LABELS[meal.slot]}
+						href={`/food/recipes/${meal.recipeId}`}
+					/>
+				{/each}
+			</List>
+		</Card>
+	{/if}
 
 	{#if data.images.length > 0}
 		<Card title="From this day" subtitle="Imported with the page">
