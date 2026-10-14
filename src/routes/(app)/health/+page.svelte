@@ -112,6 +112,11 @@
 <svelte:head><title>Health &amp; Fitness · LifeOS</title></svelte:head>
 
 <PageHeader title="Health & Fitness" description="Everything tracked, at a glance.">
+	{#snippet actions()}
+		<Button href={`/health/day/${data.today}`} size="sm" variant="secondary"
+			>Today, hour by hour</Button
+		>
+	{/snippet}
 	{#snippet meta()}
 		<span>{data.today}</span>
 	{/snippet}

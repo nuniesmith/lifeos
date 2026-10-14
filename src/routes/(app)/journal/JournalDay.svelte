@@ -123,6 +123,9 @@
 <svelte:head><title>Journal · LifeOS</title></svelte:head>
 
 <PageHeader title="Journal" description={longDate}>
+	{#snippet actions()}
+		<Button href={`/health/day/${data.date}`} size="sm" variant="ghost">Health on this day</Button>
+	{/snippet}
 	{#snippet meta()}
 		{#if relative(data.date)}<Badge tone="accent">{relative(data.date)}</Badge>{/if}
 		<!-- Stated, not offered as a setting: daily logs are private by design
