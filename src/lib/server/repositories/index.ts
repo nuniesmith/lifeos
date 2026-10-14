@@ -59,6 +59,7 @@ export * from './library';
 export * from './media';
 export * from './medications';
 export * from './projects';
+export * from './recipe-links';
 export * from './reading';
 export * from './reading-challenges';
 export * from './reading-log';

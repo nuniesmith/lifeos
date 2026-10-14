@@ -155,6 +155,7 @@ const TABLES = [
 	'goal_habits',
 	'daily_log_health',
 	'recipe_ingredients',
+	'recipe_links',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
 	// migration 0030: book_authors/book_genres need no special remapping — ids
@@ -258,6 +259,7 @@ const ORDER = [
 	'goal_habits',
 	'daily_log_health',
 	'recipe_ingredients',
+	'recipe_links',
 	'meal_plan_recipes',
 	'medical_visit_symptoms',
 	'book_authors',

@@ -380,6 +380,42 @@
 			</Card>
 		{/if}
 
+		{#if data.related.length > 0 || (data.canEdit && !archived && data.pickableRecipes.length > 0)}
+			<Card title="Related recipes" subtitle="Goes with, or shares a part with, this one">
+				{#if data.related.length > 0}
+					<ul class="related" aria-label="Related recipes">
+						{#each data.related as other (other.recipeId)}
+							<li>
+								<a href={resolve(appPath(`/food/recipes/${other.recipeId}`))}>{other.name}</a>
+								{#if other.archived}<Badge>Archived</Badge>{/if}
+								{#if data.canEdit && !archived}
+									<form method="POST" action="?/unrelate" use:enhance>
+										<input type="hidden" name="recipeId" value={other.recipeId} />
+										<button type="submit" aria-label={`Unlink ${other.name}`}>×</button>
+									</form>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if data.canEdit && !archived && data.pickableRecipes.length > 0}
+					<form method="POST" action="?/relate" class="relate" use:enhance>
+						<div class="grow">
+							<Select
+								label="Link a recipe"
+								labelHidden
+								name="recipeId"
+								options={data.pickableRecipes.map((r) => ({ value: r.id, label: r.name }))}
+								placeholder="Choose a recipe"
+								required
+							/>
+						</div>
+						<Button type="submit">Link recipe</Button>
+					</form>
+				{/if}
+			</Card>
+		{/if}
+
 		{#if data.canEdit}
 			<details class="panel" bind:open={editing}>
 				<summary>Edit recipe</summary>
@@ -871,5 +907,41 @@
 		color: var(--c-ok);
 		border: 1px solid color-mix(in srgb, var(--c-ok) 25%, transparent);
 		background: color-mix(in srgb, var(--c-ok) 8%, transparent);
+	}
+	.related {
+		display: grid;
+		gap: var(--sp-2);
+		margin: 0 0 var(--sp-3);
+		padding: 0;
+		list-style: none;
+	}
+	.related li {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+		min-width: 0;
+	}
+	.related a {
+		flex: 1;
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+	.related button {
+		min-width: var(--tap);
+		min-height: var(--tap);
+		border: 0;
+		background: none;
+		color: var(--c-text-muted);
+		font-size: var(--fs-lg);
+		cursor: pointer;
+	}
+	.relate {
+		display: flex;
+		gap: var(--sp-3);
+		align-items: flex-end;
+	}
+	.relate .grow {
+		flex: 1;
+		min-width: 0;
 	}
 </style>

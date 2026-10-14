@@ -605,6 +605,20 @@ async function applyRelation(
 			`;
 			return 'recipe.ingredient';
 
+		case 'recipes->recipes': {
+			// "Related Recipes" (migration 0039). Undirected, so stored once per
+			// pair in the table's canonical order; a recipe related to itself is
+			// a slip in the source with nothing to show, and is left in
+			// source_links. Any other recipe-to-recipe property is not this one.
+			if (!property.toLowerCase().includes('related') || from.id === to.id) return null;
+			await sql`
+				insert into recipe_links (recipe_a_id, recipe_b_id)
+				values (least(${from.id}::uuid, ${to.id}::uuid), greatest(${from.id}::uuid, ${to.id}::uuid))
+				on conflict do nothing
+			`;
+			return 'recipe.related';
+		}
+
 		case 'meal_plans->recipes': {
 			// Which meal it is lives in the PROPERTY name — Breakfast, Lunch,
 			// Dinner, Snacks — not in the recipe. The source also has display

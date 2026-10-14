@@ -104,6 +104,17 @@ beforeAll(async () => {
 			insert into recipe_ingredients (recipe_id, ingredient_id, amount)
 			values (${recipes[0]!.id}::uuid, ${ingredients[0]!.id}::uuid, '2 heads')
 		`;
+		// migration 0039: a second recipe, related to the first. Both ends are
+		// recipes, so the link is scoped through them like recipe_ingredients.
+		const bread = await source<{ id: string }[]>`
+			insert into recipes (household_id, name) values (${sourceHousehold}::uuid, 'Fictional soda bread')
+			returning id
+		`;
+		await source`
+			insert into recipe_links (recipe_a_id, recipe_b_id)
+			values (least(${recipes[0]!.id}::uuid, ${bread[0]!.id}::uuid),
+			        greatest(${recipes[0]!.id}::uuid, ${bread[0]!.id}::uuid))
+		`;
 		// migration 0032: a food with its per-serving nutrients, and a log entry
 		// against it that also exercises a per-entry override — owner_user_id is
 		// NOT NULL here (unlike recipes/ingredients above), so this also proves
@@ -475,6 +486,7 @@ describe('everything household-scoped is portable', () => {
 		before('significant_events', 'areas');
 		before('recipe_ingredients', 'ingredients');
 		before('recipe_ingredients', 'recipes');
+		before('recipe_links', 'recipes');
 		before('food_log_entries', 'foods');
 		before('food_log_entries', 'recipes');
 		before('meal_plan_recipes', 'meal_plans');
@@ -575,7 +587,7 @@ describe('portable data mobility', () => {
 			// The feature packs travel too, link tables included. Without this
 			// the export could list the tables and still carry none of them.
 			const recipe = await restored<{ name: string; courses: string[] }[]>`
-				select name, courses from recipes
+				select name, courses from recipes where name = 'Broccoli soup'
 			`;
 			expect(recipe[0]?.name).toBe('Broccoli soup');
 			expect(recipe[0]?.courses).toEqual(['Lunch', 'Dinner']);
@@ -585,6 +597,16 @@ describe('portable data mobility', () => {
 				from recipe_ingredients ri join ingredients i on i.id = ri.ingredient_id
 			`;
 			expect(pairing[0]).toEqual({ amount: '2 heads', ingredient: 'Broccoli' });
+
+			// migration 0039: the related pair, still pointing at both recipes.
+			const related = await restored<{ names: string[] }[]>`
+				select array[a.name, b.name] as names
+				from recipe_links l
+				join recipes a on a.id = l.recipe_a_id
+				join recipes b on b.id = l.recipe_b_id
+			`;
+			expect(related).toHaveLength(1);
+			expect([...related[0]!.names].sort()).toEqual(['Broccoli soup', 'Fictional soda bread']);
 
 			// migration 0032: the food, and the entry logged against it — its
 			// food_id still resolves (ids are preserved verbatim), its override
