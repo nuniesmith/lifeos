@@ -607,6 +607,13 @@ export interface StorygraphImportSummary {
 	 *  storygraph_id (migration 0037), so nothing was read from this row at
 	 *  all -- not even to check whether it agrees. */
 	booksSkipped: number;
+	/** Already in the household WITHOUT a storygraph_id -- brought in by the
+	 *  Notion importer (2026-10-14) or added in the app -- and recognised by
+	 *  ISBN, or by title plus a shared author. The existing book takes this
+	 *  row's storygraph_id instead of a duplicate being created; its reads
+	 *  are added only if this reader has none on it yet, since the Notion
+	 *  Reading Log already records the same reads. */
+	booksMatched: number;
 	booksFailed: number;
 	/** Created books with no `ISBN/UID`, recognised on a re-run by
 	 *  {@link titleKey} instead. */
@@ -653,6 +660,7 @@ export async function importStorygraph(
 		.begin(async (tx) => {
 			let booksCreated = 0;
 			let booksSkipped = 0;
+			let booksMatched = 0;
 			let booksFailed = 0;
 			let booksKeyedByTitle = 0;
 			let authorsCreated = 0;
@@ -694,6 +702,50 @@ export async function importStorygraph(
 							limit 1
 						`;
 						if (existing[0]) return { skipped: true, authorsCreated: 0 };
+
+						// The same book from another source: adopt it rather than
+						// creating a second copy.
+						const authorKeys = book.authorNames.map((n) => n.trim().toLowerCase());
+						const [match] = await row<{ id: string }[]>`
+							select b.id from books b
+							where b.household_id = ${householdId}::uuid and b.storygraph_id is null
+							  and b.archived_at is null
+							  and (
+							    (${book.isbn}::text is not null and b.isbn = ${book.isbn})
+							    or (lower(trim(b.title)) = lower(trim(${book.title}))
+							        and exists (
+							          select 1 from book_authors ba join authors a on a.id = ba.author_id
+							          where ba.book_id = b.id
+							            and lower(trim(a.name)) = any(${authorKeys}::text[])))
+							  )
+							limit 1
+						`;
+						if (match) {
+							await row`
+								update books set storygraph_id = ${book.storygraphId}, updated_by = ${userId}::uuid
+								where id = ${match.id}::uuid
+							`;
+							const [hasReads] = await row<{ n: number }[]>`
+								select count(*)::int as n from book_reads
+								where book_id = ${match.id}::uuid and reader_user_id = ${userId}::uuid
+							`;
+							if ((hasReads?.n ?? 0) === 0) {
+								for (const read of book.reads) {
+									await row`
+										insert into book_reads (
+											book_id, reader_user_id, status, started_on, started_precision,
+											finished_on, finished_precision, rating, review, created_by, updated_by
+										) values (
+											${match.id}::uuid, ${userId}::uuid, ${read.status}, ${read.startedOn}::date,
+											${read.startedPrecision}, ${read.finishedOn}::date,
+											${read.finishedPrecision}, ${read.rating}, ${read.review},
+											${userId}::uuid, ${userId}::uuid
+										)
+									`;
+								}
+							}
+							return { skipped: false, matched: true, authorsCreated: 0 };
+						}
 
 						let rowAuthorsCreated = 0;
 						const authorIds: string[] = [];
@@ -740,11 +792,15 @@ export async function importStorygraph(
 							`;
 						}
 
-						return { skipped: false, authorsCreated: rowAuthorsCreated };
+						return { skipped: false, matched: false, authorsCreated: rowAuthorsCreated };
 					});
 
 					if (outcome.skipped) {
 						booksSkipped++;
+						continue;
+					}
+					if ('matched' in outcome && outcome.matched) {
+						booksMatched++;
 						continue;
 					}
 					booksCreated++;
@@ -766,6 +822,7 @@ export async function importStorygraph(
 				rowsRead,
 				booksCreated,
 				booksSkipped,
+				booksMatched,
 				booksFailed,
 				booksKeyedByTitle,
 				authorsCreated,

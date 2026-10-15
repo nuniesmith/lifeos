@@ -15,6 +15,17 @@ import {
 import { mapLabMarker, mapLabResult, mapMedicalVisit } from './mappers/labs-visits.ts';
 import { applyMedicationDose, upsertMedication } from './mappers/medications.ts';
 import { upsertHealthMeasurements } from './mappers/measurements.ts';
+import { mapFood, mapRecord } from './mappers/life-admin.ts';
+import {
+	mapAuthor,
+	mapBook,
+	mapChallenge,
+	mapChallengeItem,
+	mapGenre,
+	mapRead,
+	mapSeries
+} from './mappers/reading.ts';
+import { mapRoutine, mapRoutineLog, mapRoutineStep } from './mappers/routines.ts';
 
 /**
  * Promotion of staged rows into domain tables (IMP-007, IMP-010).
@@ -39,6 +50,12 @@ export interface PromoteOptions {
 	householdId: string;
 	ownerUserId: string | null;
 	createdBy: string | null;
+	/**
+	 * Whose personal logs the Reading Log and Routine Log are: every read and
+	 * routine completion belongs to one person, and the source does not say
+	 * which. `--log-as` on scripts/import.mjs; the owner when unset.
+	 */
+	logUserId?: string | null;
 	/**
 	 * The zone Notion's zone-less date-times are read in. Defaults to the
 	 * household's own; see sourceInstant.
@@ -332,7 +349,17 @@ export async function promote(sql: Queryable, options: PromoteOptions): Promise<
 	const renamed: { database: string; knownAs: string }[] = [];
 	const refused: Record<string, number> = {};
 
-	for (const [database, staged] of byDatabase) {
+	// Parents before children for the mappers that look a NOT NULL parent up
+	// in this pass (see IMPORT_ORDER); everything else keeps its order.
+	const rank = (database: string, staged: StagedRow[]) => {
+		const i = IMPORT_ORDER.indexOf(
+			knownDatabaseName(database, staged[0]?.database_notion_id ?? null)
+		);
+		return i === -1 ? -1 : i;
+	};
+	const ordered = [...byDatabase].sort(([a, ra], [b, rb]) => rank(a, ra) - rank(b, rb));
+
+	for (const [database, staged] of ordered) {
 		const knownAs = knownDatabaseName(database, staged[0]?.database_notion_id ?? null);
 		if (knownAs !== database) renamed.push({ database, knownAs });
 
@@ -722,6 +749,48 @@ async function applyRelation(
 			await sql`update medical_visits set daily_log_id = ${from.id} where id = ${to.id}`;
 			return 'visit.daily_log';
 
+		// ─── reading (migrations 0030, 0033) ───────────────────────────────
+		// Notion keeps both ends of these: a book lists its authors and an
+		// author lists their books. Either end makes the same row, and the
+		// second is a no-op. Author order comes from the book's own list.
+		case 'books->authors':
+			await sql`
+				insert into book_authors (book_id, author_id, position)
+				values (${from.id}, ${to.id},
+				        (select count(*) + 1 from book_authors where book_id = ${from.id}))
+				on conflict do nothing
+			`;
+			return 'book.author';
+
+		case 'authors->books':
+			await sql`
+				insert into book_authors (book_id, author_id)
+				values (${to.id}, ${from.id}) on conflict do nothing
+			`;
+			return 'book.author';
+
+		case 'books->genres':
+			await sql`
+				insert into book_genres (book_id, genre_id)
+				values (${from.id}, ${to.id}) on conflict do nothing
+			`;
+			return 'book.genre';
+
+		case 'genres->books':
+			await sql`
+				insert into book_genres (book_id, genre_id)
+				values (${to.id}, ${from.id}) on conflict do nothing
+			`;
+			return 'book.genre';
+
+		case 'books->book_series':
+			await sql`update books set series_id = ${to.id} where id = ${from.id}`;
+			return 'book.series';
+
+		case 'book_series->books':
+			await sql`update books set series_id = ${from.id} where id = ${to.id} and series_id is null`;
+			return 'book.series';
+
 		default:
 			return null;
 	}
@@ -826,15 +895,58 @@ const upsertProjects = mapper('projects', async (sql, row, o) => {
 	return r?.id ?? null;
 });
 
+/** Notion's "Planning Category" -> tasks.category (migration 0038). */
+const TASK_CATEGORY: Record<string, string> = {
+	'dopamine menu': 'dopamine_menu',
+	'three tweaks': 'three_tweaks',
+	'hard deadlines': 'hard_deadline',
+	'hard deadline': 'hard_deadline',
+	'parking lot': 'parking_lot'
+};
+
+/** A Themes row's title -> the workday_theme domain (migration 0038). */
+const WORKDAY_THEME: Record<string, string> = {
+	'money & admin': 'money_admin',
+	'home & environment': 'home_environment',
+	'errands & appointments': 'errands_appointments',
+	'flex & overflow': 'flex_overflow',
+	'self-care': 'self_care',
+	'self care': 'self_care',
+	'random & fun': 'random_fun',
+	reset: 'reset'
+};
+
 const upsertTasks = mapper('tasks', async (sql, row, o) => {
-	const energyRaw = (text(row, 'Energy Requirement') ?? '').toLowerCase();
-	const energy = ['low', 'medium', 'high'].find((e) => energyRaw.includes(e)) ?? null;
+	// Renamed "Energy Required" by 2026-10, with values like "For 1% Days".
+	const energyRaw = (
+		text(row, 'Energy Requirement') ??
+		text(row, 'Energy Required') ??
+		''
+	).toLowerCase();
+	const energy =
+		['low', 'medium', 'high'].find((e) => energyRaw.includes(e)) ??
+		(energyRaw.includes('1%') ? 'low' : null);
+	const category = TASK_CATEGORY[(text(row, 'Planning Category') ?? '').toLowerCase()] ?? null;
+
+	// A task's theme is set from the Themes database, whose rows link to their
+	// tasks; the task itself has no theme column. The staged links of this
+	// run say which theme row, if any, points here.
+	const [themeRow] = row.notion_page_id
+		? await sql<{ title: string | null }[]>`
+				select r.title from source_links l
+				join source_records r on r.id = l.from_record_id
+				where l.import_run_id = ${o.importRunId} and r.database_name = 'Themes'
+				  and l.to_notion_page_id = ${row.notion_page_id}
+				limit 1
+			`
+		: [];
+	const theme = WORKDAY_THEME[(themeRow?.title ?? '').trim().toLowerCase()] ?? null;
 
 	const [r] = await sql<{ id: string }[]>`
 		insert into tasks (household_id, owner_user_id, title, notes, kind, status, do_on,
 		                   deadline_on, is_important, is_urgent, energy, context,
 		                   recurrence_rule, recurrence_every, next_due_on,
-		                   last_completed_on, is_template, notion_page_id,
+		                   last_completed_on, is_template, theme, category, notion_page_id,
 		                   source_record_id, created_by, archived_at)
 		values (${o.householdId}, ${o.ownerUserId}, ${row.title ?? 'Untitled'},
 		        ${withBody(row, null)},
@@ -844,8 +956,8 @@ const upsertTasks = mapper('tasks', async (sql, row, o) => {
 		        ${bool(row, 'Important')}, ${bool(row, 'Urgent')},
 		        ${energy}, ${text(row, 'Context')},
 		        ${text(row, 'Recurrence')}, ${int(row, 'Repeat Every')},
-		        ${date(row, 'Next Due')}, ${date(row, 'Last Completed')},
-		        ${/template/i.test(row.title ?? '')},
+		        ${date(row, 'Next Due') ?? date(row, 'Next Occurrence')}, ${date(row, 'Last Completed')},
+		        ${/template/i.test(row.title ?? '')}, ${theme}, ${category},
 		        ${row.notion_page_id}, ${row.id}, ${o.createdBy},
 		        ${bool(row, 'Archive') ? new Date().toISOString() : null}::timestamptz)
 		on conflict (notion_page_id) do update set
@@ -857,6 +969,8 @@ const upsertTasks = mapper('tasks', async (sql, row, o) => {
 			deadline_on = excluded.deadline_on,
 			is_important = excluded.is_important,
 			is_urgent = excluded.is_urgent,
+			theme = coalesce(excluded.theme, tasks.theme),
+			category = coalesce(excluded.category, tasks.category),
 			source_record_id = excluded.source_record_id
 		returning id
 	`;
@@ -1484,10 +1598,36 @@ const upsertAssessments = mapper('life_assessments', async (sql, row, o) => {
 	return r?.id ?? null;
 });
 
+const MONTHS = [
+	'january',
+	'february',
+	'march',
+	'april',
+	'may',
+	'june',
+	'july',
+	'august',
+	'september',
+	'october',
+	'november',
+	'december'
+];
+
+/** "July 2026 (Time Databases/...)" -> 2026-07-01; null for anything else. */
+export function monthStart(raw: string | undefined): string | null {
+	const m = /^\s*([A-Za-z]+)\s+((?:19|20|21)\d{2})\b/.exec(raw ?? '');
+	if (!m) return null;
+	const month = MONTHS.indexOf((m[1] ?? '').toLowerCase());
+	return month === -1 ? null : `${m[2]}-${String(month + 1).padStart(2, '0')}-01`;
+}
+
 const upsertEvents = mapper('significant_events', async (sql, row, o) => {
 	// "Event Date" is the day it happened; "Date" is a relation to the day's
 	// own log, which the relation pass handles separately.
-	const on = date(row, 'Event Date');
+	// Since 2026-10, events are often filed under a month ("Month": "July
+	// 2026") with no day at all; such an event happened in that month, and is
+	// placed on its first day rather than refused.
+	const on = date(row, 'Event Date') ?? monthStart(row.raw['Month']);
 	if (!on) return null;
 
 	const [r] = await sql<{ id: string }[]>`
@@ -1533,7 +1673,21 @@ const NOT_IMPORTED: Record<string, string> = {
 	'Income Database': 'one empty row carrying only a formula display; no income records exist',
 	'Savings Log Database': 'one empty placeholder row',
 	'Payment Log Database': 'one empty placeholder row',
-	'Series Database': 'one empty placeholder row'
+	// New in the 2026-10-14 export.
+	'All Time Database': 'an all-time rollup singleton; the yearly review computes it',
+	'Month of Year Database': 'twelve calendar-month buckets of rollups, not records',
+	'Next Up TBR Picker': 'a "what to read next" widget, not a record',
+	Themes:
+		'the seven workday theme names; they arrive as each task\u2019s theme (upsertTasks), not as rows',
+	'Media Themes Database':
+		'monthly reading-theme prompts; LifeOS has no feature for them yet, so they stay in source_records',
+	'Nutrition Targets Database':
+		'daily nutrition targets; LifeOS has no targets table yet, so they stay in source_records',
+	'Account Information':
+		'financial account details; accounts are deferred by the household (PACK4-001)',
+	'Vet Visit Database': 'one empty placeholder row',
+	'Storygraph Data csv':
+		'a copy of the StoryGraph export; scripts/import-storygraph.mjs imports that history'
 };
 
 /**
@@ -1550,7 +1704,7 @@ const EMPTY_PLACEHOLDERS = new Set([
 	'Income Database',
 	'Savings Log Database',
 	'Payment Log Database',
-	'Series Database'
+	'Vet Visit Database'
 ]);
 
 /**
@@ -1602,7 +1756,28 @@ const DATABASE_NAMES_BY_ID: Record<string, string> = {
 	'3bc879a5-56f1-808c-8f0e-d230d152b08f': 'Vitamins Database',
 	'3bf879a5-56f1-8019-99a4-e87f780b2706': 'Wheel of Life Database',
 	'3bb879a5-56f1-8069-a31a-ebe568c7cbbe': 'Wishlist Database',
-	'3b7879a5-56f1-80da-bc99-efafeb7b2a63': 'Years Database'
+	'3b7879a5-56f1-80da-bc99-efafeb7b2a63': 'Years Database',
+	// New in (or first mapped from) the 2026-10-14 export; each maps to itself.
+	'3d4879a5-56f1-803d-b661-cb39138e86b5': 'Author Database',
+	'3d4879a5-56f1-8072-b1fa-c868f6e878d9': 'Book Database',
+	'3d9879a5-56f1-801e-a898-ffa95ff51eb3': 'Genres Database',
+	'3d5879a5-56f1-8055-aec5-e3dabd93b5ca': 'Reading Log Database',
+	'3d4879a5-56f1-80b1-8020-e59e11f9453b': 'Reading Challenges Database',
+	'3d7879a5-56f1-804c-9d65-d07985b3214b': 'Reading Challenge Items Database',
+	'3e3879a5-56f1-800d-8fe4-fb38beb4b636': 'Routine Database',
+	'3e3879a5-56f1-80c8-8b1e-ef1aa6767e94': 'Routine Steps Database',
+	'3e9879a5-56f1-8096-90b4-f6213fc16371': 'Routine Log Database',
+	'3ea879a5-56f1-808c-bd84-c9320dc55865': 'Records & Renewals Database',
+	'3e4879a5-56f1-8072-8be5-e42c7ef68f70': 'Food Library Database',
+	'3e6879a5-56f1-80a1-969c-f26b9211170f': 'Themes',
+	'3f1879a5-56f1-80ae-8a43-dd31276deda5': 'All Time Database',
+	'3f1879a5-56f1-8009-a175-fda89e687032': 'Month of Year Database',
+	'3d9879a5-56f1-807a-b4d7-f9889cc1f2b0': 'Next Up TBR Picker',
+	'3f1879a5-56f1-8095-9eeb-d1aeb48bc26b': 'Media Themes Database',
+	'3f1879a5-56f1-8061-8e60-c14ba5e0b61d': 'Nutrition Targets Database',
+	'3ea879a5-56f1-8083-9174-d41c6b54963f': 'Account Information',
+	'3c8879a5-56f1-80d1-9073-f721acdd70f6': 'Vet Visit Database',
+	'3d6879a5-56f1-809a-95af-d39bbb4d02cf': 'Storygraph Data csv'
 };
 
 /** Source database name to mapper. Unlisted databases stay staged only. */
@@ -1644,7 +1819,42 @@ const MAPPERS: Record<string, Mapper> = {
 	// ─── labs and visits (migration 0020) ──────────────────────────────────
 	'Lab Markers Database': mapLabMarker,
 	'Lab Results Database': mapLabResult,
-	'Medical Visit Log Database': mapMedicalVisit
+	'Medical Visit Log Database': mapMedicalVisit,
+
+	// ─── first mapped from the 2026-10-14 export ───────────────────────────
+	'Author Database': mapAuthor,
+	'Genres Database': mapGenre,
+	'Series Database': mapSeries,
+	'Book Database': mapBook,
+	'Reading Log Database': mapRead,
+	'Reading Challenges Database': mapChallenge,
+	'Reading Challenge Items Database': mapChallengeItem,
+	'Routine Database': mapRoutine,
+	'Routine Steps Database': mapRoutineStep,
+	'Routine Log Database': mapRoutineLog,
+	'Records & Renewals Database': mapRecord,
+	'Food Library Database': mapFood
 };
+
+/**
+ * Databases promoted after all others, in this order. A read needs its book,
+ * a challenge prompt its challenge (and the read that completed it), a step
+ * its routine and a log entry its steps, all at insert time -- so those
+ * parents must already exist. A records owner is matched to People, which
+ * runs before any of these. Everything unlisted keeps the export's order.
+ */
+const IMPORT_ORDER = [
+	'Author Database',
+	'Genres Database',
+	'Series Database',
+	'Book Database',
+	'Reading Log Database',
+	'Reading Challenges Database',
+	'Reading Challenge Items Database',
+	'Routine Database',
+	'Routine Steps Database',
+	'Routine Log Database',
+	'Records & Renewals Database'
+];
 
 export const MAPPED_DATABASES = Object.keys(MAPPERS);

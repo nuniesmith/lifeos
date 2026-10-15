@@ -139,6 +139,7 @@ describe('importing the fixture for the operator', () => {
 			rowsRead: 11,
 			booksCreated: 11,
 			booksSkipped: 0,
+			booksMatched: 0,
 			booksFailed: 0,
 			booksKeyedByTitle: 1,
 			authorsCreated: 9,
@@ -337,6 +338,7 @@ describe('importing the fixture for the operator', () => {
 		expect(second).toMatchObject({
 			booksCreated: 0,
 			booksSkipped: 11,
+			booksMatched: 0,
 			booksFailed: 0,
 			authorsCreated: 0,
 			readsByStatus: { finished: 0, reading: 0, paused: 0, dnf: 0 }

@@ -88,6 +88,7 @@ try {
 	console.log(`  rows read              ${String(summary.rowsRead).padStart(6)}`);
 	console.log(`  books created          ${String(summary.booksCreated).padStart(6)}`);
 	console.log(`  books skipped (dup)    ${String(summary.booksSkipped).padStart(6)}`);
+	console.log(`  books matched (other)  ${String(summary.booksMatched).padStart(6)}`);
 	const failedMark = summary.booksFailed > 0 ? RED : GREEN;
 	console.log(
 		`  books failed           ${failedMark}${String(summary.booksFailed).padStart(6)}${OFF}`

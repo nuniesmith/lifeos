@@ -31,6 +31,8 @@ export interface ImportOptions {
 	householdId: string;
 	/** When set, staged rows are promoted into domain tables in the same pass. */
 	ownerUserId?: string | null;
+	/** Whose Reading Log and Routine Log these are; see PromoteOptions.logUserId. */
+	logUserId?: string | null;
 	promote?: boolean;
 	/** Where deduplicated media is written. Nothing is written on a dry run. */
 	uploadDir?: string;
@@ -573,6 +575,7 @@ export async function runImport(sql: Sql, options: ImportOptions): Promise<Impor
 							importRunId: run.id,
 							householdId: options.householdId,
 							ownerUserId: options.ownerUserId ?? null,
+							logUserId: options.logUserId ?? null,
 							createdBy: options.startedBy ?? null
 						});
 

@@ -428,7 +428,17 @@ const main = async () => {
 		// No 'Vitamins': a day's vitamins import as `medication_doses` since
 		// migration 0018, not as terms, so counting them here would expect
 		// daily_log_health rows the importer deliberately no longer writes.
-		const RELATIONS = ['Physical Symptoms', 'Energy', 'Mood/Feelings', 'Activity', 'Workout'];
+		// 'Mood/Feelings' was renamed 'Mood' by the 2026-10-14 export; a
+		// column only counts when the export still has it, so listing both
+		// reads either export.
+		const RELATIONS = [
+			'Physical Symptoms',
+			'Energy',
+			'Mood/Feelings',
+			'Mood',
+			'Activity',
+			'Workout'
+		];
 
 		const stored = new Map();
 		for (const row of await sql`
