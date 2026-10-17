@@ -257,3 +257,32 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
+
+      # Merges reach freddy on their own again. Since the deploy moved to the
+      # freddy repo (2026-10-09), nothing here told freddy a new image existed,
+      # so production sat on whatever the last full freddy deploy pulled. This
+      # asks freddy to roll out exactly this commit (nuniesmith/freddy
+      # update-service.yml): it migrates with the new image, recreates only
+      # lifeos-app, and checks the container runs this revision and is ready.
+      #
+      # Push to main only: a weekly refresh publishes under its own tag, not
+      # this commit's, and the next full freddy deploy picks it up.
+      #
+      # FREDDY_DEPLOY_TOKEN is a fine-grained PAT with Actions: write on
+      # nuniesmith/freddy; GITHUB_TOKEN cannot start a workflow in another
+      # repository. A missing token FAILS this job rather than skipping it: a
+      # silent skip is a deploy that never happened, reported as green.
+      - name: Roll this commit out on freddy
+        if: env.PUBLISH == 'true' && env.REFRESH != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.FREDDY_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::FREDDY_DEPLOY_TOKEN is not set, so freddy keeps running the previous image"
+            exit 1
+          fi
+          gh workflow run update-service.yml --repo nuniesmith/freddy \
+            -f image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            -f revision=${{ github.sha }} \
+            -f services="lifeos-app"
+          echo "Requested: ${{ github.server_url }}/nuniesmith/freddy/actions/workflows/update-service.yml"
