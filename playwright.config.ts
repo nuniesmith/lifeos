@@ -1,5 +1,11 @@
 import { defineConfig } from '@playwright/test';
 
+// Pinned to the household's zone, not UTC, as vite.config.ts pins the unit and
+// integration tests: on a UTC machine, which every CI runner is, a time read
+// in the wrong zone is still right, so a zone bug passes CI and shows up only
+// on a machine in Toronto. Workers inherit this; the server gets it below.
+process.env.TZ = 'America/Toronto';
+
 export default defineConfig({
 	testDir: 'tests/e2e',
 	// One worker, deliberately. Every test shares a single PostgreSQL database,
@@ -26,6 +32,7 @@ export default defineConfig({
 		timeout: 120_000,
 		env: {
 			PORT: '4173',
+			TZ: 'America/Toronto',
 			HOST: '127.0.0.1',
 			// Exercise the production configuration path, so a regression in
 			// env validation shows up here rather than on the server.

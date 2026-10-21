@@ -59,6 +59,9 @@ async function checkStorage(): Promise<Check> {
 }
 
 async function checkBackupFreshness(): Promise<Check> {
+	if (env.LIFEOS_BACKUP_CHECK === 'off') {
+		return { name: 'backup', status: 'ok', detail: 'not expected (LIFEOS_BACKUP_CHECK=off)' };
+	}
 	try {
 		const rows = await sql<{ finished_at: Date | string | null }[]>`
 			select finished_at from backup_runs

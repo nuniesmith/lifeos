@@ -38,7 +38,38 @@ async function command(script: string, args: string[], databaseUrl: URL, uploadD
 	});
 }
 
+/**
+ * Databases left by earlier runs whose teardown timed out. Each run names its
+ * own by process id, so a leftover is never reused, only piled up, and every
+ * one slowed the next teardown's `drop ... with (force)`: on 2026-09-29 eleven
+ * had built up and the file timed out even run alone. Only a dead process's
+ * are dropped, since a live one may be another worktree's run against the same
+ * server.
+ */
+async function dropLeftovers(): Promise<void> {
+	const rows = await maintenance<{ datname: string }[]>`
+		select datname from pg_database where datname ~ '^lifeos_mobility_(source|target)_[0-9]+$'
+	`;
+	for (const { datname } of rows) {
+		const pid = Number(datname.slice(datname.lastIndexOf('_') + 1));
+		if (pid === process.pid || processAlive(pid)) continue;
+		// Best effort, like the teardown: one that won't go now goes next time.
+		await dropDatabase(datname, 1).catch(() => {});
+	}
+}
+
+function processAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		// EPERM: it exists, it just isn't ours to signal.
+		return (err as NodeJS.ErrnoException).code === 'EPERM';
+	}
+}
+
 beforeAll(async () => {
+	await dropLeftovers();
 	workspace = await mkdtemp(join(tmpdir(), 'lifeos-mobility-test-'));
 	for (const name of [sourceName, targetName]) {
 		await maintenance.unsafe(`drop database if exists "${name}" with (force)`);
@@ -372,10 +403,12 @@ beforeAll(async () => {
 	} finally {
 		await target.end({ timeout: 5 });
 	}
-}, 30_000);
+	// Room for dropLeftovers() as well as the setup itself.
+}, 90_000);
 
 /**
- * Drops a temporary database, waiting out the lock rather than failing on it.
+ * Drops a temporary database, waiting out the lock rather than failing on it,
+ * each attempt bounded so `attempts` of them fit a hook's timeout.
  *
  * `drop database ... with (force)` needs an exclusive lock, and on a server the
  * rest of the integration suite is working against it can lose that race to a
@@ -387,9 +420,10 @@ beforeAll(async () => {
  * cleanup of something this file created, so the only question is whether it
  * eventually goes, and a database left behind would break the next run.
  */
-async function dropDatabase(name: string): Promise<void> {
+async function dropDatabase(name: string, attempts = 2): Promise<void> {
 	let lastError: unknown;
-	for (let attempt = 0; attempt < 5; attempt++) {
+	await maintenance.unsafe(`set statement_timeout = '10s'`);
+	for (let attempt = 0; attempt < attempts; attempt++) {
 		try {
 			await maintenance.unsafe(`drop database if exists "${name}" with (force)`);
 			return;
@@ -403,7 +437,18 @@ async function dropDatabase(name: string): Promise<void> {
 
 afterAll(async () => {
 	for (const name of [sourceName, targetName]) {
-		await dropDatabase(name);
+		try {
+			await dropDatabase(name);
+		} catch (err) {
+			// Every assertion has passed by now, and dropLeftovers() removes this
+			// database on the next run. Failing the file over its cleanup was the
+			// flake (2026-09-29, 2026-10-20): DROP DATABASE forces a checkpoint
+			// and waits for it (IPC:CheckpointStart), and after the whole
+			// write-heavy suite that checkpoint's fsync ran for minutes, while the
+			// file alone passed. A throwaway test server with fsync=off makes it
+			// instant; CI's fresh server has never hit it.
+			console.warn(`could not drop ${name}; the next run will`, err);
+		}
 	}
 	await maintenance.end({ timeout: 5 });
 	if (workspace) await rm(workspace, { recursive: true, force: true });
