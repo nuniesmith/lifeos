@@ -86,6 +86,25 @@ const schema = z
 		LIFEOS_WEATHER_LABEL: z.string().min(1).max(120).default('Local forecast'),
 		LIFEOS_WEATHER_UNITS: z.enum(['metric', 'imperial']).default('metric'),
 
+		// Calendar sync (docs/calendar-sync.md). The key seals the CalDAV
+		// passwords people enter (32 bytes, base64: `openssl rand -base64 32`);
+		// without it no CalDAV calendar can be added. The Google service
+		// account's JSON key is a file on the server, never an env value, so it
+		// can be mounted read-only and stays out of `docker inspect`. Sync
+		// polls every LIFEOS_CALENDAR_SYNC_MINUTES; 0 turns it off.
+		LIFEOS_SECRET_KEY: z.preprocess(
+			(value) => (value === '' ? undefined : value),
+			z.string().optional()
+		),
+		LIFEOS_GOOGLE_SA_FILE: z.preprocess(
+			(value) => (value === '' ? undefined : value),
+			z.string().optional()
+		),
+		LIFEOS_CALENDAR_SYNC_MINUTES: z.preprocess(
+			(value) => (value === undefined || value === '' ? undefined : Number(value)),
+			z.number().int().min(0).max(1440).default(5)
+		),
+
 		LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info')
 	})
 	.refine(

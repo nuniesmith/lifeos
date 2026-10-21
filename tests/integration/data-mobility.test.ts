@@ -470,6 +470,8 @@ const NOT_PORTABLE: Record<string, string> = {
 	app_settings: 'per-install configuration, not content',
 	change_log: 'an audit of edits to rows that are themselves being copied',
 	backup_runs: 'bookkeeping about this install\u2019s backups',
+	calendar_connections:
+		'a copy of other services\u2019 calendars, and its password is sealed with this server\u2019s key, so it opens nowhere else: reconnect on the destination',
 	daily_log_health: 'exported, but scoped through daily_logs rather than by household_id',
 	medication_doses: 'exported, but scoped through medications rather than by household_id',
 	routine_steps: 'exported, but scoped through routines rather than by household_id',

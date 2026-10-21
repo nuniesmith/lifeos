@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({
 	requireViewer: vi.fn(),
 	householdToday: vi.fn(),
 	listTasks: vi.fn(),
-	upcomingImportantDates: vi.fn()
+	upcomingImportantDates: vi.fn(),
+	externalDays: vi.fn()
 }));
 
 vi.mock('$lib/server/db', () => ({ sql: mocks.sql }));
 vi.mock('$lib/server/viewer', () => ({ requireViewer: mocks.requireViewer }));
 vi.mock('$lib/server/repositories/base', () => ({ householdToday: mocks.householdToday }));
+vi.mock('$lib/server/calendar-sync/days', () => ({ externalDays: mocks.externalDays }));
 vi.mock('$lib/server/repositories', () => ({
 	TASK_STATUSES: ['todo', 'in_progress', 'blocked', 'done', 'dropped'],
 	listTasks: mocks.listTasks,
@@ -29,6 +31,7 @@ beforeEach(() => {
 	mocks.householdToday.mockResolvedValue('2026-09-05');
 	mocks.listTasks.mockResolvedValue([]);
 	mocks.upcomingImportantDates.mockResolvedValue([]);
+	mocks.externalDays.mockResolvedValue([]);
 });
 
 describe('calendar page load', () => {
@@ -52,6 +55,9 @@ describe('calendar page load', () => {
 			order: 'due',
 			limit: 501
 		});
+		// connected calendars' events, for the same days the grid shows
+		expect(mocks.externalDays).toHaveBeenCalledWith(mocks.sql, viewer, '2026-09-28', '2026-11-08');
+		expect(data).toMatchObject({ external: [] });
 	});
 
 	it('only reports truncation when there is a row beyond the display cap', async () => {

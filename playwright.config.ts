@@ -47,7 +47,12 @@ export default defineConfig({
 				'postgresql://lifeos_app:devpassword@127.0.0.1:5433/lifeos_e2e',
 			LIFEOS_BOOTSTRAP_PASSWORD: 'e2e-bootstrap-password',
 			// As the Dockerfile sets it, so uploads are tested at production's limit.
-			BODY_SIZE_LIMIT: '21M'
+			BODY_SIZE_LIMIT: '21M',
+			// A key of the run's own, so the calendar page offers CalDAV; made up
+			// here rather than written down, since it is a secret's shape.
+			LIFEOS_SECRET_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+			// No timer in the suite: a pass would race the seeded rows.
+			LIFEOS_CALENDAR_SYNC_MINUTES: '0'
 		}
 	}
 });

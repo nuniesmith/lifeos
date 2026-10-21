@@ -7,6 +7,7 @@ import { resolveSession } from '$lib/server/auth/service';
 import { SESSION_COOKIE } from '$lib/server/auth/session';
 import { logger } from '$lib/server/logger';
 import { ensureStorage } from '$lib/server/storage';
+import { startCalendarSync } from '$lib/server/calendar-sync/scheduler';
 
 /**
  * First-run bootstrap, attempted once per process at startup.
@@ -26,6 +27,10 @@ const bootstrapped = building
 			.catch((err) => {
 				logger.error({ err }, 'first-run bootstrap did not complete; will retry on next start');
 			});
+
+// Calendar sync polls on a timer, once the bootstrap has had its go. It never
+// throws out of a pass (sync.ts), so it can't take the process down.
+if (!building) void bootstrapped.then(() => startCalendarSync(sql));
 
 /**
  * The single backend seam. Session resolution lands here in Phase 3; until
