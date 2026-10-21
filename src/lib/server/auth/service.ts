@@ -146,14 +146,25 @@ export async function login(
 		const valid = await verifyPassword(credentials.password, user.password_hash);
 
 		if (!valid) {
-			const failed = user.failed_login_count + 1;
-			const lockUntil = failed >= MAX_FAILED ? new Date(now.getTime() + LOCKOUT_MS) : null;
-			await sql`
-				update users
-				set failed_login_count = ${failed},
-				    locked_until = ${lockUntil?.toISOString() ?? null}::timestamptz
-				where id = ${user.id}
-			`;
+			// Counted in the database, not from the row read above. That read is
+			// a scrypt verification (~100 ms) older than this write, so attempts
+			// made in parallel all read the same count and wrote the same count
+			// plus one: a burst of guesses never reached the lockout at all.
+			const counted = one(
+				await sql<{ failed_login_count: number; locked_until: unknown }[]>`
+					update users
+					set failed_login_count = failed_login_count + 1,
+					    locked_until = case
+					        when failed_login_count + 1 >= ${MAX_FAILED}
+					        then now() + make_interval(secs => ${LOCKOUT_MS / 1000})
+					    end
+					where id = ${user.id}
+					returning failed_login_count, locked_until
+				`,
+				'user'
+			);
+			const failed = counted.failed_login_count;
+			const lockUntil = toDateOrNull(counted.locked_until);
 			await audit(sql, 'login.failed', {
 				userId: user.id,
 				clientIp: context.clientIp,
@@ -316,7 +327,7 @@ export async function revokeAllSessions(
 
 export type ChangeCredentialsResult =
 	| { ok: true; revoked: number }
-	| { ok: false; reason: 'invalid_current' | 'username_taken' | 'weak_password' };
+	| { ok: false; reason: 'invalid_current' | 'username_taken' | 'weak_password' | 'same_password' };
 
 /**
  * Credential change. Completing this retires the bootstrap flag and revokes
@@ -341,6 +352,13 @@ export async function changeCredentials(
 			detail: { reason: 'invalid_current' }
 		});
 		return { ok: false, reason: 'invalid_current' };
+	}
+	// The forced first-run change exists because the bootstrap password was
+	// printed to the container log; "changing" it to itself would keep that
+	// logged password working. Compared through the hash, so the same password
+	// typed in another Unicode form is still the same password.
+	if (await verifyPassword(input.newPassword, current.password_hash)) {
+		return { ok: false, reason: 'same_password' };
 	}
 
 	const hash = await hashPassword(input.newPassword);

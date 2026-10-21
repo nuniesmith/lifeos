@@ -64,6 +64,12 @@ const schema = z
 		// image, where /app is root-owned, and log EACCES on every start.
 		LIFEOS_IMPORT_DIR: z.string().optional(),
 		LIFEOS_BACKUP_DIR: z.string().optional(),
+		// Whether readiness expects a recent backup (scripts/backup.sh records
+		// them in backup_runs). `off` while backups are deliberately not taken:
+		// a check that can only ever be degraded keeps an uptime monitor on
+		// /api/health/ready permanently down, and a monitor that is always down
+		// cannot report the outage that matters.
+		LIFEOS_BACKUP_CHECK: z.enum(['on', 'off']).default('on'),
 
 		LIFEOS_TIMEZONE: z.string().default('America/Toronto'),
 		LIFEOS_CURRENCY: z.string().length(3).default('CAD'),
