@@ -80,7 +80,25 @@ jobs:
       - run: npm ci
       # Integration tests run against real tables, so the schema has to exist.
       - run: node scripts/migrate.mjs
+      # The CalDAV tests (calendar-caldav.test.ts) run against a real CalDAV
+      # server, Radicale, standing in for iCloud. In a venv: the runner's
+      # Python refuses a system-wide pip install. Pinned, so a Radicale
+      # release can't change what the tests are checking.
+      - name: Start a CalDAV server (Radicale)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/radicale"
+          "$RUNNER_TEMP/radicale/bin/pip" install --quiet 'radicale==3.8.3'
+          "$RUNNER_TEMP/radicale/bin/python" -m radicale --server-hosts 127.0.0.1:5232 \
+            --auth-type none --rights-type owner_only \
+            --storage-filesystem-folder "$RUNNER_TEMP/radicale-data" > "$RUNNER_TEMP/radicale.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:5232/ && exit 0
+            sleep 1
+          done
+          echo "Radicale did not start:" >&2; cat "$RUNNER_TEMP/radicale.log" >&2; exit 1
       - run: npm run test:integration
+        env:
+          CALDAV_TEST_URL: http://127.0.0.1:5232
 
   e2e:
     name: End-to-end

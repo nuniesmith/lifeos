@@ -45,7 +45,7 @@ All three settings go in the server's `.env` (`/srv/lifeos/.env` on freddy). Res
   - recurrence (across DST, a daily series from 2010 that must still reach this month, window edges);
   - Google's mapping and its signed sign-in.
 - **`tests/integration/calendar-google.test.ts`** runs the whole sync against a fake Google API. The fake checks the JWT's signature, pages its results, expires sync tokens (410), and records every write. That covers what's visible to whom, pushing only what changed, putting back an event deleted by hand, and full resync.
-- **`tests/integration/calendar-caldav.test.ts`** runs against a real CalDAV server when `CALDAV_TEST_URL` is set (its header shows how to start Radicale in Docker). It covers discovery, the first full sync, incremental changes and deletions, a refused token, and the whole job with a sealed password. Without `CALDAV_TEST_URL` it is skipped, as it is in CI.
+- **`tests/integration/calendar-caldav.test.ts`** runs against a real CalDAV server, Radicale. It covers discovery, the first full sync, incremental changes and deletions, a refused token, and the whole job with a sealed password. CI starts Radicale for every pull request. Locally, set `CALDAV_TEST_URL` (the test's header shows how to start Radicale in Docker); without it the file is skipped.
 - **`tests/e2e/calendar-sync.spec.ts`** covers the pages.
 
 ## Not in version 1

@@ -18,7 +18,7 @@ import { one } from '$lib/server/db/scalar';
  * CalDAV against a real CalDAV server: the same protocol as iCloud, so the
  * discovery, sync-collection and multiget code runs as it will against
  * Apple's. Needs CALDAV_TEST_URL, a server that accepts any login (here,
- * Radicale with auth none):
+ * Radicale with auth none; CI starts one, see ci.yml):
  *
  *   docker run -d -p 127.0.0.1:5232:5232 python:3.12-slim sh -c \
  *     "pip install radicale && python -m radicale --server-hosts 0.0.0.0:5232 \
