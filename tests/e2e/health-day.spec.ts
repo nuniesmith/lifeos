@@ -70,12 +70,15 @@ test.beforeEach(async () => {
 		await sql`delete from daily_logs where owner_user_id = ${userId}`;
 
 		const zone = sql`(select timezone from households where id = ${householdId})`;
-		// Local wall-clock times, placed in the household's own zone.
+		// Local wall-clock times, placed in the household's own zone. Sent as
+		// text: the driver's own timestamp serializer reads a bare date-time
+		// string in the test process's zone first, so off a UTC machine every
+		// time landed shifted by the zone's offset (07:05 showed as 11:05).
 		await sql`
 			insert into health_measurements
 				(household_id, owner_user_id, visibility, measured_at, systolic, diastolic)
 			values (${householdId}, ${userId}, 'private',
-			        (${`${DAY} 07:05`}::timestamp at time zone ${zone}), 118, 76)
+			        (${`${DAY} 07:05`}::text::timestamp at time zone ${zone}), 118, 76)
 		`;
 		const [med] = await sql<{ id: string }[]>`
 			insert into medications (household_id, owner_user_id, visibility, name, type, dose, unit)
@@ -84,13 +87,13 @@ test.beforeEach(async () => {
 		`;
 		await sql`
 			insert into medication_doses (medication_id, on_date, slot, taken_at)
-			values (${med!.id}, ${DAY}, 'pm', (${`${DAY} 21:00`}::timestamp at time zone ${zone})),
+			values (${med!.id}, ${DAY}, 'pm', (${`${DAY} 21:00`}::text::timestamp at time zone ${zone})),
 			       (${med!.id}, ${DAY}, 'am', null)
 		`;
 		await sql`
 			insert into medical_visits (household_id, owner_user_id, visibility, reason, visit_at)
 			values (${householdId}, ${userId}, 'private', ${VISIT},
-			        (${`${DAY} 14:30`}::timestamp at time zone ${zone}))
+			        (${`${DAY} 14:30`}::text::timestamp at time zone ${zone}))
 		`;
 		await sql`
 			insert into daily_logs (household_id, owner_user_id, on_date, mood, energy_level)
