@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+
 	let { data, form } = $props();
 </script>
 
@@ -59,10 +61,19 @@
 	<button type="submit">Save and continue</button>
 </form>
 
+{#if !data.mustChange}
+	<p class="more">
+		<a href={resolve('/account/calendars')}>Calendars: connect Google or iCloud</a>
+	</p>
+{/if}
+
 <style>
 	.lede {
 		color: var(--c-text-muted);
 		max-width: var(--measure);
+	}
+	.more {
+		margin-top: var(--sp-6);
 	}
 	form {
 		display: flex;

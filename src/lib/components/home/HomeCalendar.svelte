@@ -17,14 +17,25 @@
 		day: string;
 	}
 
+	/** An event from a connected Google or CalDAV calendar, on one day. */
+	interface CalendarExternal {
+		id: string;
+		title: string;
+		day: string;
+		time: string | null;
+		color: string | null;
+		calendar: string;
+	}
+
 	interface Props {
 		today: string;
 		month?: string;
 		tasks: CalendarTask[];
 		dates?: CalendarDate[];
+		external?: CalendarExternal[];
 	}
 
-	let { today, month = today.slice(0, 7), tasks, dates = [] }: Props = $props();
+	let { today, month = today.slice(0, 7), tasks, dates = [], external = [] }: Props = $props();
 	const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 	const pad = (value: number) => String(value).padStart(2, '0');
 	const dateKey = (date: Date) =>
@@ -68,7 +79,8 @@
 					tasks: tasks.filter(
 						(task) => task.status !== 'dropped' && (task.doOn === key || task.deadlineOn === key)
 					),
-					dates: dates.filter((event) => event.day === key)
+					dates: dates.filter((event) => event.day === key),
+					external: external.filter((event) => event.day === key)
 				};
 			})
 		);
@@ -120,6 +132,15 @@
 										title={event.name}><span class="event-dot"></span>{event.name}</a
 									>
 								{/each}
+								{#each day.external as event (event.id)}
+									<span
+										class="event external"
+										title={`${event.time ? `${event.time} ` : ''}${event.title} · ${event.calendar}`}
+										><span class="event-dot" style:background={event.color ?? undefined}
+										></span>{#if event.time}<span class="time">{event.time}</span
+											>{/if}{event.title}</span
+									>
+								{/each}
 								{#each day.tasks as task (task.id)}
 									<a
 										class="event task"
@@ -138,6 +159,8 @@
 	<footer>
 		<span><i class="legend-dot task-dot"></i> Tasks</span>
 		<span><i class="legend-dot date-dot"></i> Important dates</span>
+		{#if external.length > 0}<span><i class="legend-dot external-dot"></i> Your calendars</span
+			>{/if}
 		<a href={resolve(appPath('/calendar'))}>Open calendar <span aria-hidden="true">↗</span></a>
 	</footer>
 </section>
@@ -327,6 +350,26 @@
 	.completed {
 		opacity: 0.65;
 		text-decoration: line-through;
+	}
+
+	/* Events from connected calendars: no LifeOS page to open, so no hover
+	   underline; each wears its calendar's own colour on the dot. */
+	.external {
+		background: var(--c-surface-alt);
+	}
+
+	.external:hover {
+		text-decoration: none;
+	}
+
+	.external .time {
+		margin-right: 0.25rem;
+		color: var(--c-text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.external-dot {
+		background: var(--c-text-muted);
 	}
 
 	footer {

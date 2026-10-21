@@ -1,4 +1,5 @@
 import { calendarMonth, calendarWindowForMonth } from '$lib/server/calendar';
+import { externalDays } from '$lib/server/calendar-sync/days';
 import { sql } from '$lib/server/db';
 import {
 	daysBetween,
@@ -17,7 +18,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const month = calendarMonth(url.searchParams.get('month'), today);
 	const range = calendarWindowForMonth(month);
 
-	const [tasks, importantDates] = await Promise.all([
+	const [tasks, importantDates, external] = await Promise.all([
 		listTasks(sql, viewer, {
 			status: [...TASK_STATUSES],
 			scheduledFrom: range.from,
@@ -29,7 +30,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			today: range.from,
 			days: daysBetween(range.from, range.to),
 			limit: 500
-		})
+		}),
+		externalDays(sql, viewer, range.from, range.to)
 	]);
 
 	return {
@@ -38,6 +40,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		range,
 		tasks: tasks.slice(0, 500),
 		calendarTruncated: tasks.length > 500,
+		external,
 		dates: importantDates.map((item) => ({
 			id: item.record.id,
 			name: item.record.title,

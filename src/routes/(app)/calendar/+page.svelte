@@ -17,12 +17,19 @@
 	description="See the shape of the month without losing the little things."
 />
 
-<HomeCalendar today={data.today} month={data.month} tasks={data.tasks} dates={data.dates} />
+<HomeCalendar
+	today={data.today}
+	month={data.month}
+	tasks={data.tasks}
+	dates={data.dates}
+	external={data.external}
+/>
 
 <div class="calendar-notes">
 	<p>
-		Showing scheduled tasks and important dates for the month. Day numbers open the matching journal
-		entry.
+		Showing scheduled tasks, important dates and your connected calendars for the month. Day numbers
+		open the matching journal entry.
+		<a href={resolve(appPath('/account/calendars'))}>Connect Google or iCloud</a>
 	</p>
 	{#if data.calendarTruncated}
 		<p class="warning" role="status">
