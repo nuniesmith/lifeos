@@ -44,6 +44,9 @@ It writes a verified custom-format dump to `/srv/lifeos/backups` (override
 with `LIFEOS_STATE_DIR`) with two files beside it — `.sha256`, its checksum,
 and `.counts`, the row count of every table — records it in `backup_runs`,
 and keeps 14 days. `/api/health/ready` reports a backup older than 36 hours.
+While backups are deliberately off, set `LIFEOS_BACKUP_CHECK=off` in the
+server's `.env`: otherwise readiness stays degraded forever, and an uptime
+monitor that is always down can't report a real outage.
 Copy all three files when moving a backup anywhere.
 
 **Not wired up yet.** Since the move to freddy, nothing runs this: freddy's
