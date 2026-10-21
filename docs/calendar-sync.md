@@ -17,15 +17,23 @@ LifeOS reads your Google and iCloud calendars, so their events show on its calen
 
 ## Setting up the server (once)
 
-All three settings go in the server's `.env` (`/srv/lifeos/.env` on freddy). Restart the app after changing them.
+On freddy, the app gets only the settings freddy's `docker-compose.yml` lists for `lifeos-app`. Their values come from the `.env` that freddy's deploy writes from that repo's GitHub secrets ([its list](https://github.com/nuniesmith/freddy/blob/main/docs/GITHUB_SECRETS.md)). A setting in any other file never reaches the app.
 
-1. **`LIFEOS_SECRET_KEY`**: seals the CalDAV passwords people enter. Make one with `openssl rand -base64 32`. Keep it: without it, stored passwords can't be opened, and everyone has to reconnect. iCloud can't be connected until it's set.
-2. **Google**: a service account, which never expires. An OAuth app in "Testing" loses its access after 7 days, and leaving Testing means Google's verification.
+1. **`LIFEOS_SECRET_KEY`** seals the CalDAV passwords people enter. On freddy there's nothing to do: the deploy generates one and keeps it. Elsewhere, make one with `openssl rand -base64 32`. Keep it: with a new key, stored passwords can't be opened, and everyone has to reconnect. iCloud can't be connected without one.
+2. **Google** uses a service account, which never expires. An OAuth app in "Testing" loses its access after 7 days, and leaving Testing means Google's verification.
    1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, and enable the **Google Calendar API** for it.
    2. Under _IAM & Admin → Service accounts_, create one (no roles needed). Under its _Keys_, add a JSON key and download it.
-   3. Put the file on the server, readable only by the app, for example `/srv/lifeos/secrets/google-calendar.json` with mode 600. Mount it into the app container read-only, and point `LIFEOS_GOOGLE_SA_FILE` at its path inside the container, for example `/run/secrets/google-calendar.json`. The mount is a change to freddy's compose file.
-   4. The Calendars page then shows the service account's address. That's what people share their calendars with.
-3. **`LIFEOS_CALENDAR_SYNC_MINUTES`**: 5 by default; 0 turns the timer off. **Sync now** still works.
+   3. Put it on freddy, readable only by the app's user (uid 1000), and name it in a freddy secret. The app sees `/srv/lifeos/secrets` as `/run/secrets/lifeos`:
+
+      ```sh
+      sudo install -D -m 600 -o 1000 -g 1000 key.json /srv/lifeos/secrets/google-calendar.json
+      gh secret set LIFEOS_GOOGLE_SA_FILE -R nuniesmith/freddy --body /run/secrets/lifeos/google-calendar.json
+      ```
+
+      The next freddy deploy passes it to the app. `gh workflow run ci-cd.yml -R nuniesmith/freddy` runs one, and it restarts everything on freddy.
+
+   4. The Calendars page then shows the service account's address. That's what people share their calendars with. If the file can't be used, the page says why, and the fixed file counts on the next sync, without a restart.
+3. **`LIFEOS_CALENDAR_SYNC_MINUTES`**: 5 by default; 0 turns the timer off. **Sync now** still works. On freddy, set it as a freddy secret.
 
 ## Connecting (each person, at Account → Calendars)
 

@@ -11,8 +11,10 @@ CI (`.github/workflows/ci.yml`) publishes a `linux/amd64` + `linux/arm64`
 image to GHCR from every push to `main`, tagged with the commit and with
 `main`, and scans it. A weekly refresh rebuilds `main` on fresh base images
 and publishes it as `refresh-<run id>` and `main`; it does not move the
-commit's own tag, so `:<sha>` stays a rollback target. Nothing here deploys:
-freddy's next deploy pulls `:main` (or whatever `LIFEOS_IMAGE` names).
+commit's own tag, so `:<sha>` stays a rollback target. A push to `main` also
+asks freddy to roll that commit out (freddy's `update-service.yml` migrates,
+recreates `lifeos-app` and checks it runs that revision), and freddy's own
+deploys pull `:main` (or whatever `LIFEOS_IMAGE` names).
 
 The image carries what a deploy runs inside it, and
 `tests/unit/deployment.test.ts` fails if that stops being true:
@@ -22,6 +24,16 @@ The image carries what a deploy runs inside it, and
   app restarts. The app never migrates itself.
 - `scripts/export-data.mjs` and `scripts/restore-data.mjs` — see
   [`data-mobility.md`](data-mobility.md).
+
+## Settings
+
+The app gets only the variables freddy's `docker-compose.yml` lists for
+`lifeos-app`. Their values come from freddy's `.env`, which its deploy writes
+from that repo's GitHub secrets
+([its list](https://github.com/nuniesmith/freddy/blob/main/docs/GITHUB_SECRETS.md)),
+keeping what is already there. A new setting needs a line in that compose
+file; one set in any other file never reaches the app. `.env.example` is for
+development.
 
 ## Rollback
 
@@ -44,9 +56,10 @@ It writes a verified custom-format dump to `/srv/lifeos/backups` (override
 with `LIFEOS_STATE_DIR`) with two files beside it — `.sha256`, its checksum,
 and `.counts`, the row count of every table — records it in `backup_runs`,
 and keeps 14 days. `/api/health/ready` reports a backup older than 36 hours.
-While backups are deliberately off, set `LIFEOS_BACKUP_CHECK=off` in the
-server's `.env`: otherwise readiness stays degraded forever, and an uptime
-monitor that is always down can't report a real outage.
+Until something runs it, freddy's compose file sets `LIFEOS_BACKUP_CHECK=off`
+(a freddy secret of `on` turns the check back on): otherwise readiness stays
+degraded forever, and an uptime monitor that is always down can't report a
+real outage.
 Copy all three files when moving a backup anywhere.
 
 **Not wired up yet.** Since the move to freddy, nothing runs this: freddy's

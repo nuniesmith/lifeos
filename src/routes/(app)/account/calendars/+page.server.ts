@@ -33,6 +33,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		connections: await listCalendarConnections(sql, viewer),
 		serviceAccountEmail: deps.google?.serviceAccountEmail ?? null,
 		canStoreSecrets: deps.secretKey !== null,
+		problems: deps.problems,
 		icloudUrl: ICLOUD_URL
 	};
 };
@@ -58,9 +59,12 @@ export const actions: Actions = {
 		}
 		const deps = await syncDeps();
 		if (!deps.secretKey) {
+			const problem = deps.problems.LIFEOS_SECRET_KEY;
 			return fail(400, {
 				section: 'caldav',
-				error: 'The server has no LIFEOS_SECRET_KEY, so it cannot store a password safely yet.'
+				error: problem
+					? `iCloud can't be connected: ${problem}.`
+					: 'The server has no LIFEOS_SECRET_KEY, so it cannot store a password safely yet.'
 			});
 		}
 		let calendars;
@@ -94,9 +98,15 @@ export const actions: Actions = {
 		const calendarId = String(form.get('calendarId') ?? '').trim();
 		const asTarget = form.get('pushTarget') === 'on';
 		if (!calendarId) return fail(400, { section: 'google', error: 'Enter the calendar ID.' });
-		const { google } = await syncDeps();
+		const { google, problems } = await syncDeps();
 		if (!google) {
-			return fail(400, { section: 'google', error: 'Google is not configured on the server yet.' });
+			const problem = problems.LIFEOS_GOOGLE_SA_FILE;
+			return fail(400, {
+				section: 'google',
+				error: problem
+					? `Google can't be used: ${problem}.`
+					: 'Google is not configured on the server yet.'
+			});
 		}
 		let calendar;
 		try {

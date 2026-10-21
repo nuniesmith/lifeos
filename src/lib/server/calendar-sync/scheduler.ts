@@ -16,23 +16,77 @@ import { syncAll, type SyncDeps, type SyncReport } from './sync';
 
 const LOCK_KEY = 4_197_031; // arbitrary, LifeOS's own: 'calendar sync'
 
-let deps: Promise<SyncDeps> | null = null;
+/**
+ * Server settings sync can't use, by variable, in words the Calendars page
+ * shows after "Google can't be used:" or "iCloud can't be connected:".
+ */
+export interface ConfigProblems {
+	LIFEOS_GOOGLE_SA_FILE?: string;
+	LIFEOS_SECRET_KEY?: string;
+}
 
-/** The server's sync configuration, read once. */
-export function syncDeps(): Promise<SyncDeps> {
-	deps ??= (async () => {
-		const account = env.LIFEOS_GOOGLE_SA_FILE
-			? await readServiceAccount(env.LIFEOS_GOOGLE_SA_FILE)
-			: null;
-		return {
-			google: account ? new GoogleClient({ account }) : null,
-			secretKey: parseSecretKey(env.LIFEOS_SECRET_KEY),
-			zone: env.LIFEOS_TIMEZONE,
-			origin: env.ORIGIN ?? null,
-			currency: env.LIFEOS_CURRENCY
-		};
-	})();
-	return deps;
+export interface SyncConfig extends SyncDeps {
+	problems: ConfigProblems;
+}
+
+let config: Promise<SyncConfig> | null = null;
+let reported = '';
+
+/**
+ * The server's sync configuration. A setting it can't use, such as a key file
+ * the app may not read or a key of the wrong length, is left off and reported,
+ * never thrown: one bad file used to fail the Calendars page until a restart.
+ * Only a usable configuration is kept, so a fixed file counts on the next call.
+ */
+export function syncDeps(): Promise<SyncConfig> {
+	config ??= readConfig().then((read) => {
+		const problems = Object.entries(read.problems)
+			.map(([setting, problem]) => `${setting}: ${problem}`)
+			.join('; ');
+		if (problems && problems !== reported) {
+			logger.warn({ problems: read.problems }, 'calendar sync settings unusable');
+		}
+		reported = problems;
+		if (problems) config = null;
+		return read;
+	});
+	return config;
+}
+
+async function readConfig(): Promise<SyncConfig> {
+	const problems: ConfigProblems = {};
+	let google: GoogleClient | null = null;
+	const file = env.LIFEOS_GOOGLE_SA_FILE;
+	if (file) {
+		try {
+			google = new GoogleClient({ account: await readServiceAccount(file) });
+		} catch (err) {
+			problems.LIFEOS_GOOGLE_SA_FILE = unusableFile(file, err);
+		}
+	}
+	let secretKey: Buffer | null = null;
+	try {
+		secretKey = parseSecretKey(env.LIFEOS_SECRET_KEY);
+	} catch (err) {
+		problems.LIFEOS_SECRET_KEY = err instanceof Error ? err.message : String(err);
+	}
+	return {
+		google,
+		secretKey,
+		zone: env.LIFEOS_TIMEZONE,
+		origin: env.ORIGIN ?? null,
+		currency: env.LIFEOS_CURRENCY,
+		problems
+	};
+}
+
+function unusableFile(file: string, err: unknown): string {
+	const code = (err as NodeJS.ErrnoException | undefined)?.code;
+	if (code === 'ENOENT') return `there is no file at ${file}`;
+	if (code === 'EACCES') return `the app (uid ${process.getuid?.()}) isn't allowed to read ${file}`;
+	if (code === 'EISDIR') return `${file} is a directory, not the key file`;
+	if (err instanceof SyntaxError) return `${file} isn't JSON`;
+	return err instanceof Error ? err.message : String(err);
 }
 
 /** Runs one pass if no other is running; null when it skipped its turn. */

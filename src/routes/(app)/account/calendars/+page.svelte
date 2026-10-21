@@ -75,7 +75,9 @@
 
 <section aria-labelledby="icloud">
 	<h2 id="icloud">Add iCloud</h2>
-	{#if !data.canStoreSecrets}
+	{#if data.problems.LIFEOS_SECRET_KEY}
+		<p class="error">iCloud can't be connected: {data.problems.LIFEOS_SECRET_KEY}.</p>
+	{:else if !data.canStoreSecrets}
 		<p class="notice">
 			Not available yet: the server needs a LIFEOS_SECRET_KEY to store a password safely.
 		</p>
@@ -107,7 +109,9 @@
 
 <section aria-labelledby="google">
 	<h2 id="google">Add a Google calendar</h2>
-	{#if !data.serviceAccountEmail}
+	{#if data.problems.LIFEOS_GOOGLE_SA_FILE}
+		<p class="error">Google can't be used: {data.problems.LIFEOS_GOOGLE_SA_FILE}.</p>
+	{:else if !data.serviceAccountEmail}
 		<p class="notice">Not available yet: Google isn't configured on the server.</p>
 	{:else}
 		<ol class="steps">
