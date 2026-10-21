@@ -38,7 +38,8 @@ export const actions: Actions = {
 			const message = {
 				invalid_current: 'That current password is not correct.',
 				username_taken: 'That username is already taken.',
-				weak_password: 'Use at least 12 characters.'
+				weak_password: 'Use at least 12 characters.',
+				same_password: 'Choose a new password, not the current one.'
 			}[result.reason];
 			return fail(400, { error: message });
 		}
