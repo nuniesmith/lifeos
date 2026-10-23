@@ -70,9 +70,11 @@ test('the calendars page says plainly what can and cannot be connected yet', asy
 	await signIn(page);
 	await page.goto('/account/calendars');
 	await expect(page.getByRole('heading', { name: 'Calendars', level: 1 })).toBeVisible();
-	// no service account in the suite's server
+	// the suite's server names a Google key file that isn't there (playwright.config.ts)
 	await expect(
-		page.getByText("Not available yet: Google isn't configured on the server.")
+		page.getByText(
+			"Google can't be used: there is no file at /nonexistent/lifeos-e2e/google-calendar.json."
+		)
 	).toBeVisible();
 
 	// a CalDAV server that isn't there is refused, and nothing is stored

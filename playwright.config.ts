@@ -51,6 +51,9 @@ export default defineConfig({
 			// A key of the run's own, so the calendar page offers CalDAV; made up
 			// here rather than written down, since it is a secret's shape.
 			LIFEOS_SECRET_KEY: Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64'),
+			// A Google key that isn't there: the calendars page has to say so
+			// rather than fail (tests/e2e/calendar-sync.spec.ts).
+			LIFEOS_GOOGLE_SA_FILE: '/nonexistent/lifeos-e2e/google-calendar.json',
 			// No timer in the suite: a pass would race the seeded rows.
 			LIFEOS_CALENDAR_SYNC_MINUTES: '0'
 		}
