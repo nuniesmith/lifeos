@@ -54,8 +54,8 @@
 		"svelte-check": "^4.1.5",
 		"typescript": "^5.8.2",
 		"typescript-eslint": "^8.26.1",
-		"vite": "^6.4.5",
-		"vitest": "^4.1.11"
+		"vite": "^6.2.1",
+		"vitest": "^4.1.12"
 	},
 	"overrides": {
 		"cookie": "^0.7.2",
